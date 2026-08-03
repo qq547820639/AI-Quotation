@@ -3,6 +3,7 @@
  */
 import { Progress, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { useTranslation } from 'react-i18next';
 import { type Inquiry } from '@/types';
 import { CooperationStatusTag, SupplierLevelTag } from '@/components/StatusTag';
 import { formatCurrency, formatDate, formatPercent } from '@/utils/format';
@@ -27,9 +28,10 @@ export default function CompareBySupplierTable({
   rows,
   onOpenDrawer,
 }: CompareBySupplierTableProps) {
+  const { t } = useTranslation();
   const columns: ColumnsType<SupplierQuoteRow> = [
     {
-      title: '供应商',
+      title: t('quotation.compare.supplier'),
       key: 'supplier',
       fixed: 'left',
       width: 220,
@@ -37,13 +39,13 @@ export default function CompareBySupplierTable({
         <div
           style={{ cursor: 'pointer' }}
           onClick={() => onOpenDrawer(row.supplier.id)}
-          title="点击查看完整报价"
+          title={t('quotation.compare.supplierTable.viewQuote')}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
             <Text strong style={{ fontSize: 13 }}>
               {row.supplier.name}
             </Text>
-            {!row.isSubmitted && <Tag color="error" style={{ margin: 0, fontSize: 11 }}>已超时</Tag>}
+            {!row.isSubmitted && <Tag color="error" style={{ margin: 0, fontSize: 11 }}>{t('quotation.compare.supplierTable.timeout')}</Tag>}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
             <SupplierLevelTag level={row.supplier.level} />
@@ -56,7 +58,7 @@ export default function CompareBySupplierTable({
       ),
     },
     {
-      title: '报价总金额',
+      title: t('quotation.compare.supplierTable.quotationTotal'),
       key: 'totalAmount',
       width: 130,
       align: 'right',
@@ -68,7 +70,7 @@ export default function CompareBySupplierTable({
             {formatCurrency(row.totalAmount, inquiry.currency)}
             {isLowest && (
               <Tag color="success" style={{ marginInlineStart: 4, fontSize: 11 }}>
-                最低
+                {t('quotation.compare.supplierTable.lowest')}
               </Tag>
             )}
           </span>
@@ -76,7 +78,7 @@ export default function CompareBySupplierTable({
       },
     },
     {
-      title: '平均交货周期',
+      title: t('quotation.compare.supplierTable.avgDeliveryCycle'),
       key: 'avgDeliveryDays',
       width: 120,
       align: 'right',
@@ -85,10 +87,10 @@ export default function CompareBySupplierTable({
         const isFastest = data.fastestDeliverySupplierId === row.supplier.id;
         return (
           <span style={{ color: isFastest ? 'var(--color-primary)' : undefined, fontWeight: isFastest ? 600 : 400 }}>
-            {row.avgDeliveryDays ? `${row.avgDeliveryDays.toFixed(1)} 天` : '-'}
+            {row.avgDeliveryDays ? `${row.avgDeliveryDays.toFixed(1)} ${t('quotation.compare.supplierTable.dayUnit')}` : '-'}
             {isFastest && (
               <Tag color="blue" style={{ marginInlineStart: 4, fontSize: 11 }}>
-                最快
+                {t('quotation.compare.supplierTable.fastest')}
               </Tag>
             )}
           </span>
@@ -96,32 +98,32 @@ export default function CompareBySupplierTable({
       },
     },
     {
-      title: '最早可交货日期',
+      title: t('quotation.compare.supplierTable.earliestDeliveryDate'),
       key: 'earliestDeliveryDate',
       width: 120,
       render: (_, row) => formatDate(row.earliestDeliveryDate),
     },
     {
-      title: '平均质保',
+      title: t('quotation.compare.supplierTable.avgWarranty'),
       key: 'avgWarrantyMonths',
       width: 100,
       align: 'right',
-      render: (_, row) => (row.avgWarrantyMonths ? `${row.avgWarrantyMonths.toFixed(1)} 月` : '-'),
+      render: (_, row) => (row.avgWarrantyMonths ? `${row.avgWarrantyMonths.toFixed(1)} ${t('quotation.compare.supplierTable.monthUnit')}` : '-'),
     },
     {
-      title: '付款条件',
+      title: t('quotation.compare.supplierTable.paymentTerms'),
       key: 'paymentTerms',
       width: 180,
       render: (_, row) => row.paymentTerms || inquiry.paymentTerms || '-',
     },
     {
-      title: '技术偏离',
+      title: t('quotation.compare.supplierTable.techDeviation'),
       key: 'techDeviations',
       width: 180,
       render: (_, row) => {
         const text = joinDeviations(row.techDeviations);
         return text === '无' ? (
-          <Text type="secondary">无</Text>
+          <Text type="secondary">{t('quotation.compare.supplierTable.none')}</Text>
         ) : (
           <Tooltip title={text}>
             <Text type="warning" style={{ fontSize: 12 }}>
@@ -132,13 +134,13 @@ export default function CompareBySupplierTable({
       },
     },
     {
-      title: '商务偏离',
+      title: t('quotation.compare.supplierTable.commercialDeviation'),
       key: 'commercialDeviations',
       width: 180,
       render: (_, row) => {
         const text = joinDeviations(row.commercialDeviations);
         return text === '无' ? (
-          <Text type="secondary">无</Text>
+          <Text type="secondary">{t('quotation.compare.supplierTable.none')}</Text>
         ) : (
           <Tooltip title={text}>
             <Text type="warning" style={{ fontSize: 12 }}>
@@ -149,21 +151,21 @@ export default function CompareBySupplierTable({
       },
     },
     {
-      title: '历史响应率',
+      title: t('quotation.compare.supplierTable.historyResponseRate'),
       key: 'historyResponseRate',
       width: 110,
       align: 'right',
       render: (_, row) => formatPercent(row.supplier.historyResponseRate),
     },
     {
-      title: '历史履约率',
+      title: t('quotation.compare.supplierTable.historyFulfillmentRate'),
       key: 'historyFulfillmentRate',
       width: 110,
       align: 'right',
       render: (_, row) => formatPercent(row.supplier.historyFulfillmentRate),
     },
     {
-      title: '综合评分',
+      title: t('quotation.compare.supplierTable.score'),
       key: 'score',
       width: 160,
       sorter: (a, b) => (data.scores[a.supplier.id]?.total ?? 0) - (data.scores[b.supplier.id]?.total ?? 0),
@@ -177,10 +179,10 @@ export default function CompareBySupplierTable({
           <Tooltip
             title={
               <div style={{ fontSize: 12 }}>
-                <div>金额：{score.price.toFixed(2)} / 50</div>
-                <div>交货：{score.delivery.toFixed(2)} / 20</div>
-                <div>等级：{score.level.toFixed(2)} / 15</div>
-                <div>履约：{score.fulfillment.toFixed(2)} / 15</div>
+                <div>{t('quotation.compare.supplierTable.amountLabel')}：{score.price.toFixed(2)} / 50</div>
+                <div>{t('quotation.compare.supplierTable.deliveryLabel')}：{score.delivery.toFixed(2)} / 20</div>
+                <div>{t('quotation.compare.supplierTable.levelLabel')}：{score.level.toFixed(2)} / 15</div>
+                <div>{t('quotation.compare.supplierTable.fulfillmentLabel')}：{score.fulfillment.toFixed(2)} / 15</div>
               </div>
             }
           >
@@ -194,7 +196,7 @@ export default function CompareBySupplierTable({
               />
               {isTop && (
                 <Tag color="success" style={{ margin: 0, fontSize: 11 }}>
-                  最优
+                  {t('quotation.compare.supplierTable.best')}
                 </Tag>
               )}
             </div>
@@ -203,15 +205,15 @@ export default function CompareBySupplierTable({
       },
     },
     {
-      title: '是否最低总价',
+      title: t('quotation.compare.supplierTable.isLowestTotal'),
       key: 'isLowest',
       width: 110,
       align: 'center',
       render: (_, row) =>
         data.lowestTotalSupplierId === row.supplier.id ? (
-          <Tag color="success">是</Tag>
+          <Tag color="success">{t('quotation.compare.supplierTable.yes')}</Tag>
         ) : (
-          <Text type="secondary">否</Text>
+          <Text type="secondary">{t('quotation.compare.supplierTable.no')}</Text>
         ),
     },
   ];

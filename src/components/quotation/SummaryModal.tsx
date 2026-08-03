@@ -5,6 +5,8 @@
 import { useState } from 'react';
 import { Button, Modal, Space, Spin, Tag, Typography } from 'antd';
 import { RobotOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { type Inquiry } from '@/types';
 import { formatCurrency } from '@/utils/format';
 import { generateCompareConclusion } from '@/utils/aiService';
@@ -30,24 +32,24 @@ interface SummaryModalProps {
 }
 
 /** 生成纯文本摘要 */
-function buildSummary(inquiry: Inquiry, data: CompareData, rows: SupplierQuoteRow[]): string {
+function buildSummary(inquiry: Inquiry, data: CompareData, rows: SupplierQuoteRow[], t: TFunction): string {
   const lines: string[] = [];
-  lines.push(`询价单：${inquiry.subject}（${inquiry.code}）`);
-  lines.push(`币种：${inquiry.currency} 物料行数：${inquiry.items.length} 参与对比供应商：${rows.length}`);
+  lines.push(t('quotation.compare.summary.inquiryLine', { subject: inquiry.subject, code: inquiry.code }));
+  lines.push(t('quotation.compare.summary.basicInfo', { currency: inquiry.currency, items: inquiry.items.length, suppliers: rows.length }));
   lines.push('');
 
   // 最低总价
   if (data.lowestTotalSupplierId) {
     const r = rows.find((x) => x.supplier.id === data.lowestTotalSupplierId);
     if (r) {
-      lines.push(`【最低总价供应商】${r.supplier.name}，报价总额 ${formatCurrency(r.totalAmount, inquiry.currency)}`);
+      lines.push(t('quotation.compare.summary.lowestTotal', { name: r.supplier.name, amount: formatCurrency(r.totalAmount, inquiry.currency) }));
     }
   }
   // 最快交货
   if (data.fastestDeliverySupplierId) {
     const r = rows.find((x) => x.supplier.id === data.fastestDeliverySupplierId);
     if (r) {
-      lines.push(`【最快交货供应商】${r.supplier.name}，平均交货 ${r.avgDeliveryDays.toFixed(1)} 天`);
+      lines.push(t('quotation.compare.summary.fastestDelivery', { name: r.supplier.name, days: r.avgDeliveryDays.toFixed(1) }));
     }
   }
   // 综合评分最高
@@ -55,7 +57,7 @@ function buildSummary(inquiry: Inquiry, data: CompareData, rows: SupplierQuoteRo
     const r = rows.find((x) => x.supplier.id === data.topScoreSupplierId);
     const s = data.scores[data.topScoreSupplierId];
     if (r && s) {
-      lines.push(`【综合评分最高】${r.supplier.name}，总分 ${s.total.toFixed(2)}（金额 ${s.price.toFixed(1)}/交货 ${s.delivery.toFixed(1)}/等级 ${s.level.toFixed(1)}/履约 ${s.fulfillment.toFixed(1)}）`);
+      lines.push(t('quotation.compare.summary.topScore', { name: r.supplier.name, total: s.total.toFixed(2), price: s.price.toFixed(1), delivery: s.delivery.toFixed(1), level: s.level.toFixed(1), fulfillment: s.fulfillment.toFixed(1) }));
     }
   }
   lines.push('');
@@ -69,41 +71,42 @@ function buildSummary(inquiry: Inquiry, data: CompareData, rows: SupplierQuoteRo
       const qi = getQuotationItem(r, item.id);
       if (!qi) continue;
       if (isHighPrice(qi.unitPrice, avg)) {
-        anomalies.push(`  · ${item.name} - ${r.supplier.name}：单价 ${formatCurrency(qi.unitPrice, inquiry.currency)}（高于平均 ${formatCurrency(avg, inquiry.currency)} 50%+，报价偏高）`);
+        anomalies.push(t('quotation.compare.summary.anomalyHigh', { material: item.name, supplier: r.supplier.name, price: formatCurrency(qi.unitPrice, inquiry.currency), avg: formatCurrency(avg, inquiry.currency) }));
       } else if (isLowPrice(qi.unitPrice, avg)) {
-        anomalies.push(`  · ${item.name} - ${r.supplier.name}：单价 ${formatCurrency(qi.unitPrice, inquiry.currency)}（低于平均 ${formatCurrency(avg, inquiry.currency)} 50%+，报价偏低，请核实）`);
+        anomalies.push(t('quotation.compare.summary.anomalyLow', { material: item.name, supplier: r.supplier.name, price: formatCurrency(qi.unitPrice, inquiry.currency), avg: formatCurrency(avg, inquiry.currency) }));
       }
     }
   }
-  lines.push('【异常报价提示】');
+  lines.push(t('quotation.compare.summary.anomalyTitle'));
   if (anomalies.length) {
     lines.push(...anomalies);
   } else {
-    lines.push('  · 未发现明显异常报价');
+    lines.push(t('quotation.compare.summary.noAnomaly'));
   }
   lines.push('');
 
   // 已选推荐供应商
   const selected = Object.entries(inquiry.selectedSupplierMap);
-  lines.push('【已选推荐供应商】');
+  lines.push(t('quotation.compare.summary.selectedTitle'));
   if (selected.length) {
     for (const [itemId, supplierId] of selected) {
       const item = inquiry.items.find((it) => it.id === itemId);
       const supplier = rows.find((r) => r.supplier.id === supplierId)?.supplier;
-      lines.push(`  · ${item?.name ?? itemId} → ${supplier?.name ?? supplierId}`);
+      lines.push(t('quotation.compare.summary.selectedItem', { material: item?.name ?? itemId, supplier: supplier?.name ?? supplierId }));
     }
   } else {
-    lines.push('  · 暂未选择推荐供应商');
+    lines.push(t('quotation.compare.summary.noSelection'));
   }
 
   return lines.join('\n');
 }
 
 export default function SummaryModal({ open, inquiry, data, rows, onClose }: SummaryModalProps) {
+  const { t } = useTranslation();
   const [aiText, setAiText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const isMobile = useIsMobile();
-  const templateSummary = buildSummary(inquiry, data, rows);
+  const templateSummary = buildSummary(inquiry, data, rows, t);
   const displayText = aiText || templateSummary;
 
   const handleAiGenerate = async () => {
@@ -112,7 +115,7 @@ export default function SummaryModal({ open, inquiry, data, rows, onClose }: Sum
       const text = await generateCompareConclusion(inquiry, data, rows);
       setAiText(text);
     } catch {
-      notifyWarning('AI 生成失败，已显示模板摘要');
+      notifyWarning(t('quotation.compare.summary.aiFailed'));
     } finally {
       setAiLoading(false);
     }
@@ -122,21 +125,21 @@ export default function SummaryModal({ open, inquiry, data, rows, onClose }: Sum
     <Modal
       title={
         <Space>
-          <span>报价对比摘要</span>
-          {aiText && <Tag color="purple">AI 生成</Tag>}
+          <span>{t('quotation.compare.summary.title')}</span>
+          {aiText && <Tag color="purple">{t('quotation.compare.aiGenerated')}</Tag>}
         </Space>
       }
       open={open}
       onCancel={onClose}
       onOk={onClose}
-      okText="关闭"
+      okText={t('quotation.compare.summary.closeBtn')}
       cancelButtonProps={{ style: { display: 'none' } }}
       width={isMobile ? '92vw' : 680}
       style={isMobile ? { top: 20 } : undefined}
     >
       <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
-          系统根据各供应商报价自动生成摘要，可点击右侧复制按钮复制全文：
+          {t('quotation.compare.summary.desc')}
         </Text>
         <Button
           size="small"
@@ -144,7 +147,7 @@ export default function SummaryModal({ open, inquiry, data, rows, onClose }: Sum
           loading={aiLoading}
           onClick={handleAiGenerate}
         >
-          {aiText ? '重新生成 AI 结论' : 'AI 生成结论'}
+          {aiText ? t('quotation.compare.summary.regenerateAi') : t('quotation.compare.summary.generateAi')}
         </Button>
       </Space>
       <Spin spinning={aiLoading}>

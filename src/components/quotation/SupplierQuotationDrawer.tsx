@@ -3,6 +3,8 @@
  */
 import { Descriptions, Drawer, Input, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import {
   COOPERATION_STATUS_LABEL,
   SUPPLIER_LEVEL_LABEL,
@@ -30,9 +32,9 @@ interface SupplierQuotationDrawerProps {
 }
 
 /** 报价明细表列 */
-const itemColumns = (itemMap: Map<string, InquiryItem>, currency: Currency): ColumnsType<QuotationItem> => [
+const itemColumns = (itemMap: Map<string, InquiryItem>, currency: Currency, t: TFunction): ColumnsType<QuotationItem> => [
   {
-    title: '物料名称',
+    title: t('quotation.compare.drawer.materialName'),
     key: 'name',
     width: 160,
     fixed: 'left',
@@ -48,74 +50,74 @@ const itemColumns = (itemMap: Map<string, InquiryItem>, currency: Currency): Col
       );
     },
   },
-  { title: '品牌', dataIndex: 'brand', width: 100, render: (v: string) => v || '-' },
+  { title: t('quotation.compare.drawer.brand'), dataIndex: 'brand', width: 100, render: (v: string) => v || '-' },
   {
-    title: '含税单价',
+    title: t('quotation.compare.drawer.taxIncludedUnitPrice'),
     dataIndex: 'unitPrice',
     width: 110,
     align: 'right',
     render: (v: number) => formatCurrency(v, currency),
   },
   {
-    title: '税率',
+    title: t('quotation.compare.drawer.taxRate'),
     dataIndex: 'taxRate',
     width: 80,
     align: 'right',
     render: (v: number) => formatPercent(v, 0),
   },
   {
-    title: '含税总价',
+    title: t('quotation.compare.drawer.taxIncludedTotal'),
     dataIndex: 'taxIncludedTotal',
     width: 120,
     align: 'right',
     render: (v: number) => formatCurrency(v, currency),
   },
   {
-    title: '交货周期',
+    title: t('quotation.compare.drawer.deliveryCycle'),
     dataIndex: 'deliveryDays',
     width: 90,
     align: 'right',
-    render: (v: number) => `${v} 天`,
+    render: (v: number) => `${v} ${t('quotation.compare.drawer.dayUnit')}`,
   },
   {
-    title: '可交货日期',
+    title: t('quotation.compare.drawer.deliveryDate'),
     dataIndex: 'deliveryDate',
     width: 110,
     render: (v?: string) => formatDate(v),
   },
   {
-    title: '质保',
+    title: t('quotation.compare.drawer.warranty'),
     dataIndex: 'warrantyMonths',
     width: 80,
     align: 'right',
-    render: (v?: number) => (v ? `${v} 月` : '-'),
+    render: (v?: number) => (v ? `${v} ${t('quotation.compare.drawer.monthUnit')}` : '-'),
   },
   {
-    title: '付款条件',
+    title: t('quotation.compare.drawer.paymentTerms'),
     dataIndex: 'paymentTerms',
     width: 160,
     render: (v?: string) => v || '-',
   },
   {
-    title: '有效期至',
+    title: t('quotation.compare.drawer.validUntil'),
     dataIndex: 'validUntil',
     width: 110,
     render: (v?: string) => formatDate(v),
   },
   {
-    title: '技术偏离',
+    title: t('quotation.compare.drawer.techDeviation'),
     dataIndex: 'techDeviation',
     width: 160,
-    render: (v?: string) => (v?.trim() ? <Text type="warning">{v}</Text> : '无'),
+    render: (v?: string) => (v?.trim() ? <Text type="warning">{v}</Text> : t('quotation.compare.drawer.none')),
   },
   {
-    title: '商务偏离',
+    title: t('quotation.compare.drawer.commercialDeviation'),
     dataIndex: 'commercialDeviation',
     width: 160,
-    render: (v?: string) => (v?.trim() ? <Text type="warning">{v}</Text> : '无'),
+    render: (v?: string) => (v?.trim() ? <Text type="warning">{v}</Text> : t('quotation.compare.drawer.none')),
   },
   {
-    title: '备注',
+    title: t('quotation.compare.drawer.remark'),
     dataIndex: 'remark',
     width: 180,
     render: (v?: string) => v || '-',
@@ -131,6 +133,7 @@ export default function SupplierQuotationDrawer({
   onCommentBlur,
   onClose,
 }: SupplierQuotationDrawerProps) {
+  const { t } = useTranslation();
   const itemMap = new Map(inquiry.items.map((it) => [it.id, it]));
   const supplier = row?.supplier;
   const quotation = row?.quotation;
@@ -154,36 +157,36 @@ export default function SupplierQuotationDrawer({
       {row && supplier && quotation ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Descriptions
-            title="供应商资质"
+            title={t('quotation.compare.drawer.supplierQualification')}
             size="small"
             column={2}
             bordered
             labelStyle={{ width: 110, background: '#FAFBFC' }}
           >
-            <Descriptions.Item label="供应商编码">{supplier.code}</Descriptions.Item>
-            <Descriptions.Item label="供应商等级">
+            <Descriptions.Item label={t('quotation.compare.drawer.supplierCode')}>{supplier.code}</Descriptions.Item>
+            <Descriptions.Item label={t('quotation.compare.drawer.supplierLevel')}>
               {SUPPLIER_LEVEL_LABEL[supplier.level]}
             </Descriptions.Item>
-            <Descriptions.Item label="合作状态">
+            <Descriptions.Item label={t('quotation.compare.drawer.cooperationStatus')}>
               {COOPERATION_STATUS_LABEL[supplier.cooperationStatus]}
             </Descriptions.Item>
-            <Descriptions.Item label="所在地区">{supplier.region}</Descriptions.Item>
-            <Descriptions.Item label="联系人">{supplier.contact}</Descriptions.Item>
-            <Descriptions.Item label="联系电话">{supplier.phone}</Descriptions.Item>
-            <Descriptions.Item label="邮箱" span={2}>
+            <Descriptions.Item label={t('quotation.compare.drawer.region')}>{supplier.region}</Descriptions.Item>
+            <Descriptions.Item label={t('quotation.compare.drawer.contact')}>{supplier.contact}</Descriptions.Item>
+            <Descriptions.Item label={t('quotation.compare.drawer.phone')}>{supplier.phone}</Descriptions.Item>
+            <Descriptions.Item label={t('quotation.compare.drawer.email')} span={2}>
               {supplier.email}
             </Descriptions.Item>
-            <Descriptions.Item label="主营品类" span={2}>
-              {supplier.mainCategories?.length ? supplier.mainCategories.join('、') : '-'}
+            <Descriptions.Item label={t('quotation.compare.drawer.mainCategories')} span={2}>
+              {supplier.mainCategories?.length ? supplier.mainCategories.join(t('quotation.compare.drawer.categorySeparator')) : '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="历史响应率">
+            <Descriptions.Item label={t('quotation.compare.drawer.historyResponseRate')}>
               {formatPercent(supplier.historyResponseRate)}
             </Descriptions.Item>
-            <Descriptions.Item label="历史履约率">
+            <Descriptions.Item label={t('quotation.compare.drawer.historyFulfillmentRate')}>
               {formatPercent(supplier.historyFulfillmentRate)}
             </Descriptions.Item>
-            <Descriptions.Item label="平均交货">{supplier.avgDeliveryDays} 天</Descriptions.Item>
-            <Descriptions.Item label="历史合作次数">{supplier.historyCoopCount} 次</Descriptions.Item>
+            <Descriptions.Item label={t('quotation.compare.drawer.avgDelivery')}>{supplier.avgDeliveryDays} {t('quotation.compare.drawer.dayUnit')}</Descriptions.Item>
+            <Descriptions.Item label={t('quotation.compare.drawer.historyCoopCount')}>{supplier.historyCoopCount} {t('quotation.compare.drawer.timeUnit')}</Descriptions.Item>
           </Descriptions>
 
           <div>
@@ -195,10 +198,10 @@ export default function SupplierQuotationDrawer({
                 marginBottom: 8,
               }}
             >
-              <Text strong>报价明细</Text>
+              <Text strong>{t('quotation.compare.drawer.quotationDetail')}</Text>
               <Space align="center">
                 <Text type="secondary" style={{ fontSize: 13 }}>
-                  报价总额
+                  {t('quotation.compare.drawer.quotationTotal')}
                 </Text>
                 <Text strong style={{ color: 'var(--color-primary)', fontSize: 16 }}>
                   {formatCurrency(quotation.totalAmount, inquiry.currency)}
@@ -208,37 +211,36 @@ export default function SupplierQuotationDrawer({
             <Table<QuotationItem>
               rowKey="id"
               size="small"
-              columns={itemColumns(itemMap, inquiry.currency)}
+              columns={itemColumns(itemMap, inquiry.currency, t)}
               dataSource={row.items}
               pagination={false}
               scroll={{ x: 'max-content' }}
             />
             {quotation.remark && (
               <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>
-                报价说明：{quotation.remark}
+                {t('quotation.compare.drawer.quotationRemark')}：{quotation.remark}
               </Paragraph>
             )}
           </div>
 
           <div>
             <Text strong style={{ display: 'block', marginBottom: 8 }}>
-              采购评语
+              {t('quotation.compare.drawer.purchaserComment')}
             </Text>
             <TextArea
               value={comment}
               onChange={(e) => onCommentChange(e.target.value)}
               onBlur={onCommentBlur}
               rows={4}
-              placeholder="填写对该供应商报价的评语（失焦自动保存）"
+              placeholder={t('quotation.compare.drawer.commentPlaceholder')}
               maxLength={500}
               showCount
             />
           </div>
         </div>
       ) : (
-        <Text type="secondary">暂无报价数据</Text>
+        <Text type="secondary">{t('quotation.compare.drawer.noData')}</Text>
       )}
     </Drawer>
   );
 }
-
