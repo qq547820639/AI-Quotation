@@ -1,0 +1,69 @@
+/**
+ * 打印样式（W10.1.1）
+ * 用于询价详情页"导出 PDF"功能，调用 window.print() 时生效
+ * 用户可在浏览器打印对话框中选择"保存为 PDF"
+ */
+
+@media print {
+  /* 隐藏不需要打印的元素 */
+  .no-print {
+    display: none !important;
+  }
+
+  /* 隐藏侧边栏和顶部工具栏 */
+  .ant-layout-sider,
+  .ant-layout-header {
+    display: none !important;
+  }
+
+  /* 内容区全宽，移除 padding */
+  .ant-layout-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  /* 主布局改为纵向排列 */
+  .ant-layout {
+    display: block !important;
+    min-height: auto !important;
+  }
+
+  /* 卡片避免分页截断 */
+  .ant-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #e5e6eb !important;
+  }
+
+  /* 表格不换行截断 */
+  .ant-table-wrapper {
+    break-inside: avoid;
+  }
+
+  .ant-table-cell {
+    white-space: nowrap;
+    overflow: visible;
+  }
+
+  /* 描述列表紧凑显示 */
+  .ant-descriptions-view {
+    overflow: visible;
+  }
+
+  /* Timeline 时间轴避免分页截断 */
+  .ant-timeline-item {
+    break-inside: avoid;
+  }
+
+  /* 页面背景改为白色 */
+  body {
+    background: #fff !important;
+  }
+
+  /* 字体颜色确保可打印 */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

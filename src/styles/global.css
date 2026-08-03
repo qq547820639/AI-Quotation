@@ -1,0 +1,223 @@
+/* 全局样式与主题 CSS 变量定义 */
+:root {
+  /* 主题色 */
+  --color-primary: #165dff;
+  --color-success: #00b42a;
+  --color-warning: #ff7d00;
+  --color-error: #f53f3f;
+
+  /* 主题色浅底（B4 新增） */
+  --color-primary-bg: #f2f7ff;
+  --color-success-bg: #e8ffea;
+  --color-warning-bg: #fff7e8;
+  --color-error-bg: #ffece8;
+
+  /* 背景与表面 */
+  --color-bg: #f5f7fa;
+  --color-card: #ffffff;
+
+  /* 文字 */
+  --color-text: #1d2129;
+  --color-text-secondary: #4e5969;
+  --color-text-tertiary: #86909c;
+
+  /* 边框 */
+  --color-border: #e5e6eb;
+  --color-border-light: #f2f3f5;
+
+  /* 卡片圆角 */
+  --radius-card: 8px;
+
+  /* 间距梯度 */
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+
+  /* 阴影 */
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.04);
+
+  /* ECharts 色板（B4 useChartColors 读取） */
+  --chart-color-1: #165dff;
+  --chart-color-2: #00b42a;
+  --chart-color-3: #ff7d00;
+  --chart-color-4: #f53f3f;
+  --chart-color-5: #722ed1;
+  --chart-color-6: #0fc6c2;
+  --chart-color-7: #eb2f96;
+  --chart-color-8: #faad14;
+  --chart-text: #4e5969;
+  --chart-axis-line: #e5e6eb;
+  --chart-bg: #ffffff;
+}
+
+/* 暗色模式变量覆盖（B3） */
+[data-theme='dark'] {
+  --color-bg: #15171a;
+  --color-card: #1f2226;
+
+  --color-text: #e5e6eb;
+  --color-text-secondary: #a8aeb8;
+  --color-text-tertiary: #6b7280;
+
+  --color-border: #3a3d42;
+  --color-border-light: #2a2d32;
+
+  /* 主题色浅底暗色（B4 新增） */
+  --color-primary-bg: #1a2333;
+  --color-success-bg: #1a2a1f;
+  --color-warning-bg: #2a231a;
+  --color-error-bg: #2a1a1a;
+
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.2);
+
+  --chart-color-1: #4080ff;
+  --chart-color-2: #23c343;
+  --chart-color-3: #ff9a2e;
+  --chart-color-4: #f76965;
+  --chart-color-5: #a471f5;
+  --chart-color-6: #37d4cf;
+  --chart-color-7: #f77ebe;
+  --chart-color-8: #ffc60a;
+  --chart-text: #a8aeb8;
+  --chart-axis-line: #3a3d42;
+  --chart-bg: #1f2226;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.5715;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 通用卡片 */
+.g-card {
+  background: var(--color-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--spacing-lg);
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d8dce3;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c0c4cc;
+}
+
+/* ===== B7 移动端响应式 ===== */
+/* 安全区适配（iPhone X+ / 全面屏） */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* < 576px：小手机 */
+@media (max-width: 575px) {
+  .ant-layout-content {
+    padding: 8px !important;
+  }
+
+  .ant-card-body {
+    padding: 10px !important;
+  }
+
+  .ant-table {
+    font-size: 12px;
+  }
+}
+
+/* < 768px：移动端 */
+@media (max-width: 768px) {
+  /* 内容区 padding 缩小 */
+  .ant-layout-content {
+    padding: 12px !important;
+  }
+
+  /* 顶部工具栏元素间距缩小 */
+  .ant-layout-header {
+    padding: 0 8px !important;
+  }
+
+  /* 卡片圆角与 padding 缩小 */
+  .ant-card {
+    border-radius: 6px !important;
+  }
+
+  .ant-card-body {
+    padding: 12px !important;
+  }
+
+  /* 表格字体缩小 */
+  .ant-table {
+    font-size: 13px;
+  }
+
+  /* 搜索框在移动端隐藏（用全局搜索按钮替代） */
+  .mobile-hide {
+    display: none !important;
+  }
+
+  /* 统计卡片间距缩小 */
+  .ant-row {
+    margin-left: -8px !important;
+    margin-right: -8px !important;
+  }
+
+  .ant-col {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+}
+
+/* 768~991px：平板（窄桌面） */
+@media (min-width: 768px) and (max-width: 991px) {
+  .ant-layout-content {
+    padding: 16px !important;
+  }
+}
+
+/* >= 992px：桌面端（默认，无需额外覆盖） */
+@media (min-width: 992px) {
+  .ant-layout-content {
+    padding: 24px !important;
+  }
+}
+

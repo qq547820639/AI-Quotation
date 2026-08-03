@@ -1,0 +1,58 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# tsc 增量构建产物
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 本地环境变量
+.env
+.env.*
+!.env.example
+
+# Python / 后端
+backend/.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/procurement.db
+*.db
+
+# Docker 数据卷
+data/
+
+# 测试产物
+test-results/
+playwright-report/
+playwright/.cache/
+coverage/
+.nyc_output/
+
+# 构建缓存
+.vite/
+.eslintcache
