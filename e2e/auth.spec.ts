@@ -1,18 +1,19 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * E2E：认证流程
- * 登录 u-1（采购人员）→ 验证工作台 → 登出 → 登录 u-6（管理员）
+ * E2E：认证流程（G4 重写：消除恒真式，强化断言）
+ * 1. 登录采购人员 → 验证工作台统计卡片可见
+ * 2. 登录后刷新页面 → 验证登录态持久化
  */
 test.describe('认证流程', () => {
-  test('登录采购人员并访问工作台', async ({ page }) => {
+  test('登录采购人员并验证工作台数据', async ({ page }) => {
     await page.goto('/login');
 
-    // 选择用户 u-1
+    // 选择用户 u-1（李明辉，采购人员）
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '李明辉' }).click();
 
-    // 输入密码（任意值）
+    // 输入密码（演示环境任意值）
     await page.locator('input[type="password"]').fill('test123');
 
     // 点击登录
@@ -21,26 +22,25 @@ test.describe('认证流程', () => {
     // 验证跳转到工作台
     await expect(page).toHaveURL(/\/dashboard/);
 
-    // 验证工作台有数据（统计卡片）
-    await expect(page.locator('.ant-statistic')).toHaveCount(await page.locator('.ant-statistic').count());
+    // 验证工作台统计卡片可见（具体断言，非恒真式）
+    await expect(page.locator('.ant-statistic').first()).toBeVisible({ timeout: 10000 });
+    const statCount = await page.locator('.ant-statistic').count();
+    expect(statCount).toBeGreaterThan(0);
   });
 
-  test('切换用户登录管理员', async ({ page }) => {
+  test('登录态刷新后持久化', async ({ page }) => {
+    // 登录管理员
     await page.goto('/login');
-
-    // 如果已登录，先登出
-    const logoutBtn = page.getByRole('button', { name: /退出|Logout/ });
-    if (await logoutBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await logoutBtn.click();
-      await page.goto('/login');
-    }
-
-    // 选择 u-6 管理员
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
     await page.locator('input[type="password"]').fill('admin123');
     await page.getByRole('button', { name: /登录|Login/ }).click();
-
     await expect(page).toHaveURL(/\/dashboard/);
+
+    // 刷新页面，验证仍保持登录态（未跳回 /login）
+    await page.reload();
+    await expect(page).toHaveURL(/\/dashboard/);
+    // 验证侧边栏菜单存在（登录态标志）
+    await expect(page.locator('.ant-menu').first()).toBeVisible({ timeout: 10000 });
   });
 });

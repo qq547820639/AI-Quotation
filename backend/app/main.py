@@ -11,12 +11,13 @@ import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from .config import CORS_ORIGINS
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401  触发所有 ORM 模型注册到 Base.metadata
 from .seed import init_db
-from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings
+from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics
 
 # 日志配置（P5.3）
 logging.basicConfig(
@@ -79,6 +80,7 @@ app.include_router(materials.router, prefix=API_PREFIX)
 app.include_router(quotations.router, prefix=API_PREFIX)
 app.include_router(notifications.router, prefix=API_PREFIX)
 app.include_router(settings.router, prefix=API_PREFIX)
+app.include_router(metrics.router, prefix=API_PREFIX)  # Web Vitals 上报（G2）
 
 
 @app.get("/")
@@ -88,5 +90,21 @@ def root():
 
 @app.get("/api/health")
 def health_check():
-    """健康检查端点（无认证，供 Docker healthcheck / 监控使用）"""
-    return {"status": "ok", "version": "1.0.0", "db": "connected"}
+    """健康检查端点：真实探测数据库连通性（G3，无认证，供 Docker healthcheck / 监控使用）"""
+    db_ok = False
+    db_error = None
+    try:
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+            db_ok = True
+        finally:
+            db.close()
+    except Exception as e:
+        db_error = str(e)
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "version": "1.0.0",
+        "db": "connected" if db_ok else "disconnected",
+        "db_error": db_error,
+    }

@@ -1,5 +1,7 @@
 # 剩余批次执行计划：B2 ~ B7 + 最终验证
 
+> 更新时间：2026-08-04 | 状态已核对实际代码：B2-B7 全部 ✅ 完成（GlobalSearch/通知联动/useSettingsStore/批量导入/PDF/图表/移动端）
+
 > 承接 `next-batch-execution.md`：批次 A（W1 工程化）✅ 完成；批次 B 中 **B1 通知 store** ✅ 完成（含 types/useNotificationStore/useInquiryStore 联动/useQuotationStore 联动）。
 > 本计划覆盖剩余 **B2 ~ B7** 与最终三连验证，目标：消灭全部已识别占位/假交互，达到「工程化达标 + 无假交互」交付态。
 

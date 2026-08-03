@@ -1,5 +1,7 @@
 # 下一批次执行计划：W1 工程化补全 + W3 占位修复
 
+> 更新时间：2026-08-04 | 状态已核对实际代码：W1 工程化 ✅（ESLint/Prettier/Husky/Vitest/README）、W3 占位修复 ✅（假 loading 清理、MSW stub 修复）
+
 ## 一、当前进度盘点
 
 | 工作流 | 状态 | 完成内容 |

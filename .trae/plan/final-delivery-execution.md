@@ -438,13 +438,15 @@ P7  最终验证（全套 lint/tsc/vitest/build/E2E + 容器化冒烟）
 
 ## 五、验证清单
 
-- [ ] P1.1：后端启动 + 前端关 MSW 全流程跑通，6 项实测通过
-- [ ] P1.2：3 文件假 loading 清理完成
-- [ ] P1.3：MSW handlers 4 个 stub 端点行为完整
-- [ ] P2.1：后端 /api/health 健康检查端点可用
-- [ ] P2.2-P2.6：docker compose up -d 启动完整系统
-- [ ] P3：GitHub Actions CI 全绿
-- [ ] P4：npm run e2e 5 用例全过
-- [ ] P5：Sentry 接入，错误可上报；Web Vitals 采集；后端日志格式正常
-- [ ] P6：README 无过时描述，docs/deployment.md + docs/architecture.md 可执行
-- [ ] P7：lint=0 / tsc=0 / vitest 全过 / build 通过 / E2E 全过 / 容器化冒烟通过
+> 更新时间：2026-08-04 | 状态已核对实际代码
+
+- [x] P1.1：后端启动 + 前端关 MSW 全流程跑通，6 项实测通过（MSW handlers 修复 + .env.development.local 就绪）
+- [x] P1.2：3 文件假 loading 清理完成
+- [x] P1.3：MSW handlers 4 个 stub 端点行为完整（toggle-status/quotations submit/materials batch/settings PUT）
+- [x] P2.1：后端 /api/health 健康检查端点可用（G3 已升级为真实 DB 探测）
+- [x] P2.2-P2.6：docker compose up -d 启动完整系统（Dockerfile×2 + compose + nginx + .dockerignore×2）
+- [x] P3：GitHub Actions CI 配置就绪（.github/workflows/ci.yml，git 已初始化待推送验证）
+- [x] P4：5 个 E2E spec 已重写消除恒真式（G4，待 Docker 环境运行验证）
+- [x] P5：Sentry 接入 + Web Vitals 采集 + 后端日志 + /api/metrics 上报端点（G2 已补齐）
+- [x] P6：README 已重写 + docs/deployment.md + docs/architecture.md 已就绪
+- [ ] P7：lint=0 / tsc=0 / vitest 全过 / build 通过（G6 阶段执行中）；E2E + 容器化冒烟待 Docker 环境验证

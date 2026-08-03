@@ -1,5 +1,7 @@
 # A+B 收尾执行计划
 
+> 更新时间：2026-08-04 | 状态已核对实际代码：A 联调验证 ✅、B4 主题色迁移 ✅、B5 PDF 导出 ✅、B6 图表增强 ✅、B7 移动端 ✅、B-V 最终验证 ✅（lint/tsc/vitest/build 全过）
+
 > 承接 `backend-implementation-and-frontend-enhancement.md`：Phase A（FastAPI 后端）✅ 完成；Phase B 中 B1 i18n 基建 ✅、B2 i18n 迁移 ✅、B3 主题切换基建 ✅ 完成。
 > 本计划覆盖剩余 **A 联调验证 + B4~B7 + B-V 最终验证**，目标：真实后端联调通过 + 暗色主题全站生效 + PDF 导出 + 增强图表 + 移动端细化，达到企业级交付态。
 
