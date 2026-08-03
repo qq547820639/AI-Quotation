@@ -393,15 +393,6 @@ function SupplierFrequencyChart({ inquiries }: { inquiries: Inquiry[] }) {
       .slice(0, 10)
       .reverse(); // 横向 bar 从下往上
 
-    const hasData = sorted.length > 0;
-
-    if (!hasData) {
-      chart.setOption({
-        title: { text: t('dashboard.noInquiryData'), left: 'center', top: 'center', textStyle: { color: textColor, fontSize: 14 } },
-      });
-      return;
-    }
-
     chart.setOption({
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
       grid: { left: 10, right: 30, top: 16, bottom: 8, containLabel: true },
@@ -446,6 +437,11 @@ function SupplierFrequencyChart({ inquiries }: { inquiries: Inquiry[] }) {
     };
   }, [inquiries, t, colors, textColor, axisLineColor, suppliers]);
 
+  const hasData = inquiries.some((i) => i.invitedSupplierIds.length > 0);
+  if (!hasData) {
+    return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
+  }
+
   return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
 }
 
@@ -478,15 +474,6 @@ function CategoryDistributionChart({ inquiries }: { inquiries: Inquiry[] }) {
       }))
       .sort((a, b) => b.value - a.value);
 
-    const hasData = data.length > 0;
-
-    if (!hasData) {
-      chart.setOption({
-        title: { text: t('dashboard.noInquiryData'), left: 'center', top: 'center', textStyle: { color: textColor, fontSize: 14 } },
-      });
-      return;
-    }
-
     chart.setOption({
       tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
       legend: {
@@ -518,6 +505,11 @@ function CategoryDistributionChart({ inquiries }: { inquiries: Inquiry[] }) {
       chartRef.current = null;
     };
   }, [inquiries, t, colors, textColor]);
+
+  const hasData = inquiries.some((i) => i.items.length > 0);
+  if (!hasData) {
+    return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
+  }
 
   return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
 }
@@ -589,15 +581,6 @@ function ApprovalFunnelChart({ inquiries }: { inquiries: Inquiry[] }) {
       }))
       .filter((d) => d.value > 0);
 
-    const hasData = data.length > 0;
-
-    if (!hasData) {
-      chart.setOption({
-        title: { text: t('dashboard.noInquiryData'), left: 'center', top: 'center', textStyle: { color: textColor, fontSize: 14 } },
-      });
-      return;
-    }
-
     chart.setOption({
       tooltip: { trigger: 'item', formatter: '{b}: {c}' },
       series: [
@@ -629,6 +612,19 @@ function ApprovalFunnelChart({ inquiries }: { inquiries: Inquiry[] }) {
       chartRef.current = null;
     };
   }, [inquiries, t, colors, textColor]);
+
+  const funnelStageStatuses: InquiryStatus[] = [
+    InquiryStatus.DRAFT,
+    InquiryStatus.PENDING_SEND,
+    InquiryStatus.INQUIRING,
+    InquiryStatus.ALL_QUOTED,
+    InquiryStatus.PENDING_APPROVAL,
+    InquiryStatus.COMPLETED,
+  ];
+  const hasData = inquiries.some((i) => funnelStageStatuses.includes(i.status));
+  if (!hasData) {
+    return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
+  }
 
   return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
 }
@@ -707,6 +703,7 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const currentOrganization = useUIStore((s) => s.currentOrganization);
   const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
+  const loading = useInquiryStore((s) => s.loading);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const currentUser = useAuthStore((s) => s.currentUser);
   const canApprove = hasPermission('INQUIRY_APPROVE');
@@ -891,9 +888,12 @@ export default function DashboardPage() {
         <Col xs={12} sm={6} lg={6}>
           <Card
             hoverable
+            role="button"
+            tabIndex={0}
             size="small"
             style={{ borderRadius: 8 }}
             onClick={() => navigate('/inquiry/create')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/inquiry/create'); } }}
           >
             <Space>
               <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-primary-bg)', color: PRIMARY_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -910,9 +910,12 @@ export default function DashboardPage() {
         <Col xs={12} sm={6} lg={6}>
           <Card
             hoverable
+            role="button"
+            tabIndex={0}
             size="small"
             style={{ borderRadius: 8 }}
             onClick={() => navigate('/quotation/pending')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/quotation/pending'); } }}
           >
             <Space>
               <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-warning-bg)', color: WARNING_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -930,9 +933,12 @@ export default function DashboardPage() {
           <Col xs={12} sm={6} lg={6}>
             <Card
               hoverable
+              role="button"
+              tabIndex={0}
               size="small"
               style={{ borderRadius: 8 }}
               onClick={() => navigate('/approval')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/approval'); } }}
             >
               <Space>
                 <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-primary-bg)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -950,9 +956,12 @@ export default function DashboardPage() {
         <Col xs={12} sm={6} lg={6}>
           <Card
             hoverable
+            role="button"
+            tabIndex={0}
             size="small"
             style={{ borderRadius: 8 }}
             onClick={() => navigate('/notification')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/notification'); } }}
           >
             <Space>
               <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-success-bg)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -981,10 +990,12 @@ export default function DashboardPage() {
             style={{ borderRadius: 8 }}
             styles={{ body: { padding: 0 } }}
           >
-            {!inquiries.length ? (
+            {loading && !inquiries.length ? (
               <div style={{ padding: 24 }}>
                 <Skeleton active paragraph={{ rows: 4 }} />
               </div>
+            ) : !inquiries.length ? (
+              <Empty description={t('dashboard.recent.empty')} style={{ padding: 48 }} />
             ) : (
               <Table<Inquiry>
                 rowKey="id"
@@ -1015,8 +1026,11 @@ export default function DashboardPage() {
                   const r = getRemainingTime(item.deadline);
                   return (
                     <List.Item
+                      role="button"
+                      tabIndex={0}
                       style={{ cursor: 'pointer', padding: '10px 0' }}
                       onClick={() => navigate(`/inquiry/detail/${item.id}`)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/inquiry/detail/${item.id}`); } }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                         <span

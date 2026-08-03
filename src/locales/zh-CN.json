@@ -235,6 +235,9 @@
       "materialCategory": "物料品类分布",
       "approvalFunnel": "询价审批漏斗"
     },
+    "chart": {
+      "noData": "暂无数据"
+    },
     "recentInquiries": "最近询价单",
     "recentNotifications": "最新通知",
     "quickActions": "快捷操作",
@@ -317,7 +320,10 @@
       "confirmCancelTitle": "取消询价单",
       "confirmCancelContent": "确认取消询价单「{{code}}」？取消后不可恢复。",
       "confirmCancelOk": "确认取消",
-      "cancelSuccess": "询价单已取消"
+      "cancelSuccess": "询价单已取消",
+      "selectedCount": "已选 {{count}} 项",
+      "batchCancel": "批量取消",
+      "clearSelection": "清空选择"
     },
     "create": {
       "title": "创建询价单",
@@ -591,6 +597,7 @@
       "viewQuotationCompare": "查看报价对比",
       "exportExcel": "导出 Excel",
       "exportingPDF": "正在生成 PDF…",
+      "pdfExportFailed": "PDF 导出失败，请重试",
       "approvalProcess": "审批流程",
       "materialListTitle": "物料清单（{{count}} 项）",
       "supplierListTitle": "供应商邀请名单（{{count}} 家）",
@@ -715,7 +722,10 @@
       "confirmEnable": "确认启用供应商「{{name}}」？",
       "confirmDisable": "确认停用供应商「{{name}}」？",
       "enableSuccess": "已启用供应商「{{name}}」",
-      "disableSuccess": "已停用供应商「{{name}}」"
+      "disableSuccess": "已停用供应商「{{name}}」",
+      "selectedCount": "已选 {{count}} 项",
+      "batchDisable": "批量停用",
+      "clearSelection": "清空选择"
     },
     "detail": {
       "title": "供应商详情",

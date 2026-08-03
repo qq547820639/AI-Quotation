@@ -21,6 +21,7 @@ function mergeSuppliers(): Supplier[] {
 
 interface SupplierState {
   suppliers: Supplier[];
+  loading: boolean;
   /** W7.4：从 API 加载（失败时降级到 localStorage/mock） */
   loadFromApi: () => Promise<void>;
   getSupplierById: (id: string) => Supplier | undefined;
@@ -30,15 +31,17 @@ interface SupplierState {
 
 export const useSupplierStore = create<SupplierState>((set, get) => ({
   suppliers: mergeSuppliers(),
+  loading: false,
 
   // W7.4：从 API 加载，失败时降级到 localStorage/mock
   loadFromApi: async () => {
+    set({ loading: true });
     try {
       const data = await supplierApi.list();
-      set({ suppliers: data });
+      set({ suppliers: data, loading: false });
       saveJSON(STORAGE_KEY, data);
     } catch {
-      set({ suppliers: mergeSuppliers() });
+      set({ suppliers: mergeSuppliers(), loading: false });
     }
   },
 

@@ -24,10 +24,10 @@ import { useSettingsStore } from './useSettingsStore';
 
 const STORAGE_KEY = 'inquiries';
 
-/** 生成询价单编号：INQYYYYMMDD + 3 位序号 */
-function generateCode(): string {
+/** 生成询价单编号：INQYYYYMMDD + 3 位序号（基于已有数量递增，避免碰撞） */
+function generateCode(existingCount: number): string {
   const date = dayjs().format('YYYYMMDD');
-  const seq = String(dayjs().valueOf()).slice(-3);
+  const seq = String(existingCount + 1).padStart(3, '0');
   return `INQ${date}${seq}`;
 }
 
@@ -66,6 +66,7 @@ function mergeInquiries(): Inquiry[] {
 interface InquiryState {
   inquiries: Inquiry[];
   loaded: boolean;
+  loading: boolean;
   loadInquiries: () => void;
   /** W7.4：从 API 加载数据（失败时降级到 localStorage/mock） */
   loadFromApi: () => Promise<void>;
@@ -98,18 +99,20 @@ interface InquiryState {
 export const useInquiryStore = create<InquiryState>((set, get) => ({
   inquiries: mergeInquiries(),
   loaded: true,
+  loading: false,
 
   loadInquiries: () => set({ inquiries: mergeInquiries(), loaded: true }),
 
   // W7.4：从 API 加载，失败时降级到 localStorage
   loadFromApi: async () => {
+    set({ loading: true });
     try {
       const data = await inquiryApi.list();
-      set({ inquiries: data, loaded: true });
+      set({ inquiries: data, loaded: true, loading: false });
       saveJSON(STORAGE_KEY, data);
     } catch {
       // API 不可用时降级到 localStorage/mock
-      set({ inquiries: mergeInquiries(), loaded: true });
+      set({ inquiries: mergeInquiries(), loaded: true, loading: false });
     }
   },
 
@@ -163,7 +166,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
     const copy: Inquiry = {
       ...source,
       id: newId,
-      code: generateCode(),
+      code: generateCode(get().inquiries.length),
       subject: `${source.subject}（副本）`,
       status: InquiryStatus.DRAFT,
       quotations: [],
@@ -276,9 +279,12 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
       }
       return { inquiries };
     });
-    inquiryApi.update(inquiryId, { selectedSupplierMap: { [itemId]: supplierId } }).catch(() => {
-      /* API 不可用时降级到本地，已在上面持久化 */
-    });
+    const updated = get().inquiries.find((i) => i.id === inquiryId);
+    if (updated) {
+      inquiryApi.update(inquiryId, { selectedSupplierMap: updated.selectedSupplierMap }).catch(() => {
+        /* API 不可用时降级到本地，已在上面持久化 */
+      });
+    }
   },
 
   confirmInquiry: (inquiryId) => {

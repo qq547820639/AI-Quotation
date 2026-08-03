@@ -235,6 +235,9 @@
       "materialCategory": "Material Category Distribution",
       "approvalFunnel": "Inquiry Approval Funnel"
     },
+    "chart": {
+      "noData": "No data"
+    },
     "recentInquiries": "Recent Inquiries",
     "recentNotifications": "Recent Notifications",
     "quickActions": "Quick Actions",
@@ -591,6 +594,7 @@
       "viewQuotationCompare": "View Quotation Compare",
       "exportExcel": "Export Excel",
       "exportingPDF": "Generating PDF…",
+      "pdfExportFailed": "PDF export failed, please retry",
       "approvalProcess": "Approval Process",
       "materialListTitle": "Materials ({{count}})",
       "supplierListTitle": "Invited Suppliers ({{count}})",
@@ -715,7 +719,10 @@
       "confirmEnable": "Confirm enabling supplier \"{{name}}\"?",
       "confirmDisable": "Confirm disabling supplier \"{{name}}\"?",
       "enableSuccess": "Enabled supplier \"{{name}}\"",
-      "disableSuccess": "Disabled supplier \"{{name}}\""
+      "disableSuccess": "Disabled supplier \"{{name}}\"",
+      "selectedCount": "{{count}} item(s) selected",
+      "batchDisable": "Batch Disable",
+      "clearSelection": "Clear Selection"
     },
     "detail": {
       "title": "Supplier Detail",

@@ -17,6 +17,7 @@ import {
   Modal,
   Progress,
   Result,
+  Skeleton,
   Space,
   Spin,
   Table,
@@ -102,6 +103,7 @@ export default function InquiryDetailPage() {
   const navigate = useNavigate();
 
   const inquiry = useInquiryStore((s) => s.inquiries.find((i) => i.id === id));
+  const loading = useInquiryStore((s) => s.loading);
   const copyInquiry = useInquiryStore((s) => s.copyInquiry);
   const cancelInquiry = useInquiryStore((s) => s.cancelInquiry);
   const sendInquiry = useInquiryStore((s) => s.sendInquiry);
@@ -155,6 +157,15 @@ export default function InquiryDetailPage() {
     );
   }, [inquiry]);
 
+  // 加载中 → Skeleton
+  if (loading && !inquiry) {
+    return (
+      <div style={{ padding: 48 }}>
+        <Skeleton active paragraph={{ rows: 8 }} />
+      </div>
+    );
+  }
+
   // 不存在 → 404
   if (!inquiry) {
     return (
@@ -185,6 +196,9 @@ export default function InquiryDetailPage() {
       filename: `询价单-${inquiry.code}`,
       hideSelector: '.no-print',
     })
+      .catch(() => {
+        notifyWarning(i18n.t('inquiry.detail.pdfExportFailed'));
+      })
       .finally(() => setPdfExporting(false));
   };
 

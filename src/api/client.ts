@@ -3,6 +3,7 @@
  * 统一配置 baseURL、请求/响应拦截器
  */
 import axios from 'axios';
+import axiosRetry from 'axios-retry';
 import { message } from 'antd';
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -13,6 +14,18 @@ export const client = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+// 网络错误与 5xx 自动重试（最多 2 次，指数退避）
+axiosRetry(client, {
+  retries: 2,
+  retryCondition: (error) => {
+    return (
+      axiosRetry.isNetworkOrIdempotentRequestError(error) ||
+      (error.response?.status !== undefined && error.response.status >= 500)
+    );
+  },
+  retryDelay: axiosRetry.exponentialDelay,
 });
 
 // 请求拦截器：注入认证 token
@@ -37,6 +50,8 @@ client.interceptors.response.use(
       if (status === 401) {
         message.error('登录已过期，请重新登录');
         localStorage.removeItem('procurement_token');
+        // Redirect to login page
+        window.location.href = '/login';
       } else if (status === 403) {
         message.error('无权限访问');
       } else {

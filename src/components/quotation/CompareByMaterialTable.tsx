@@ -69,8 +69,11 @@ function QuoteCell({
   if (!qi) {
     return (
       <div
+        role={row.isSubmitted ? 'button' : undefined}
+        tabIndex={row.isSubmitted ? 0 : undefined}
         style={{ cursor: row.isSubmitted ? 'pointer' : 'not-allowed', padding: '2px 0' }}
         onClick={() => row.isSubmitted && onOpenDrawer(row.supplier.id)}
+        onKeyDown={(e) => { if (row.isSubmitted && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpenDrawer(row.supplier.id); } }}
       >
         <Text type="secondary" style={{ fontSize: 12 }}>
           {row.isSubmitted ? t('quotation.compare.materialTable.unquoted') : t('quotation.compare.materialTable.timeout')}
@@ -101,8 +104,11 @@ function QuoteCell({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       style={{ cursor: 'pointer', padding: '2px 0' }}
       onClick={() => onOpenDrawer(row.supplier.id)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDrawer(row.supplier.id); } }}
       title={t('quotation.compare.materialTable.viewQuote')}
     >
       <Line
@@ -154,8 +160,11 @@ export default function CompareByMaterialTable({
     align: 'left',
     title: (
       <div
+        role="button"
+        tabIndex={0}
         style={{ cursor: 'pointer', minWidth: 168 }}
         onClick={() => onOpenDrawer(row.supplier.id)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDrawer(row.supplier.id); } }}
         title={t('quotation.compare.materialTable.viewQuote')}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>

@@ -2,7 +2,7 @@
  * 供应商管理列表（Task 15）
  * 支持多维度筛选、等级/合作状态可视化、启用停用等操作
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -40,27 +40,20 @@ import {
 import { formatDate, formatPercent } from '@/utils/format';
 import { confirmAction, notifySuccess } from '@/utils/confirm';
 import { useIsMobile } from '@/utils/useIsMobile';
+import { MATERIAL_CATEGORY_OPTIONS } from '@/constants/materialCategories';
 
 const { Text } = Typography;
-
-/** 主营品类筛选选项 */
-const MAIN_CATEGORY_OPTIONS = [
-  { label: '工业电子', value: '工业电子' },
-  { label: '五金件', value: '五金件' },
-  { label: '自动化', value: '自动化' },
-  { label: '办公设备', value: '办公设备' },
-  { label: '包材', value: '包材' },
-  { label: '劳保', value: '劳保' },
-];
 
 export default function SupplierPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const suppliers = useSupplierStore((s) => s.suppliers);
   const toggleSupplierStatus = useSupplierStore((s) => s.toggleSupplierStatus);
+  const loading = useSupplierStore((s) => s.loading);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canDisable = hasPermission('SUPPLIER_DISABLE');
   const isMobile = useIsMobile();
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   // ===== 筛选状态（输入态，点击查询后写入 applied） =====
   const [filterKeyword, setFilterKeyword] = useState('');
@@ -74,6 +67,22 @@ export default function SupplierPage() {
     level: string | undefined;
     status: string | undefined;
   }>({ keyword: '', category: undefined, level: undefined, status: undefined });
+
+  // E4: 筛选条件持久化到 sessionStorage
+  useEffect(() => {
+    const saved = sessionStorage.getItem('supplierFilter');
+    if (saved) {
+      try {
+        setApplied(JSON.parse(saved));
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    sessionStorage.setItem('supplierFilter', JSON.stringify(applied));
+  }, [applied]);
 
   const filteredSuppliers = useMemo(() => {
     return suppliers.filter((s) => {
@@ -300,7 +309,7 @@ export default function SupplierPage() {
               placeholder={t('common.selectPlaceholder')}
               value={filterCategory}
               onChange={(val) => setFilterCategory(val)}
-              options={MAIN_CATEGORY_OPTIONS}
+              options={MATERIAL_CATEGORY_OPTIONS}
               style={{ width: '100%' }}
               allowClear
             />
@@ -347,6 +356,23 @@ export default function SupplierPage() {
           </Col>
         </Row>
       </Card>
+
+      {selectedRowKeys.length > 0 && (
+        <Space style={{ marginBottom: 16 }}>
+          <Text>{t('supplier.list.selectedCount', { count: selectedRowKeys.length })}</Text>
+          <Button
+            onClick={() => {
+              selectedRowKeys.forEach((key) => toggleSupplierStatus(String(key)));
+              setSelectedRowKeys([]);
+            }}
+          >
+            {t('supplier.list.batchDisable')}
+          </Button>
+          <Button onClick={() => setSelectedRowKeys([])}>
+            {t('supplier.list.clearSelection')}
+          </Button>
+        </Space>
+      )}
 
       <Card styles={{ body: { padding: 0 } }}>
         {isMobile ? (
@@ -419,8 +445,13 @@ export default function SupplierPage() {
         ) : (
         <Table<Supplier>
           rowKey="id"
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+          }}
           columns={columns}
           dataSource={filteredSuppliers}
+          loading={loading}
           scroll={{ x: 1600 }}
           pagination={{
             pageSize: 10,

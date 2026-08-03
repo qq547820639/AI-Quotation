@@ -18,23 +18,27 @@ import {
 /** 询价单状态标签 */
 export function InquiryStatusTag({ status }: { status: InquiryStatus }) {
   const { t } = useTranslation();
-  return <Tag color={INQUIRY_STATUS_COLOR[status]}>{t(`enum.inquiryStatus.${status}`)}</Tag>;
+  const label = t(`enum.inquiryStatus.${status}`);
+  return <Tag color={INQUIRY_STATUS_COLOR[status]} aria-label={label}>{label}</Tag>;
 }
 
 /** 供应商等级标签 */
 export function SupplierLevelTag({ level }: { level: SupplierLevel }) {
   const { t } = useTranslation();
-  return <Tag color={SUPPLIER_LEVEL_COLOR[level]}>{t(`enum.supplierLevel.${level}`)}</Tag>;
+  const label = t(`enum.supplierLevel.${level}`);
+  return <Tag color={SUPPLIER_LEVEL_COLOR[level]} aria-label={label}>{label}</Tag>;
 }
 
 /** 合作状态标签 */
 export function CooperationStatusTag({ status }: { status: CooperationStatus }) {
   const { t } = useTranslation();
-  return <Tag color={COOPERATION_STATUS_COLOR[status]}>{t(`enum.cooperationStatus.${status}`)}</Tag>;
+  const label = t(`enum.cooperationStatus.${status}`);
+  return <Tag color={COOPERATION_STATUS_COLOR[status]} aria-label={label}>{label}</Tag>;
 }
 
 /** 报价状态标签 */
 export function QuotationStatusTag({ status }: { status: QuotationStatus }) {
   const { t } = useTranslation();
-  return <Tag color={QUOTATION_STATUS_COLOR[status]}>{t(`enum.quotationStatus.${status}`)}</Tag>;
+  const label = t(`enum.quotationStatus.${status}`);
+  return <Tag color={QUOTATION_STATUS_COLOR[status]} aria-label={label}>{label}</Tag>;
 }

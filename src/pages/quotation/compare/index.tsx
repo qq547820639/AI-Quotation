@@ -142,9 +142,9 @@ export default function QuotationComparePage() {
   };
   const handleCommentBlur = (supplierId: string) => {
     if (!inquiry) return;
-    const val = commentDraft[supplierId] ?? '';
-    const original = inquiry.purchaserComments?.[supplierId] ?? '';
-    if (val.trim() === original.trim()) return;
+    const val = (commentDraft[supplierId] ?? '').trim();
+    const original = (inquiry.purchaserComments?.[supplierId] ?? '').trim();
+    if (val === original) return;
     updateInquiry(inquiry.id, {
       purchaserComments: { ...inquiry.purchaserComments, [supplierId]: val },
     });

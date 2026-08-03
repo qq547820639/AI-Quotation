@@ -37,8 +37,11 @@ export default function CompareBySupplierTable({
       width: 220,
       render: (_, row) => (
         <div
+          role="button"
+          tabIndex={0}
           style={{ cursor: 'pointer' }}
           onClick={() => onOpenDrawer(row.supplier.id)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDrawer(row.supplier.id); } }}
           title={t('quotation.compare.supplierTable.viewQuote')}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>

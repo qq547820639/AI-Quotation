@@ -2,13 +2,14 @@
  * 询价单列表（Task 7）
  * 支持多维度筛选、状态可视化、截止时间警示、复制/取消/导出等操作
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import {
   Button,
   Card,
+  Collapse,
   Col,
   DatePicker,
   Empty,
@@ -51,19 +52,10 @@ import { confirmAction, notifySuccess } from '@/utils/confirm';
 import { exportAOA } from '@/utils/excel';
 import { isCancelable, isEditable } from '@/utils/inquiryStatus';
 import { useIsMobile } from '@/utils/useIsMobile';
+import { MATERIAL_CATEGORY_OPTIONS } from '@/constants/materialCategories';
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
-
-/** 物料品类筛选选项 */
-const MATERIAL_CATEGORY_OPTIONS = [
-  { label: '工业电子', value: '工业电子' },
-  { label: '五金件', value: '五金件' },
-  { label: '自动化', value: '自动化' },
-  { label: '办公设备', value: '办公设备' },
-  { label: '包材', value: '包材' },
-  { label: '劳保', value: '劳保' },
-];
 
 export default function InquiryListPage() {
   const { t } = useTranslation();
@@ -76,11 +68,13 @@ export default function InquiryListPage() {
   );
   const copyInquiry = useInquiryStore((s) => s.copyInquiry);
   const cancelInquiry = useInquiryStore((s) => s.cancelInquiry);
+  const loading = useInquiryStore((s) => s.loading);
   const quotations = useQuotationStore((s) => s.quotations);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canEdit = hasPermission('INQUIRY_EDIT');
   const canCancel = hasPermission('INQUIRY_CANCEL');
   const isMobile = useIsMobile();
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   // ===== 筛选状态（输入态，点击查询后写入 applied） =====
   const [filterCode, setFilterCode] = useState('');
@@ -109,6 +103,35 @@ export default function InquiryListPage() {
     deadline: null,
     category: undefined,
   });
+
+  // E4: 筛选条件持久化到 sessionStorage
+  useEffect(() => {
+    const saved = sessionStorage.getItem('inquiryFilter');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.createdAt) {
+          parsed.createdAt = [
+            parsed.createdAt[0] ? dayjs(parsed.createdAt[0]) : null,
+            parsed.createdAt[1] ? dayjs(parsed.createdAt[1]) : null,
+          ];
+        }
+        if (parsed.deadline) {
+          parsed.deadline = [
+            parsed.deadline[0] ? dayjs(parsed.deadline[0]) : null,
+            parsed.deadline[1] ? dayjs(parsed.deadline[1]) : null,
+          ];
+        }
+        setApplied(parsed);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    sessionStorage.setItem('inquiryFilter', JSON.stringify(applied));
+  }, [applied]);
 
   // 已提交报价数量映射：inquiryId -> count
   const submittedCountMap = useMemo(() => {
@@ -435,7 +458,12 @@ export default function InquiryListPage() {
       />
 
       <Card size="small" style={{ marginBottom: 16 }}>
-        <Row gutter={[16, 16]}>
+        <Collapse
+          items={[{
+            key: 'filter',
+            label: t('common.filter'),
+            children: (
+              <Row gutter={[16, 16]}>
           <Col xs={24} sm={12} md={8} lg={6}>
             <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.inquiryCode')}</div>
             <Input
@@ -523,8 +551,29 @@ export default function InquiryListPage() {
               </Button>
             </Space>
           </Col>
-        </Row>
+              </Row>
+            ),
+          }]}
+          defaultActiveKey={isMobile ? [] : ['filter']}
+        />
       </Card>
+
+      {selectedRowKeys.length > 0 && (
+        <Space style={{ marginBottom: 16 }}>
+          <Text>{t('inquiry.list.selectedCount', { count: selectedRowKeys.length })}</Text>
+          <Button
+            onClick={() => {
+              selectedRowKeys.forEach((key) => cancelInquiry(String(key)));
+              setSelectedRowKeys([]);
+            }}
+          >
+            {t('inquiry.list.batchCancel')}
+          </Button>
+          <Button onClick={() => setSelectedRowKeys([])}>
+            {t('inquiry.list.clearSelection')}
+          </Button>
+        </Space>
+      )}
 
       <Card styles={{ body: { padding: 0 } }}>
         {isMobile ? (
@@ -597,8 +646,13 @@ export default function InquiryListPage() {
         ) : (
         <Table<Inquiry>
           rowKey="id"
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+          }}
           columns={columns}
           dataSource={filteredInquiries}
+          loading={loading}
           scroll={{ x: 1500 }}
           pagination={{
             pageSize: 10,
