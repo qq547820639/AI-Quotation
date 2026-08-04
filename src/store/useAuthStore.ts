@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import { loadJSON, saveJSON, removeKey } from '@/utils/storage';
 import { ROLE_PERMISSIONS, type Permission, type User, type UserRole } from '@/types';
 import { currentUser, users, organizations } from '@/mock/users';
-import { authApi } from '@/api';
+import { getAuthAdapter } from '@/services/auth';
 
 const STORAGE_KEY = 'auth';
 
@@ -59,7 +59,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     saveJSON(STORAGE_KEY, { userId });
     set({ currentUser: u, isAuthenticated: true });
     // 异步同步到 API，成功后持久化 token（client.ts 拦截器读 procurement_token）
-    authApi
+    getAuthAdapter()
       .login({ userId })
       .then((result) => {
         localStorage.setItem('procurement_token', result.token);
@@ -74,9 +74,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     removeKey(STORAGE_KEY);
     localStorage.removeItem('procurement_token');
     set({ currentUser, isAuthenticated: false });
-    authApi.logout().catch(() => {
-      /* API 不可用时降级到本地 */
-    });
+    getAuthAdapter()
+      .logout()
+      .catch(() => {
+        /* API 不可用时降级到本地 */
+      });
   },
 
   hasPermission: (perm) => resolvePermissions(get().currentUser).includes(perm),
@@ -89,7 +91,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // W7.5：从 API 同步当前用户，失败时降级到本地
   loadFromApi: async () => {
     try {
-      const user = await authApi.me();
+      const user = await getAuthAdapter().me();
       set({ currentUser: user });
     } catch {
       /* API 不可用时使用本地用户 */

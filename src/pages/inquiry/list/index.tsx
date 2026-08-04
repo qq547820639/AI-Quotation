@@ -12,6 +12,8 @@ import {
   Collapse,
   Col,
   DatePicker,
+  Drawer,
+  Dropdown,
   Empty,
   Input,
   List,
@@ -20,14 +22,18 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  ClearOutlined,
   CopyOutlined,
   EditOutlined,
   ExportOutlined,
   EyeOutlined,
+  FilterOutlined,
+  MoreOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -47,12 +53,18 @@ import {
   QuotationStatus,
   type Inquiry,
 } from '@/types';
-import { formatDateTime, getRemainingTime } from '@/utils/format';
-import { confirmAction, notifySuccess } from '@/utils/confirm';
+import { formatDateTime, formatDate, getRemainingTime } from '@/utils/format';
+import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import { exportAOA } from '@/utils/excel';
 import { isCancelable, isEditable } from '@/utils/inquiryStatus';
 import { useIsMobile } from '@/utils/useIsMobile';
 import { MATERIAL_CATEGORY_OPTIONS } from '@/constants/materialCategories';
+import TableSettings from '@/components/table/TableSettings';
+import {
+  DENSITY_TO_SIZE,
+  useTablePreferences,
+  type TableColumnPref,
+} from '@/hooks/useTablePreferences';
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
@@ -68,13 +80,16 @@ export default function InquiryListPage() {
   );
   const copyInquiry = useInquiryStore((s) => s.copyInquiry);
   const cancelInquiry = useInquiryStore((s) => s.cancelInquiry);
+  const batchCancelInquiries = useInquiryStore((s) => s.batchCancelInquiries);
   const loading = useInquiryStore((s) => s.loading);
   const quotations = useQuotationStore((s) => s.quotations);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canEdit = hasPermission('INQUIRY_EDIT');
   const canCancel = hasPermission('INQUIRY_CANCEL');
   const isMobile = useIsMobile();
+  const currentUser = useAuthStore((s) => s.currentUser);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   // ===== 筛选状态（输入态，点击查询后写入 applied） =====
   const [filterCode, setFilterCode] = useState('');
@@ -244,9 +259,54 @@ export default function InquiryListPage() {
       content: i18n.t('inquiry.list.confirmCancelContent', { code: inquiry.code }),
       okText: i18n.t('inquiry.list.confirmCancelOk'),
       danger: true,
-      onOk: () => {
-        cancelInquiry(inquiry.id);
-        notifySuccess(i18n.t('inquiry.list.cancelSuccess'));
+      onOk: async () => {
+        const result = await cancelInquiry(inquiry.id);
+        if (result.success) {
+          notifySuccess(i18n.t('inquiry.list.cancelSuccess'));
+        } else if (result.reason === 'pending') {
+          return;
+        } else {
+          notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+        }
+      },
+    });
+  };
+
+  const handleBatchCancel = () => {
+    const ids = selectedRowKeys.map(String);
+    const skippedCount = ids.filter((id) => {
+      const status = inquiries.find((i) => i.id === id)?.status;
+      return status === undefined || !isCancelable(status);
+    }).length;
+    const executableCount = ids.length - skippedCount;
+    confirmAction({
+      title: i18n.t('inquiry.list.batchCancelConfirmTitle'),
+      content: i18n.t('inquiry.list.batchCancelSummary', {
+        total: ids.length,
+        executable: executableCount,
+        skipped: skippedCount,
+      }),
+      okText: i18n.t('inquiry.list.batchCancel'),
+      danger: true,
+      onOk: async () => {
+        const result = await batchCancelInquiries(ids);
+        if (result.succeeded > 0) {
+          notifySuccess(i18n.t('inquiry.list.batchCancelSuccess', { count: result.succeeded }));
+        }
+        if (result.failed > 0) {
+          const reasons = Array.from(
+            new Set(
+              result.results
+                .filter((r) => !r.success && !r.skipped && r.reason)
+                .map((r) => r.reason as string),
+            ),
+          );
+          const reasonText = reasons.length ? `：${reasons.join('；')}` : '';
+          notifyError(
+            i18n.t('inquiry.list.batchCancelFailed', { count: result.failed }) + reasonText,
+          );
+        }
+        setSelectedRowKeys([]);
       },
     });
   };
@@ -276,6 +336,124 @@ export default function InquiryListPage() {
     notifySuccess(i18n.t('inquiry.export.success'));
   };
 
+  // ===== Task 7：快捷视图 / 当前筛选 / 一键清空 / 导出当前筛选结果 =====
+  const applyMyPending = () => {
+    const statuses = [
+      InquiryStatus.DRAFT,
+      InquiryStatus.INQUIRING,
+      InquiryStatus.PENDING_APPROVAL,
+      InquiryStatus.PENDING_CONFIRM,
+    ];
+    setFilterStatus(statuses);
+    setFilterCreator(currentUser.name);
+    setApplied({
+      code: filterCode,
+      subject: filterSubject,
+      creator: currentUser.name,
+      status: statuses,
+      createdAt: filterCreatedAt,
+      deadline: filterDeadline,
+      category: filterCategory,
+    });
+  };
+
+  const resetDefaultView = () => {
+    handleReset();
+  };
+
+  /** 一键清空筛选：清空输入态 + applied */
+  const clearFilters = () => {
+    setFilterCode('');
+    setFilterSubject('');
+    setFilterCreator('');
+    setFilterStatus([]);
+    setFilterCreatedAt(null);
+    setFilterDeadline(null);
+    setFilterCategory(undefined);
+    setApplied({
+      code: '',
+      subject: '',
+      creator: '',
+      status: [],
+      createdAt: null,
+      deadline: null,
+      category: undefined,
+    });
+  };
+
+  /** 当前生效筛选条件 Tag 列表 */
+  const activeFilterTags = useMemo(() => {
+    const tags: React.ReactNode[] = [];
+    if (applied.code) {
+      tags.push(<Tag key="code">{t('inquiry.list.inquiryCode')}: {applied.code}</Tag>);
+    }
+    if (applied.subject) {
+      tags.push(<Tag key="subject">{t('inquiry.list.subject')}: {applied.subject}</Tag>);
+    }
+    if (applied.creator) {
+      tags.push(<Tag key="creator">{t('inquiry.list.creator')}: {applied.creator}</Tag>);
+    }
+    applied.status.forEach((s) => {
+      tags.push(
+        <Tag key={`status-${s}`} color="blue">
+          {t('inquiry.list.status')}: {i18n.t(`enum.inquiryStatus.${s}`)}
+        </Tag>,
+      );
+    });
+    if (applied.createdAt && applied.createdAt[0] && applied.createdAt[1]) {
+      tags.push(
+        <Tag key="createdAt">
+          {t('inquiry.list.createdAt')}: {formatDate(applied.createdAt[0].toISOString())} ~{' '}
+          {formatDate(applied.createdAt[1].toISOString())}
+        </Tag>,
+      );
+    }
+    if (applied.deadline && applied.deadline[0] && applied.deadline[1]) {
+      tags.push(
+        <Tag key="deadline">
+          {t('inquiry.list.deadline')}: {formatDate(applied.deadline[0].toISOString())} ~{' '}
+          {formatDate(applied.deadline[1].toISOString())}
+        </Tag>,
+      );
+    }
+    if (applied.category) {
+      tags.push(
+        <Tag key="category" color="geekblue">
+          {t('inquiry.list.materialCategory')}: {applied.category}
+        </Tag>,
+      );
+    }
+    return tags;
+  }, [applied, t]);
+
+  /** 导出当前筛选结果 */
+  const handleExportCurrent = () => {
+    const header = [
+      t('inquiry.list.inquiryCode'),
+      t('inquiry.list.subject'),
+      t('inquiry.list.currentStatus'),
+      t('inquiry.list.creator'),
+      t('inquiry.list.createdAt'),
+      t('inquiry.list.deadlineLabel'),
+      t('inquiry.list.itemCount'),
+      t('inquiry.list.invitedCount'),
+      t('inquiry.list.submittedCount'),
+    ];
+    const rows = filteredInquiries.map((inq) => [
+      inq.code,
+      inq.subject,
+      i18n.t(`enum.inquiryStatus.${inq.status}`),
+      inq.createdByName,
+      formatDateTime(inq.createdAt),
+      formatDateTime(inq.deadline),
+      inq.items.length,
+      inq.invitedSupplierIds.length,
+      submittedCountMap.get(inq.id) ?? 0,
+    ]);
+    exportAOA(t('inquiry.list.pageTitle'), header, rows);
+    notifySuccess(t('table.exportCurrentSuccess'));
+  };
+
   // 截止时间单元格：超时红色、即将超时橙色
   const renderDeadline = (deadline: string) => {
     const remaining = getRemainingTime(deadline);
@@ -301,7 +479,35 @@ export default function InquiryListPage() {
     return <Text>{formatted}</Text>;
   };
 
-  const columns: ColumnsType<Inquiry> = [
+  // ===== 表格列偏好（Task 7）：可见性 / 顺序 / 固定 / 密度，本地持久化 =====
+  const defaultColumnPrefs: TableColumnPref[] = useMemo(
+    () => [
+      { key: 'code', title: t('inquiry.list.inquiryCode'), visible: true, fixed: 'left', order: 0 },
+      { key: 'subject', title: t('inquiry.list.subject'), visible: true, order: 1 },
+      { key: 'itemCount', title: t('inquiry.list.itemCount'), visible: true, order: 2 },
+      { key: 'invitedCount', title: t('inquiry.list.invitedCount'), visible: true, order: 3 },
+      { key: 'submittedCount', title: t('inquiry.list.submittedCount'), visible: true, order: 4 },
+      { key: 'deadline', title: t('inquiry.list.deadlineLabel'), visible: true, order: 5 },
+      { key: 'status', title: t('inquiry.list.currentStatus'), visible: true, fixed: 'left', order: 6 },
+      { key: 'createdByName', title: t('inquiry.list.creator'), visible: true, order: 7 },
+      { key: 'createdAt', title: t('inquiry.list.createdAt'), visible: true, order: 8 },
+      { key: 'action', title: t('inquiry.list.actions'), visible: true, fixed: 'right', order: 9 },
+    ],
+    [t],
+  );
+  const {
+    prefs,
+    setColumnVisible,
+    setColumnOrder,
+    setColumnFixed,
+    setDensity,
+    reset: resetTablePrefs,
+  } = useTablePreferences('inquiryList', {
+    columns: defaultColumnPrefs,
+    density: 'default',
+  });
+
+  const columnDefs: ColumnsType<Inquiry> = [
     {
       title: t('inquiry.list.inquiryCode'),
       dataIndex: 'code',
@@ -439,6 +645,124 @@ export default function InquiryListPage() {
     },
   ];
 
+  // 按偏好渲染生效列：过滤可见 + 按 order 排序 + 应用固定方向
+  const columns = prefs.columns
+    .filter((c) => c.visible)
+    .sort((a, b) => a.order - b.order)
+    .map((p) => {
+      const def = columnDefs.find((d) => d.key === p.key);
+      if (!def) return null;
+      // 固定方向以用户偏好优先，未设置则回退到列默认
+      return p.fixed ? { ...def, fixed: p.fixed } : def;
+    })
+    .filter((d): d is (typeof columnDefs)[number] => d !== null);
+
+  const tableSize = DENSITY_TO_SIZE[prefs.density];
+
+  /** 空状态引导：无数据或筛选无结果时提供「清空筛选」入口 */
+  const renderEmpty = () => (
+    <Empty
+      description={
+        inquiries.length === 0 ? t('inquiry.list.empty') : t('inquiry.list.noMatch')
+      }
+    >
+      <Button onClick={clearFilters}>{t('table.clearFilters')}</Button>
+    </Empty>
+  );
+
+  /** 筛选控件（桌面端 Collapse / 移动端 Drawer 复用） */
+  const filterForm = (
+    <Row gutter={[16, 16]}>
+      <Col xs={24} sm={12} md={8} lg={6}>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.inquiryCode')}</div>
+        <Input
+          placeholder={t('common.inputPlaceholder')}
+          value={filterCode}
+          onChange={(e) => setFilterCode(e.target.value)}
+          allowClear
+        />
+      </Col>
+      <Col xs={24} sm={12} md={8} lg={6}>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.subject')}</div>
+        <Input
+          placeholder={t('common.inputPlaceholder')}
+          value={filterSubject}
+          onChange={(e) => setFilterSubject(e.target.value)}
+          allowClear
+        />
+      </Col>
+      <Col xs={24} sm={12} md={8} lg={6}>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.creator')}</div>
+        <Input
+          placeholder={t('common.inputPlaceholder')}
+          value={filterCreator}
+          onChange={(e) => setFilterCreator(e.target.value)}
+          allowClear
+        />
+      </Col>
+      <Col xs={24} sm={12} md={8} lg={6}>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.status')}</div>
+        <Select
+          mode="multiple"
+          placeholder={t('common.selectPlaceholder')}
+          value={filterStatus}
+          onChange={(val) => setFilterStatus(val)}
+          options={INQUIRY_STATUS_OPTIONS}
+          style={{ width: '100%' }}
+          allowClear
+          maxTagCount="responsive"
+        />
+      </Col>
+      <Col xs={24} sm={12} md={8} lg={6}>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.createdAt')}</div>
+        <RangePicker
+          value={filterCreatedAt as [Dayjs, Dayjs] | null}
+          onChange={(val) =>
+            setFilterCreatedAt(val as [Dayjs | null, Dayjs | null] | null)
+          }
+          style={{ width: '100%' }}
+        />
+      </Col>
+      <Col xs={24} sm={12} md={8} lg={6}>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.deadline')}</div>
+        <RangePicker
+          value={filterDeadline as [Dayjs, Dayjs] | null}
+          onChange={(val) =>
+            setFilterDeadline(val as [Dayjs | null, Dayjs | null] | null)
+          }
+          style={{ width: '100%' }}
+        />
+      </Col>
+      <Col xs={24} sm={12} md={8} lg={6}>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.materialCategory')}</div>
+        <Select
+          placeholder={t('common.selectPlaceholder')}
+          value={filterCategory}
+          onChange={(val) => setFilterCategory(val)}
+          options={MATERIAL_CATEGORY_OPTIONS}
+          style={{ width: '100%' }}
+          allowClear
+        />
+      </Col>
+      <Col
+        xs={24}
+        sm={12}
+        md={8}
+        lg={6}
+        style={{ display: 'flex', alignItems: 'flex-end' }}
+      >
+        <Space>
+          <Button type="primary" icon={<SearchOutlined />} onClick={handleQuery}>
+            {t('inquiry.list.query')}
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={handleReset}>
+            {t('common.reset')}
+          </Button>
+        </Space>
+      </Col>
+    </Row>
+  );
+
   return (
     <div>
       <PageHeader
@@ -457,122 +781,115 @@ export default function InquiryListPage() {
         }
       />
 
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Collapse
-          items={[{
-            key: 'filter',
-            label: t('common.filter'),
-            children: (
-              <Row gutter={[16, 16]}>
-          <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.inquiryCode')}</div>
-            <Input
-              placeholder={t('common.inputPlaceholder')}
-              value={filterCode}
-              onChange={(e) => setFilterCode(e.target.value)}
-              allowClear
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.subject')}</div>
-            <Input
-              placeholder={t('common.inputPlaceholder')}
-              value={filterSubject}
-              onChange={(e) => setFilterSubject(e.target.value)}
-              allowClear
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.creator')}</div>
-            <Input
-              placeholder={t('common.inputPlaceholder')}
-              value={filterCreator}
-              onChange={(e) => setFilterCreator(e.target.value)}
-              allowClear
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.status')}</div>
-            <Select
-              mode="multiple"
-              placeholder={t('common.selectPlaceholder')}
-              value={filterStatus}
-              onChange={(val) => setFilterStatus(val)}
-              options={INQUIRY_STATUS_OPTIONS}
-              style={{ width: '100%' }}
-              allowClear
-              maxTagCount="responsive"
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.createdAt')}</div>
-            <RangePicker
-              value={filterCreatedAt as [Dayjs, Dayjs] | null}
-              onChange={(val) =>
-                setFilterCreatedAt(val as [Dayjs | null, Dayjs | null] | null)
-              }
-              style={{ width: '100%' }}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.deadline')}</div>
-            <RangePicker
-              value={filterDeadline as [Dayjs, Dayjs] | null}
-              onChange={(val) =>
-                setFilterDeadline(val as [Dayjs | null, Dayjs | null] | null)
-              }
-              style={{ width: '100%' }}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.materialCategory')}</div>
-            <Select
-              placeholder={t('common.selectPlaceholder')}
-              value={filterCategory}
-              onChange={(val) => setFilterCategory(val)}
-              options={MATERIAL_CATEGORY_OPTIONS}
-              style={{ width: '100%' }}
-              allowClear
-            />
-          </Col>
-          <Col
-            xs={24}
-            sm={12}
-            md={8}
-            lg={6}
-            style={{ display: 'flex', alignItems: 'flex-end' }}
-          >
-            <Space>
-              <Button type="primary" icon={<SearchOutlined />} onClick={handleQuery}>
-                {t('inquiry.list.query')}
-              </Button>
-              <Button icon={<ReloadOutlined />} onClick={handleReset}>
-                {t('common.reset')}
-              </Button>
-            </Space>
-          </Col>
-              </Row>
-            ),
-          }]}
-          defaultActiveKey={isMobile ? [] : ['filter']}
-        />
-      </Card>
-
-      {selectedRowKeys.length > 0 && (
-        <Space style={{ marginBottom: 16 }}>
-          <Text>{t('inquiry.list.selectedCount', { count: selectedRowKeys.length })}</Text>
+      {isMobile ? (
+        <>
           <Button
-            onClick={() => {
-              selectedRowKeys.forEach((key) => cancelInquiry(String(key)));
-              setSelectedRowKeys([]);
+            block
+            icon={<FilterOutlined />}
+            onClick={() => setFilterOpen(true)}
+            style={{ marginBottom: 16 }}
+          >
+            {t('common.filter')}
+          </Button>
+          <Drawer
+            title={t('common.filter')}
+            placement="right"
+            width={320}
+            open={filterOpen}
+            onClose={() => {
+              handleQuery();
+              setFilterOpen(false);
             }}
           >
-            {t('inquiry.list.batchCancel')}
+            {filterForm}
+          </Drawer>
+        </>
+      ) : (
+        <Card size="small" style={{ marginBottom: 16 }}>
+          <Collapse
+            items={[{
+              key: 'filter',
+              label: t('common.filter'),
+              children: filterForm,
+            }]}
+            defaultActiveKey={['filter']}
+          />
+        </Card>
+      )}
+
+      <Space wrap style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+        <Space wrap>
+          <Text type="secondary">{t('table.currentFilters')}:</Text>
+          {activeFilterTags.length === 0 ? (
+            <Text type="secondary">{t('common.all')}</Text>
+          ) : (
+            activeFilterTags
+          )}
+          {activeFilterTags.length > 0 && (
+            <Button size="small" icon={<ClearOutlined />} onClick={clearFilters}>
+              {t('table.clearFilters')}
+            </Button>
+          )}
+        </Space>
+        <Space wrap>
+          <Tooltip title={t('table.myPendingDesc')}>
+            <Button icon={<EyeOutlined />} onClick={applyMyPending}>
+              {t('table.myPending')}
+            </Button>
+          </Tooltip>
+          <Button icon={<ReloadOutlined />} onClick={resetDefaultView}>
+            {t('table.resetDefaultView')}
           </Button>
-          <Button onClick={() => setSelectedRowKeys([])}>
-            {t('inquiry.list.clearSelection')}
+          <TableSettings
+            columns={prefs.columns}
+            density={prefs.density}
+            onToggleVisible={setColumnVisible}
+            onMoveOrder={setColumnOrder}
+            onSetFixed={setColumnFixed}
+            onSetDensity={setDensity}
+            onReset={resetTablePrefs}
+          />
+          <Button icon={<ExportOutlined />} onClick={handleExportCurrent}>
+            {t('table.exportCurrent')}
           </Button>
         </Space>
+      </Space>
+
+      {selectedRowKeys.length > 0 && (
+        <div
+          style={{
+            position: 'sticky',
+            bottom: 0,
+            zIndex: 10,
+            marginBottom: 16,
+            padding: '10px 16px calc(10px + env(safe-area-inset-bottom))',
+            background: '#1f2937',
+            color: '#fff',
+            borderRadius: 8,
+            boxShadow: '0 -2px 8px rgba(0,0,0,0.15)',
+          }}
+        >
+          <Space wrap>
+            <Text style={{ color: '#fff' }}>
+              {t('inquiry.list.selectedCount', { count: selectedRowKeys.length })}
+            </Text>
+            {canCancel && (
+              <Button
+                danger
+                disabled={!selectedRowKeys.some((key) => {
+                const status = inquiries.find((i) => i.id === String(key))?.status;
+                return status !== undefined && isCancelable(status);
+              })}
+                onClick={handleBatchCancel}
+              >
+                {t('inquiry.list.batchCancel')}
+              </Button>
+            )}
+            <Button onClick={() => setSelectedRowKeys([])}>
+              {t('inquiry.list.clearSelection')}
+            </Button>
+          </Space>
+        </div>
       )}
 
       <Card styles={{ body: { padding: 0 } }}>
@@ -580,13 +897,8 @@ export default function InquiryListPage() {
           <List
             dataSource={filteredInquiries}
             locale={{
-              emptyText:
-                inquiries.length === 0 ? (
-                  <Empty description={t('inquiry.list.empty')} />
-                ) : (
-                  <Empty description={t('inquiry.list.noMatch')} />
-                ),
-            }}
+            emptyText: renderEmpty(),
+          }}
             pagination={{
               pageSize: 10,
               simple: true,
@@ -618,26 +930,34 @@ export default function InquiryListPage() {
                     {t('inquiry.list.deadline')}: {formatDateTime(record.deadline)}
                     {remaining.expired ? ` · ${t('inquiry.list.expired')}` : remaining.urgent ? ` · ${remaining.text}` : ''}
                   </div>
-                  <Space size={0} wrap style={{ marginTop: 8 }}>
+                  <Space size={0} wrap style={{ marginTop: 8, alignItems: 'center' }}>
                     <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/inquiry/detail/${record.id}`)}>
                       {t('common.detail')}
                     </Button>
-                    {canEdit && isEditable(record.status) && (
-                      <Button type="link" size="small" icon={<EditOutlined />} onClick={() => navigate(`/inquiry/edit/${record.id}`)}>
-                        {t('inquiry.list.edit')}
+                    <Dropdown
+                      menu={{
+                        items: [
+                          ...(canEdit && isEditable(record.status)
+                            ? [{ key: 'edit', label: t('inquiry.list.edit'), icon: <EditOutlined /> }]
+                            : []),
+                          { key: 'copy', label: t('common.copy'), icon: <CopyOutlined /> },
+                          ...(canCancel && isCancelable(record.status)
+                            ? [{ key: 'cancel', label: t('common.cancel'), icon: <StopOutlined />, danger: true }]
+                            : []),
+                          { key: 'export', label: t('common.export'), icon: <ExportOutlined /> },
+                        ],
+                        onClick: ({ key }) => {
+                          if (key === 'edit') navigate(`/inquiry/edit/${record.id}`);
+                          else if (key === 'copy') handleCopy(record);
+                          else if (key === 'cancel') handleCancel(record);
+                          else if (key === 'export') handleExport(record);
+                        },
+                      }}
+                    >
+                      <Button type="link" size="small" icon={<MoreOutlined />}>
+                        {t('common.more')}
                       </Button>
-                    )}
-                    <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => handleCopy(record)}>
-                      {t('common.copy')}
-                    </Button>
-                    {canCancel && isCancelable(record.status) && (
-                      <Button type="link" size="small" danger icon={<StopOutlined />} onClick={() => handleCancel(record)}>
-                        {t('common.cancel')}
-                      </Button>
-                    )}
-                    <Button type="link" size="small" icon={<ExportOutlined />} onClick={() => handleExport(record)}>
-                      {t('common.export')}
-                    </Button>
+                    </Dropdown>
                   </Space>
                 </List.Item>
               );
@@ -653,6 +973,7 @@ export default function InquiryListPage() {
           columns={columns}
           dataSource={filteredInquiries}
           loading={loading}
+          size={tableSize}
           scroll={{ x: 1500 }}
           pagination={{
             pageSize: 10,
@@ -660,12 +981,7 @@ export default function InquiryListPage() {
             showTotal: (total) => t('inquiry.list.total', { count: total }),
           }}
           locale={{
-            emptyText:
-              inquiries.length === 0 ? (
-                <Empty description={t('inquiry.list.empty')} />
-              ) : (
-                <Empty description={t('inquiry.list.noMatch')} />
-              ),
+            emptyText: renderEmpty(),
           }}
         />
         )}

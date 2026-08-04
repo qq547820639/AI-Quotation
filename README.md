@@ -92,11 +92,12 @@ npm run dev
 ## ✅ 质量检查
 
 ```bash
-npm run lint       # ESLint 代码检查
-npx tsc --noEmit   # TypeScript 类型检查
-npm run test       # 单元测试（Vitest）
-npm run build      # 生产构建
-npm run e2e        # E2E 测试（Playwright，需先启动 Docker）
+npm run lint        # ESLint 代码检查
+npx tsc --noEmit    # TypeScript 类型检查
+npm run test        # 单元测试（Vitest）
+npm run build       # 生产构建
+cd backend && .venv/bin/python -m pytest   # 后端测试（API 集成 / 权限 / 状态流转）
+npm run e2e         # E2E 测试（Playwright，需先启动 Docker）
 ```
 
 > 💡 提交代码时会自动触发 `lint-staged`：对暂存的 `*.{ts,tsx}` 文件运行 `eslint --fix` + `prettier --write`。
@@ -119,13 +120,18 @@ npm run e2e        # E2E 测试（Playwright，需先启动 Docker）
 
 ### 单元测试（Vitest）
 
-- 9 个测试文件 / 122 条用例
-- 覆盖：评分算法、格式化、存储、供应商匹配、物料导入、AI 服务、截止监听、状态机
+- 18 个测试文件 / 229 条用例
+- 覆盖：API Client 重试与错误解析、Store 写操作回滚与防重复提交、评分算法、格式化、存储、供应商匹配、物料导入、AI 服务、截止监听、状态机、表格设置、权限定义
+
+### 后端测试（pytest）
+
+- 17 条用例
+- 覆盖：认证、询价/报价/供应商核心 API 集成、权限矩阵、数据库事务与状态流转
 
 ### E2E 测试（Playwright）
 
-- 5 条核心流程
-- 覆盖：认证、询价流程、供应商门户、权限控制、国际化与主题
+- 7 个文件 / 28 条用例
+- 覆盖：核心业务链路（询价→报价→审批→定标）、异常场景（超时/网络中断/500/401/403/重复点击/部分批量失败/表单校验/数据冲突/刷新/返回/保存失败重试/不同权限）、认证、供应商门户、权限控制、国际化与主题
 
 ---
 

@@ -47,7 +47,7 @@ import {
   type Inquiry,
 } from '@/types';
 import { formatCurrency, formatDateTime } from '@/utils/format';
-import { notifySuccess } from '@/utils/confirm';
+import { notifyError, notifySuccess } from '@/utils/confirm';
 import i18n from '@/i18n';
 
 const { Text } = Typography;
@@ -82,6 +82,7 @@ export default function ApprovalPage() {
   const [modalAction, setModalAction] = useState<'approve' | 'reject'>('approve');
   const [modalInquiryId, setModalInquiryId] = useState<string | null>(null);
   const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const inquiries = useMemo(
     () => getVisibleInquiries(currentOrganization),
@@ -120,12 +121,23 @@ export default function ApprovalPage() {
     setModalOpen(true);
   };
 
-  const handleModalOk = () => {
+  const handleModalOk = async () => {
     if (!modalInquiryId) return;
     const action = modalAction === 'approve' ? approveInquiry : rejectInquiry;
-    action(modalInquiryId, comment.trim());
-    setModalOpen(false);
-    notifySuccess(modalAction === 'approve' ? i18n.t('approval.approvePassed') : i18n.t('approval.rejectPassed'));
+    setSubmitting(true);
+    try {
+      const result = await action(modalInquiryId, comment.trim());
+      if (result.success) {
+        setModalOpen(false);
+        notifySuccess(modalAction === 'approve' ? i18n.t('approval.approvePassed') : i18n.t('approval.rejectPassed'));
+      } else if (result.reason === 'pending') {
+        // 重复提交被拦截，静默
+      } else {
+        notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const columns: ColumnsType<Inquiry> = [
@@ -311,7 +323,7 @@ export default function ApprovalPage() {
         onCancel={() => setModalOpen(false)}
         okText={t('common.ok')}
         cancelText={t('common.cancel')}
-        okButtonProps={modalAction === 'reject' ? { danger: true } : {}}
+        okButtonProps={modalAction === 'reject' ? { danger: true, loading: submitting } : { loading: submitting }}
       >
         <Form layout="vertical">
           <Form.Item label={t('approval.comment')}>

@@ -11,8 +11,12 @@ import { loadJSON, saveJSON } from '@/utils/storage';
 import { quotationApi } from '@/api';
 import { useInquiryStore } from './useInquiryStore';
 import { useNotificationStore } from './useNotificationStore';
+import { ok, fail, pending, notFound, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'quotations';
+
+/** 进行中的写操作（key: op:id），用于防重复提交 */
+const pendingOps: Record<string, boolean> = {};
 
 /** 合并 mock 与 localStorage */
 function mergeQuotations(): Quotation[] {
@@ -31,10 +35,10 @@ interface QuotationState {
   getQuotationsByInquiry: (inquiryId: string) => Quotation[];
   getQuotationById: (id: string) => Quotation | undefined;
   /** 暂存报价 */
-  saveQuotationDraft: (quotation: Quotation) => void;
+  saveQuotationDraft: (quotation: Quotation) => Promise<WriteResult>;
   /** 供应商提交报价：更新状态为 SUBMITTED，并记录到询价日志 */
-  submitQuotation: (quotationId: string) => void;
-  upsertQuotation: (quotation: Quotation) => void;
+  submitQuotation: (quotationId: string) => Promise<WriteResult>;
+  upsertQuotation: (quotation: Quotation) => Promise<WriteResult>;
 }
 
 export const useQuotationStore = create<QuotationState>((set, get) => ({
@@ -56,7 +60,8 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
 
   getQuotationById: (id) => get().quotations.find((q) => q.id === id),
 
-  saveQuotationDraft: (quotation) => {
+  saveQuotationDraft: async (quotation) => {
+    if (pendingOps[`draft:${quotation.id}`]) return pending();
     const nowStr = dayjs().format('YYYY-MM-DD HH:mm:ss');
     const exists = get().quotations.some((q) => q.id === quotation.id);
     const next: Quotation = {
@@ -65,72 +70,100 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
       updatedAt: nowStr,
       createdAt: quotation.createdAt || nowStr,
     };
-    set((state) => {
-      const quotations = exists
-        ? state.quotations.map((q) => (q.id === quotation.id ? next : q))
-        : [...state.quotations, next];
-      saveJSON(STORAGE_KEY, quotations);
-      return { quotations };
-    });
-    // 同步记录暂存日志
-    useInquiryStore
-      .getState()
-      .addLog(quotation.inquiryId, LogType.SAVE_QUOTATION_DRAFT, `${quotation.supplierName} 暂存报价`);
-    quotationApi.saveDraft(quotation.id, next).catch(() => {
-      /* API 不可用时降级到本地，已在上面持久化 */
-    });
-  },
-
-  submitQuotation: (quotationId) => {
-    const nowStr = dayjs().format('YYYY-MM-DD HH:mm:ss');
-    let target: Quotation | undefined;
-    set((state) => {
-      const quotations = state.quotations.map((q) => {
-        if (q.id !== quotationId) return q;
-        target = {
-          ...q,
-          status: QuotationStatus.SUBMITTED,
-          submittedAt: nowStr,
-          updatedAt: nowStr,
-        };
-        return target;
+    const snapshot = get().quotations;
+    pendingOps[`draft:${quotation.id}`] = true;
+    try {
+      set((state) => {
+        const quotations = exists
+          ? state.quotations.map((q) => (q.id === quotation.id ? next : q))
+          : [...state.quotations, next];
+        saveJSON(STORAGE_KEY, quotations);
+        return { quotations };
       });
-      saveJSON(STORAGE_KEY, quotations);
-      return { quotations };
-    });
-    if (target) {
+      // 同步记录暂存日志
       useInquiryStore
         .getState()
-        .addLog(target.inquiryId, LogType.SUBMIT_QUOTATION, `${target.supplierName} 提交报价`);
-      useNotificationStore.getState().addNotification({
-        inquiryId: target.inquiryId,
-        type: NotificationType.QUOTATION_SUBMITTED,
-        title: `${target.supplierName} 提交了报价`,
-        content: `报价金额：${target.totalAmount.toFixed(2)}`,
-      });
-      quotationApi.submit(quotationId).catch(() => {
-        /* API 不可用时降级到本地，已在上面持久化 */
-      });
+        .addLog(quotation.inquiryId, LogType.SAVE_QUOTATION_DRAFT, `${quotation.supplierName} 暂存报价`);
+      await quotationApi.saveDraft(quotation.id, next);
+      return ok();
+    } catch (e) {
+      set({ quotations: snapshot });
+      saveJSON(STORAGE_KEY, snapshot);
+      return fail(e);
+    } finally {
+      pendingOps[`draft:${quotation.id}`] = false;
     }
   },
 
-  upsertQuotation: (quotation) => {
+  submitQuotation: async (quotationId) => {
+    if (pendingOps[`submit:${quotationId}`]) return pending();
+    if (!get().getQuotationById(quotationId)) return notFound();
+    const nowStr = dayjs().format('YYYY-MM-DD HH:mm:ss');
+    let target: Quotation | undefined;
+    const snapshot = get().quotations;
+    pendingOps[`submit:${quotationId}`] = true;
+    try {
+      set((state) => {
+        const quotations = state.quotations.map((q) => {
+          if (q.id !== quotationId) return q;
+          target = {
+            ...q,
+            status: QuotationStatus.SUBMITTED,
+            submittedAt: nowStr,
+            updatedAt: nowStr,
+          };
+          return target;
+        });
+        saveJSON(STORAGE_KEY, quotations);
+        return { quotations };
+      });
+      if (target) {
+        useInquiryStore
+          .getState()
+          .addLog(target.inquiryId, LogType.SUBMIT_QUOTATION, `${target.supplierName} 提交报价`);
+        useNotificationStore.getState().addNotification({
+          inquiryId: target.inquiryId,
+          type: NotificationType.QUOTATION_SUBMITTED,
+          title: `${target.supplierName} 提交了报价`,
+          content: `报价金额：${target.totalAmount.toFixed(2)}`,
+        });
+        await quotationApi.submit(quotationId);
+      }
+      return ok();
+    } catch (e) {
+      set({ quotations: snapshot });
+      saveJSON(STORAGE_KEY, snapshot);
+      return fail(e);
+    } finally {
+      pendingOps[`submit:${quotationId}`] = false;
+    }
+  },
+
+  upsertQuotation: async (quotation) => {
+    if (pendingOps[`upsert:${quotation.id}`]) return pending();
     const exists = get().quotations.some((q) => q.id === quotation.id);
-    set((state) => {
-      const quotations = exists
-        ? state.quotations.map((q) => (q.id === quotation.id ? quotation : q))
-        : [...state.quotations, quotation];
-      saveJSON(STORAGE_KEY, quotations);
-      return { quotations };
-    });
-    if (exists) {
-      quotationApi.saveDraft(quotation.id, quotation).catch(() => {
-        /* API 不可用时降级到本地，已在上面持久化 */
+    const snapshot = get().quotations;
+    pendingOps[`upsert:${quotation.id}`] = true;
+    try {
+      set((state) => {
+        const quotations = exists
+          ? state.quotations.map((q) => (q.id === quotation.id ? quotation : q))
+          : [...state.quotations, quotation];
+        saveJSON(STORAGE_KEY, quotations);
+        return { quotations };
       });
-    } else {
-      quotationApi.create(quotation).catch(() => {
-        /* API 不可用时降级到本地，已在上面持久化 */
-      });
+      if (exists) {
+        await quotationApi.saveDraft(quotation.id, quotation);
+      } else {
+        await quotationApi.create(quotation);
+      }
+      return ok();
+    } catch (e) {
+      set({ quotations: snapshot });
+      saveJSON(STORAGE_KEY, snapshot);
+      return fail(e);
+    } finally {
+      pendingOps[`upsert:${quotation.id}`] = false;
     }
   },
 }));

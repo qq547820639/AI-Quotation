@@ -3,8 +3,8 @@
  * 路由：/quotation/compare（无 id 展示可对比询价单列表）、/quotation/compare/:inquiryId
  * 参考：飞书多维表格密集型数据展示
  */
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useBlocker, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Alert,
@@ -13,7 +13,6 @@ import {
   Col,
   Descriptions,
   Empty,
-  Input,
   Row,
   Segmented,
   Select,
@@ -44,16 +43,19 @@ import { useUIStore } from '@/store/useUIStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import PageHeader from '@/components/PageHeader';
-import { InquiryStatusTag, SupplierLevelTag } from '@/components/StatusTag';
+import { InquiryStatusTag } from '@/components/StatusTag';
 import { formatCurrency, formatDate, formatPercent, getRemainingTime } from '@/utils/format';
 import { exportMultiSheet } from '@/utils/excel';
-import { confirmAction, notifySuccess } from '@/utils/confirm';
+import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import i18n from '@/i18n';
+import { useIsMobile } from '@/utils/useIsMobile';
 import { analyzeQuotationAnomalies, type AnomalyAnalysisResult } from '@/utils/aiService';
 import CompareByMaterialTable from '@/components/quotation/CompareByMaterialTable';
 import CompareBySupplierTable from '@/components/quotation/CompareBySupplierTable';
 import SupplierQuotationDrawer from '@/components/quotation/SupplierQuotationDrawer';
 import SummaryModal from '@/components/quotation/SummaryModal';
+import ScoreDetailModal from '@/components/quotation/ScoreDetailModal';
+import CommentEditor, { type SaveStatus } from '@/components/quotation/CommentEditor';
 import {
   type SortMode,
   getQuotationItem,
@@ -62,7 +64,6 @@ import {
 } from '@/components/quotation/scoreUtils';
 
 const { Text } = Typography;
-const { TextArea } = Input;
 
 type ViewMode = 'material' | 'supplier';
 
@@ -87,13 +88,17 @@ export default function QuotationComparePage() {
   const approvalConfig = useSettingsStore((s) => s.approval);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canConfirmPerm = hasPermission('INQUIRY_CONFIRM');
+  const isMobile = useIsMobile();
 
   const [viewMode, setViewMode] = useState<ViewMode>('material');
   const [sortMode, setSortMode] = useState<SortMode>('totalAsc');
   const [hideUnquoted, setHideUnquoted] = useState(false);
   const [drawerSupplierId, setDrawerSupplierId] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [scoreDetailOpen, setScoreDetailOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState<Record<string, string>>({});
+  const [saveStatuses, setSaveStatuses] = useState<Record<string, SaveStatus>>({});
+  const [dirtyFlags, setDirtyFlags] = useState<Record<string, boolean>>({});
   const [aiAnalysis, setAiAnalysis] = useState<AnomalyAnalysisResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -108,10 +113,13 @@ export default function QuotationComparePage() {
 
   const inquiry = inquiryId ? getInquiryById(inquiryId) : undefined;
 
-  // 切换询价单时重置评语草稿与抽屉
+  // 切换询价单时重置评语草稿、保存状态与抽屉
   useEffect(() => {
     setDrawerSupplierId(null);
     setSummaryOpen(false);
+    setScoreDetailOpen(false);
+    setSaveStatuses({});
+    setDirtyFlags({});
     if (inquiry) {
       setCommentDraft({ ...(inquiry.purchaserComments || {}) });
     } else {
@@ -136,20 +144,83 @@ export default function QuotationComparePage() {
     [drawerSupplierId, data],
   );
 
-  // ===== 评语处理 =====
-  const handleCommentChange = (supplierId: string, val: string) => {
+  // ===== 评语处理（防抖自动保存 + 保存状态） =====
+  const handleCommentChange = useCallback((supplierId: string, val: string) => {
     setCommentDraft((prev) => ({ ...prev, [supplierId]: val }));
-  };
-  const handleCommentBlur = (supplierId: string) => {
-    if (!inquiry) return;
-    const val = (commentDraft[supplierId] ?? '').trim();
-    const original = (inquiry.purchaserComments?.[supplierId] ?? '').trim();
-    if (val === original) return;
-    updateInquiry(inquiry.id, {
-      purchaserComments: { ...inquiry.purchaserComments, [supplierId]: val },
-    });
-    notifySuccess(i18n.t('quotation.compare.commentSaved'));
-  };
+  }, []);
+
+  const handleSaveComment = useCallback(
+    async (supplierId: string, val: string): Promise<boolean> => {
+      if (!inquiry) return false;
+      const original = (inquiry.purchaserComments?.[supplierId] ?? '').trim();
+      if (val.trim() === original) return true;
+      const result = await updateInquiry(inquiry.id, {
+        purchaserComments: { ...inquiry.purchaserComments, [supplierId]: val },
+      });
+      return result.success;
+    },
+    [inquiry, updateInquiry],
+  );
+
+  const handleStatusChange = useCallback((supplierId: string, status: SaveStatus) => {
+    setSaveStatuses((prev) => ({ ...prev, [supplierId]: status }));
+  }, []);
+
+  const handleDirtyChange = useCallback((supplierId: string, dirty: boolean) => {
+    setDirtyFlags((prev) => ({ ...prev, [supplierId]: dirty }));
+  }, []);
+
+  // 是否存在未保存内容（saving/error 或仍有未保存草稿）
+  const hasUnsaved = useMemo(() => {
+    const statusUnsaved = Object.values(saveStatuses).some(
+      (s) => s === 'saving' || s === 'error',
+    );
+    const dirtyUnsaved = Object.values(dirtyFlags).some(Boolean);
+    return statusUnsaved || dirtyUnsaved;
+  }, [saveStatuses, dirtyFlags]);
+
+  // 页面离开前检测未保存内容（后台路由离开 + 刷新/关闭）
+  const blocker = useBlocker(hasUnsaved);
+  useEffect(() => {
+    if (blocker?.state === 'blocked') {
+      confirmAction({
+        title: i18n.t('quotation.compare.unsavedChanges'),
+        content: i18n.t('quotation.compare.unsavedChangesContent'),
+        okText: i18n.t('quotation.compare.leaveAnyway'),
+        cancelText: i18n.t('common.cancel'),
+        onOk: () => blocker.proceed(),
+        onCancel: () => blocker.reset(),
+      });
+    }
+  }, [blocker]);
+
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsaved]);
+
+  // 稳定回调，供 memo 化对比表使用，避免每次渲染产生新函数导致大表重渲染
+  const handleSelectSupplier = useCallback(
+    async (itemId: string, supplierId: string) => {
+      if (!inquiry) return;
+      const result = await selectSupplier(inquiry.id, itemId, supplierId);
+      if (result.success) {
+        notifySuccess(i18n.t('quotation.compare.selectedSupplierSuccess'));
+      } else if (result.reason !== 'pending') {
+        notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+      }
+    },
+    [inquiry, selectSupplier],
+  );
+
+  const handleOpenDrawer = useCallback((supplierId: string) => {
+    setDrawerSupplierId(supplierId);
+  }, []);
 
   // ===== 确认定标 =====
   const handleConfirm = () => {
@@ -177,9 +248,15 @@ export default function QuotationComparePage() {
       }),
       okText: i18n.t('quotation.compare.submitApproval'),
       cancelText: i18n.t('common.cancel'),
-      onOk: () => {
-        submitForApproval(inquiry.id);
-        notifySuccess(i18n.t('quotation.compare.submitApprovalSuccess'));
+      onOk: async () => {
+        const result = await submitForApproval(inquiry.id);
+        if (result.success) {
+          notifySuccess(i18n.t('quotation.compare.submitApprovalSuccess'));
+        } else if (result.reason === 'pending') {
+          return;
+        } else {
+          notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+        }
       },
     });
   };
@@ -352,7 +429,7 @@ export default function QuotationComparePage() {
           description={t('quotation.compare.inquiryDesc', { subject: inquiry.subject, code: inquiry.code })}
           extra={
             <Select
-              style={{ width: 280 }}
+              style={{ width: isMobile ? '100%' : 280 }}
               placeholder={t('quotation.compare.switchInquiry')}
               value={inquiry.id}
               onChange={(val) => navigate(`/quotation/compare/${val}`)}
@@ -399,7 +476,7 @@ export default function QuotationComparePage() {
   const headerExtra = (
     <Space wrap>
       <Select
-        style={{ width: 280 }}
+        style={{ width: isMobile ? '100%' : 280 }}
         placeholder={t('quotation.compare.switchInquiry')}
         value={inquiry.id}
         onChange={(val) => navigate(`/quotation/compare/${val}`)}
@@ -412,6 +489,9 @@ export default function QuotationComparePage() {
       </Button>
       <Button icon={<FileSearchOutlined />} onClick={() => setSummaryOpen(true)}>
         {t('quotation.compare.generateSummary')}
+      </Button>
+      <Button icon={<TrophyOutlined />} onClick={() => setScoreDetailOpen(true)}>
+        {t('quotation.compare.scoreDetail')}
       </Button>
       <Button icon={<RobotOutlined />} loading={aiLoading} onClick={handleAiAnalyze}>
         {t('quotation.compare.aiAnalysis')}
@@ -604,44 +684,39 @@ export default function QuotationComparePage() {
             data={data}
             rows={visibleRows}
             selectedSupplierMap={inquiry.selectedSupplierMap}
-            onSelectSupplier={(itemId, supplierId) => {
-              selectSupplier(inquiry.id, itemId, supplierId);
-              notifySuccess(i18n.t('quotation.compare.selectedSupplierSuccess'));
-            }}
-            onOpenDrawer={(sid) => setDrawerSupplierId(sid)}
+            onSelectSupplier={handleSelectSupplier}
+            onOpenDrawer={handleOpenDrawer}
           />
         ) : (
           <CompareBySupplierTable
             inquiry={inquiry}
             data={data}
             rows={visibleRows}
-            onOpenDrawer={(sid) => setDrawerSupplierId(sid)}
+            onOpenDrawer={handleOpenDrawer}
           />
         )}
       </Card>
 
-      {/* 采购评语 */}
+      {/* 采购评语（CommentEditor 隔离：输入只重渲染该组件） */}
       <Card
         size="small"
         title={<Text strong>{t('quotation.compare.purchaserCommentTitle')}</Text>}
-        extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('quotation.compare.autoSaveOnBlur')}</Text>}
+        extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('quotation.compare.autoSaveDesc')}</Text>}
         style={{ borderRadius: 8 }}
       >
         <Row gutter={[16, 16]}>
           {visibleRows.map((r) => (
             <Col xs={24} lg={12} key={r.supplier.id}>
-              <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Text strong style={{ fontSize: 13 }}>{r.supplier.name}</Text>
-                <SupplierLevelTag level={r.supplier.level} />
-              </div>
-              <TextArea
+              <CommentEditor
+                supplierId={r.supplier.id}
+                supplierName={r.supplier.name}
+                level={r.supplier.level}
                 value={commentDraft[r.supplier.id] ?? ''}
-                onChange={(e) => handleCommentChange(r.supplier.id, e.target.value)}
-                onBlur={() => handleCommentBlur(r.supplier.id)}
-                rows={2}
-                placeholder={t('quotation.compare.commentPlaceholder')}
-                maxLength={500}
-                showCount
+                onChange={handleCommentChange}
+                onSave={handleSaveComment}
+                onStatusChange={handleStatusChange}
+                onDirtyChange={handleDirtyChange}
+                saveStatus={saveStatuses[r.supplier.id] ?? 'idle'}
               />
             </Col>
           ))}
@@ -655,7 +730,10 @@ export default function QuotationComparePage() {
         inquiry={inquiry}
         comment={drawerSupplierId ? commentDraft[drawerSupplierId] ?? '' : ''}
         onCommentChange={(val) => drawerSupplierId && handleCommentChange(drawerSupplierId, val)}
-        onCommentBlur={() => drawerSupplierId && handleCommentBlur(drawerSupplierId)}
+        onCommentBlur={() =>
+          drawerSupplierId &&
+          void handleSaveComment(drawerSupplierId, commentDraft[drawerSupplierId] ?? '')
+        }
         onClose={() => setDrawerSupplierId(null)}
       />
 
@@ -666,6 +744,14 @@ export default function QuotationComparePage() {
         data={data}
         rows={visibleRows}
         onClose={() => setSummaryOpen(false)}
+      />
+
+      {/* 评分明细 Modal（分项得分 + 权重调整 + 建议依据） */}
+      <ScoreDetailModal
+        open={scoreDetailOpen}
+        data={data}
+        rows={visibleRows}
+        onClose={() => setScoreDetailOpen(false)}
       />
     </div>
   );

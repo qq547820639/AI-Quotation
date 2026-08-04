@@ -4,6 +4,7 @@
  * - 异常高价/低价提示
  * - 每行可选"推荐供应商"
  */
+import { memo } from 'react';
 import { Select, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useTranslation } from 'react-i18next';
@@ -144,7 +145,7 @@ function QuoteCell({
   );
 }
 
-export default function CompareByMaterialTable({
+function CompareByMaterialTable({
   inquiry,
   data,
   rows,
@@ -258,3 +259,6 @@ export default function CompareByMaterialTable({
     />
   );
 }
+
+/** React.memo：父组件任意状态变化（含评语输入）不重渲染大表，仅 props 变化时重渲染 */
+export default memo(CompareByMaterialTable);

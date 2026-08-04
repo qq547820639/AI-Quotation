@@ -24,8 +24,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
 
   // 已登录自动跳转
-  const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/dashboard';
+  // 优先取 401 回跳地址（redirect_after_login），其次路由 state.from，最后默认工作台
+  const from =
+    (location.state as { from?: { pathname: string } } | null)?.from?.pathname ??
+    localStorage.getItem('redirect_after_login') ??
+    '/dashboard';
   if (isAuthenticated) {
+    localStorage.removeItem('redirect_after_login');
     navigate(from, { replace: true });
     return null;
   }
@@ -41,7 +46,9 @@ export default function LoginPage() {
     }
     const ok = login(userId);
     if (ok) {
-      navigate(from, { replace: true });
+      const target = localStorage.getItem('redirect_after_login') ?? from;
+      localStorage.removeItem('redirect_after_login');
+      navigate(target, { replace: true });
     } else {
       notifyError(t('login.loginFailed'));
     }

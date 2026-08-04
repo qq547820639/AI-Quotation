@@ -13,6 +13,7 @@ import {
   type QuotationItem,
   type Supplier,
 } from '@/types';
+import { loadJSON, saveJSON } from '@/utils/storage';
 
 /** 供应商等级基础分 */
 export const SUPPLIER_LEVEL_SCORE: Record<SupplierLevel, number> = {
@@ -29,6 +30,27 @@ export const SCORE_WEIGHTS = {
   level: 0.15,
   fulfillment: 0.15,
 } as const;
+
+/** 可调整的评分维度权重（与 SCORE_WEIGHTS 结构一致但可写） */
+export interface ScoreWeights {
+  price: number;
+  delivery: number;
+  level: number;
+  fulfillment: number;
+}
+
+const SCORE_WEIGHTS_KEY = 'scoreWeights';
+
+/** 读取用户自定义评分权重（localStorage，未配置时回退默认）。用于评分明细 Modal 的权重调整并持久化 */
+export function loadScoreWeights(): ScoreWeights {
+  const saved = loadJSON<Partial<ScoreWeights>>(SCORE_WEIGHTS_KEY, {});
+  return { ...SCORE_WEIGHTS, ...saved };
+}
+
+/** 持久化用户自定义评分权重 */
+export function saveScoreWeights(weights: ScoreWeights): void {
+  saveJSON(SCORE_WEIGHTS_KEY, weights);
+}
 
 /** 单项评分明细 */
 export interface ScoreBreakdown {
@@ -166,20 +188,30 @@ function buildRow(supplier: Supplier, quotation: Quotation): SupplierQuoteRow {
   };
 }
 
-/** 计算综合评分 */
+/** 计算综合评分（默认权重） */
 function calcScore(
   row: SupplierQuoteRow,
   minTotal: number,
   fastestAvgDelivery: number,
 ): ScoreBreakdown {
+  return calcScoreWithWeights(row, minTotal, fastestAvgDelivery, SCORE_WEIGHTS);
+}
+
+/** 按自定义权重计算综合评分（用于评分明细 Modal 的权重调整实时重算） */
+export function calcScoreWithWeights(
+  row: SupplierQuoteRow,
+  minTotal: number,
+  fastestAvgDelivery: number,
+  weights: ScoreWeights,
+): ScoreBreakdown {
   const price =
-    row.totalAmount > 0 && minTotal > 0 ? (minTotal / row.totalAmount) * 100 * SCORE_WEIGHTS.price : 0;
+    row.totalAmount > 0 && minTotal > 0 ? (minTotal / row.totalAmount) * 100 * weights.price : 0;
   const delivery =
     row.avgDeliveryDays > 0 && fastestAvgDelivery > 0
-      ? (fastestAvgDelivery / row.avgDeliveryDays) * 100 * SCORE_WEIGHTS.delivery
+      ? (fastestAvgDelivery / row.avgDeliveryDays) * 100 * weights.delivery
       : 0;
-  const level = SUPPLIER_LEVEL_SCORE[row.supplier.level] * SCORE_WEIGHTS.level;
-  const fulfillment = (row.supplier.historyFulfillmentRate ?? 0) * 100 * SCORE_WEIGHTS.fulfillment;
+  const level = SUPPLIER_LEVEL_SCORE[row.supplier.level] * weights.level;
+  const fulfillment = (row.supplier.historyFulfillmentRate ?? 0) * 100 * weights.fulfillment;
   return {
     price: Number(price.toFixed(2)),
     delivery: Number(delivery.toFixed(2)),

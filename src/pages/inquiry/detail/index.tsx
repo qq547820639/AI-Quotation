@@ -63,7 +63,7 @@ import {
   type Supplier,
 } from '@/types';
 import { formatCurrency, formatDate, formatDateTime, formatPercent, getRemainingTime } from '@/utils/format';
-import { confirmAction, notifySuccess, notifyWarning } from '@/utils/confirm';
+import { confirmAction, notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
 import { exportAOA } from '@/utils/excel';
 import { isCancelable, isEditable } from '@/utils/inquiryStatus';
 import { formatFileSize } from '@/utils/file';
@@ -249,9 +249,15 @@ export default function InquiryDetailPage() {
       title: i18n.t('inquiry.detail.submitApprovalTitle'),
       content: i18n.t('inquiry.detail.submitApprovalContent', { code: inquiry.code }),
       okText: i18n.t('inquiry.detail.submitApprovalOk'),
-      onOk: () => {
-        submitForApproval(inquiry.id);
-        notifySuccess(i18n.t('inquiry.detail.submitApprovalSuccess'));
+      onOk: async () => {
+        const result = await submitForApproval(inquiry.id);
+        if (result.success) {
+          notifySuccess(i18n.t('inquiry.detail.submitApprovalSuccess'));
+        } else if (result.reason === 'pending') {
+          return;
+        } else {
+          notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+        }
       },
     });
   };
@@ -271,17 +277,29 @@ export default function InquiryDetailPage() {
         : i18n.t('inquiry.detail.rejectContent'),
       okText: isApprove ? i18n.t('inquiry.detail.approveOk') : i18n.t('inquiry.detail.rejectOk'),
       danger: !isApprove,
-      onOk: () => {
+      onOk: async () => {
         if (isApprove) {
-          approveInquiry(inquiry.id, approvalModal.comment);
-          notifySuccess(i18n.t('inquiry.detail.approveSuccessMsg'));
+          const result = await approveInquiry(inquiry.id, approvalModal.comment);
+          if (result.success) {
+            notifySuccess(i18n.t('inquiry.detail.approveSuccessMsg'));
+          } else if (result.reason === 'pending') {
+            return;
+          } else {
+            notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+          }
         } else {
           if (!approvalModal.comment.trim()) {
             notifyWarning(i18n.t('inquiry.detail.rejectWarning'));
             return Promise.reject();
           }
-          rejectInquiry(inquiry.id, approvalModal.comment);
-          notifySuccess(i18n.t('inquiry.detail.rejectSuccess'));
+          const result = await rejectInquiry(inquiry.id, approvalModal.comment);
+          if (result.success) {
+            notifySuccess(i18n.t('inquiry.detail.rejectSuccess'));
+          } else if (result.reason === 'pending') {
+            return;
+          } else {
+            notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+          }
         }
         setApprovalModal({ ...approvalModal, open: false });
       },

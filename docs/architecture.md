@@ -16,7 +16,7 @@
 │      → /*     → SPA 静态文件                             │
 ├─────────────────────────────────────────────────────────┤
 │               FastAPI 后端（uvicorn :8080）              │
-│  7 路由模块 / 38 端点 / RBAC / Bearer token             │
+│  8 路由模块 / 38 端点 / RBAC / Bearer token             │
 ├─────────────────────────────────────────────────────────┤
 │           SQLAlchemy ORM + SQLite（持久化）              │
 │  13 个 ORM 模型 / 种子数据 / 数据卷挂载                  │
@@ -62,7 +62,7 @@ UI 交互 → store action → set() 同步更新 + saveJSON 持久化
 
 ## 后端模块划分
 
-### 路由层（7 模块 / 38 端点）
+### 路由层（8 模块 / 38 端点）
 | 模块 | 端点数 | 功能 |
 |---|---|---|
 | auth | 3 | 登录/登出/当前用户 |
@@ -72,6 +72,7 @@ UI 交互 → store action → set() 同步更新 + saveJSON 持久化
 | quotations | 5 | 列表/详情/创建/暂存/提交 |
 | notifications | 4 | 列表/创建/标记已读/全部已读 |
 | settings | 2 | 获取/更新 |
+| metrics | 1 | Web Vitals 上报（接收 sendBeacon） |
 
 ### 数据模型（13 个 ORM 模型）
 - `User`：用户（含角色 + 权限 JSON）
@@ -167,5 +168,8 @@ ALL_QUOTED → PENDING_APPROVAL → PENDING_CONFIRM → COMPLETED
 push/PR → GitHub Actions
   ├─ quality: lint + tsc + vitest
   ├─ build: npm run build → dist artifact
-  └─ backend-test: pip install + import smoke test
+  ├─ backend-test: pip install + import smoke + pytest（API 集成 / 权限 / 状态流转）
+  └─ docker-e2e: docker compose up → 健康检查 → Playwright E2E（真实前后端联调）→ 失败日志 + 清理
 ```
+
+CI 覆盖：前端 lint / TypeScript / 单元测试 / 生产构建；后端导入冒烟 + 单元 + API 集成测试；Docker 镜像构建 + Compose 启动 + 健康检查 + 数据库初始化；Playwright E2E 真实前后端联调。测试失败时上传日志产物，并在 `always()` 中 `docker compose down -v` 清理环境。

@@ -619,7 +619,7 @@ export default function InquiryCreatePage() {
           background: '#fff',
           borderRadius: 8,
           boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
-          padding: '12px 24px',
+          padding: '12px 24px calc(12px + env(safe-area-inset-bottom))',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',

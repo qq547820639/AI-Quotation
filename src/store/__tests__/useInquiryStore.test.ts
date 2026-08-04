@@ -16,6 +16,26 @@ import {
   type InquiryItem,
 } from '@/types';
 
+// mock API 层，避免真实网络请求（store 内写操作为 await 调用）
+vi.mock('@/api', () => ({
+  inquiryApi: {
+    list: vi.fn().mockResolvedValue([]),
+    get: vi.fn().mockResolvedValue({}),
+    create: vi.fn().mockResolvedValue({}),
+    update: vi.fn().mockResolvedValue({}),
+    delete: vi.fn().mockResolvedValue({}),
+    cancel: vi.fn().mockResolvedValue({}),
+    send: vi.fn().mockResolvedValue({}),
+    confirm: vi.fn().mockResolvedValue({}),
+    submitApproval: vi.fn().mockResolvedValue({}),
+    approve: vi.fn().mockResolvedValue({}),
+    reject: vi.fn().mockResolvedValue({}),
+  },
+}));
+
+import { inquiryApi } from '@/api';
+import { ApiError } from '@/api/errors';
+
 /** 构造测试用 Inquiry */
 function makeInquiry(overrides: Partial<Inquiry> = {}): Inquiry {
   return {
@@ -71,6 +91,7 @@ function resetStore(inquiries: Inquiry[] = []) {
 
 beforeEach(() => {
   resetStore([]);
+  vi.clearAllMocks();
   // mock 通知 store，避免污染
   vi.spyOn(useNotificationStore.getState(), 'addNotification').mockImplementation(() => {});
 });
@@ -297,6 +318,95 @@ describe('useInquiryStore', () => {
         .getInquiryById('inq-op')!
         .logs.find((l) => l.content === '测试操作人');
       expect(log?.operator).toBe(useAuthStore.getState().currentUser.name);
+    });
+  });
+
+  describe('batchCancelInquiries', () => {
+    it('对不可取消项跳过，仅取消可取消项', async () => {
+      resetStore([
+        makeInquiry({ id: 'a', status: InquiryStatus.INQUIRING }),
+        makeInquiry({ id: 'b', status: InquiryStatus.DRAFT }),
+      ]);
+      const res = await useInquiryStore.getState().batchCancelInquiries(['a', 'b']);
+      expect(res.total).toBe(2);
+      expect(res.succeeded).toBe(1);
+      expect(res.skipped).toBe(1);
+      expect(res.failed).toBe(0);
+      expect(useInquiryStore.getState().getInquiryById('a')?.status).toBe(
+        InquiryStatus.CANCELLED,
+      );
+      // 不可取消项保持原状态
+      expect(useInquiryStore.getState().getInquiryById('b')?.status).toBe(InquiryStatus.DRAFT);
+      const skipped = res.results.find((r) => r.id === 'b');
+      expect(skipped?.skipped).toBe(true);
+      expect(skipped?.reason).toBeTruthy();
+    });
+
+    it('聚合成功/失败计数正确', async () => {
+      resetStore([
+        makeInquiry({ id: 'a', status: InquiryStatus.INQUIRING }),
+        makeInquiry({ id: 'b', status: InquiryStatus.INQUIRING }),
+      ]);
+      vi.mocked(inquiryApi.cancel).mockRejectedValueOnce(new Error('boom'));
+      const res = await useInquiryStore.getState().batchCancelInquiries(['a', 'b']);
+      expect(res.total).toBe(2);
+      expect(res.succeeded).toBe(1);
+      expect(res.failed).toBe(1);
+      expect(res.skipped).toBe(0);
+      const failed = res.results.find((r) => r.id === 'a');
+      expect(failed?.success).toBe(false);
+      expect(failed?.reason).toBeTruthy();
+    });
+  });
+
+  describe('写操作异常处理（Task 2）', () => {
+    it('updateInquiry 成功时返回 { success:true }', async () => {
+      resetStore([makeInquiry()]);
+      const res = await useInquiryStore.getState().updateInquiry('inq-test-1', { subject: 'ok' });
+      expect(res.success).toBe(true);
+    });
+
+    it('updateInquiry API 失败时回滚本地状态并返回 { success:false, reason:error }', async () => {
+      const inq = makeInquiry({ subject: '原主题' });
+      resetStore([inq]);
+      vi.mocked(inquiryApi.update).mockRejectedValueOnce(new Error('boom'));
+      const res = await useInquiryStore.getState().updateInquiry('inq-test-1', { subject: '新主题' });
+      expect(res).toEqual(expect.objectContaining({ success: false, reason: 'error' }));
+      expect(res.error).toBeInstanceOf(ApiError);
+      // 本地状态回滚到操作前
+      expect(useInquiryStore.getState().getInquiryById('inq-test-1')?.subject).toBe('原主题');
+    });
+
+    it('deleteInquiry API 失败时回滚，不产生永久删除状态', async () => {
+      resetStore([makeInquiry({ id: 'a' }), makeInquiry({ id: 'b' })]);
+      vi.mocked(inquiryApi.delete).mockRejectedValueOnce(new Error('boom'));
+      const res = await useInquiryStore.getState().deleteInquiry('a');
+      expect(res).toEqual(expect.objectContaining({ success: false, reason: 'error' }));
+      const list = useInquiryStore.getState().inquiries.map((i) => i.id);
+      expect(list).toContain('a');
+      expect(list).toHaveLength(2);
+    });
+
+    it('重复提交：同一实体 pending 期间再次调用返回 pending 且不重复调 API', async () => {
+      resetStore([makeInquiry()]);
+      let resolveFn: (v: unknown) => void = () => {};
+      const gate = new Promise((resolve) => {
+        resolveFn = resolve;
+      });
+      vi.mocked(inquiryApi.update).mockImplementationOnce(() => gate as Promise<never>);
+      const first = useInquiryStore.getState().updateInquiry('inq-test-1', { subject: 'x' });
+      const second = useInquiryStore.getState().updateInquiry('inq-test-1', { subject: 'y' });
+      expect(await second).toEqual({ success: false, reason: 'pending' });
+      expect(inquiryApi.update).toHaveBeenCalledTimes(1);
+      resolveFn({});
+      await first;
+    });
+
+    it('notFound：目标不存在时返回 { success:false, reason:not_found } 且不调 API', async () => {
+      resetStore([]);
+      const res = await useInquiryStore.getState().updateInquiry('missing', { subject: 'x' });
+      expect(res).toEqual({ success: false, reason: 'not_found' });
+      expect(inquiryApi.update).not.toHaveBeenCalled();
     });
   });
 });

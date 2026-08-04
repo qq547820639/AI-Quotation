@@ -8,6 +8,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import MainLayout from '@/layouts/MainLayout';
 import SupplierLayout from '@/layouts/SupplierLayout';
 import RequireAuth from '@/components/RequireAuth';
+import RequirePermission from '@/components/RequirePermission';
 
 // 布局组件保持静态 import（骨架需立即渲染）
 // 页面组件懒加载，按需拆分 chunk
@@ -43,19 +44,75 @@ export const appRouter = createBrowserRouter([
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'inquiry/list', element: <InquiryListPage /> },
-      { path: 'inquiry/create', element: <InquiryCreatePage /> },
-      { path: 'inquiry/edit/:id', element: <InquiryCreatePage /> },
+      {
+        path: 'inquiry/create',
+        element: (
+          <RequirePermission perm="INQUIRY_CREATE">
+            <InquiryCreatePage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: 'inquiry/edit/:id',
+        element: (
+          <RequirePermission perm="INQUIRY_EDIT">
+            <InquiryCreatePage />
+          </RequirePermission>
+        ),
+      },
       { path: 'inquiry/detail/:id', element: <InquiryDetailPage /> },
       { path: 'quotation/pending', element: <QuotationPendingPage /> },
       { path: 'quotation/compare', element: <QuotationComparePage /> },
       { path: 'quotation/compare/:inquiryId', element: <QuotationComparePage /> },
-      { path: 'approval', element: <ApprovalPage /> },
+      {
+        path: 'approval',
+        element: (
+          <RequirePermission perm="INQUIRY_APPROVE">
+            <ApprovalPage />
+          </RequirePermission>
+        ),
+      },
       { path: 'notification', element: <NotificationPage /> },
-      { path: 'supplier', element: <SupplierPage /> },
-      { path: 'supplier/:id', element: <SupplierDetailPage /> },
-      { path: 'material', element: <MaterialPage /> },
-      { path: 'log', element: <LogPage /> },
-      { path: 'settings', element: <SettingsPage /> },
+      {
+        path: 'supplier',
+        element: (
+          <RequirePermission perm={['SUPPLIER_MANAGE', 'SUPPLIER_DISABLE']}>
+            <SupplierPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: 'supplier/:id',
+        element: (
+          <RequirePermission perm={['SUPPLIER_MANAGE', 'SUPPLIER_DISABLE']}>
+            <SupplierDetailPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: 'material',
+        element: (
+          <RequirePermission perm="MATERIAL_MANAGE">
+            <MaterialPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: 'log',
+        element: (
+          <RequirePermission perm="VIEW_LOG">
+            <LogPage />
+          </RequirePermission>
+        ),
+      },
+      {
+        path: 'settings',
+        element: (
+          <RequirePermission perm="SETTINGS_MANAGE">
+            <SettingsPage />
+          </RequirePermission>
+        ),
+      },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

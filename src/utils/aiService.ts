@@ -3,9 +3,10 @@
  * - 规则引擎模拟 LLM 能力，无需真实 AI 接口
  * - 提供询价说明生成、报价异常分析、比价结论生成
  * - 所有方法返回 Promise<string>，模拟异步调用
+ * - 文案经 i18n 国际化，随当前语言变化
  */
+import i18n from '@/i18n';
 import {
-  SUPPLIER_LEVEL_LABEL,
   type Inquiry,
   type InquiryItem,
 } from '@/types';
@@ -39,59 +40,60 @@ export async function generateInquiryDescription(params: InquiryDescriptionParam
   await delay();
   const { subject, items, paymentTerms, deliveryAddress, expectedDeliveryDate } = params;
   const lines: string[] = [];
+  const sep = i18n.t('ai.separator');
 
-  lines.push(`一、采购需求概述`);
-  lines.push(`本次采购项目「${subject}」，共涉及 ${items.length} 项物料，欢迎合格供应商参与报价。`);
+  lines.push(i18n.t('ai.desc.overviewTitle'));
+  lines.push(i18n.t('ai.desc.overviewIntro', { subject, count: items.length }));
 
   // 物料品类汇总
   const categories = [...new Set(items.map((i) => i.category))].filter(Boolean);
   if (categories.length) {
     lines.push(``);
-    lines.push(`二、采购品类`);
-    lines.push(`本次采购涵盖以下品类：${categories.join('、')}。`);
+    lines.push(i18n.t('ai.desc.categoryTitle'));
+    lines.push(i18n.t('ai.desc.categoryIntro', { categories: categories.join(sep) }));
   }
 
   // 关键物料
   const keyItems = items.slice(0, 3);
   if (keyItems.length) {
     lines.push(``);
-    lines.push(`三、关键物料明细`);
+    lines.push(i18n.t('ai.desc.keyItemsTitle'));
     keyItems.forEach((item, idx) => {
       const parts = [`${item.name}（${item.code}）`];
-      if (item.brand) parts.push(`品牌：${item.brand}`);
-      if (item.spec) parts.push(`规格：${item.spec}`);
-      parts.push(`数量：${item.quantity}${item.unit}`);
-      if (item.targetPrice) parts.push(`目标价：${formatCurrency(item.targetPrice)}`);
-      lines.push(`  ${idx + 1}. ${parts.join('，')}。`);
+      if (item.brand) parts.push(i18n.t('ai.desc.brandPart', { brand: item.brand }));
+      if (item.spec) parts.push(i18n.t('ai.desc.specPart', { spec: item.spec }));
+      parts.push(i18n.t('ai.desc.qtyPart', { quantity: item.quantity, unit: item.unit }));
+      if (item.targetPrice) parts.push(i18n.t('ai.desc.targetPricePart', { price: formatCurrency(item.targetPrice) }));
+      lines.push(i18n.t('ai.desc.itemLine', { index: idx + 1, parts: parts.join(sep) }));
     });
     if (items.length > 3) {
-      lines.push(`  等共 ${items.length} 项物料，详见附件清单。`);
+      lines.push(i18n.t('ai.desc.moreItems', { count: items.length }));
     }
   }
 
   // 交付要求
   lines.push(``);
-  lines.push(`四、交付与验收要求`);
+  lines.push(i18n.t('ai.desc.deliveryTitle'));
   if (expectedDeliveryDate) {
-    lines.push(`期望交货日期：${expectedDeliveryDate}。`);
+    lines.push(i18n.t('ai.desc.expectedDelivery', { date: expectedDeliveryDate }));
   }
   if (deliveryAddress) {
-    lines.push(`交货地点：${deliveryAddress}。`);
+    lines.push(i18n.t('ai.desc.deliveryAddress', { address: deliveryAddress }));
   }
-  lines.push(`供应商需保证所供物料为原厂正品，提供完整的出厂检验报告及合格证。`);
+  lines.push(i18n.t('ai.desc.genuineRequirement'));
 
   // 商务要求
   if (paymentTerms) {
     lines.push(``);
-    lines.push(`五、商务条款`);
-    lines.push(`付款条件：${paymentTerms}。`);
+    lines.push(i18n.t('ai.desc.commercialTitle'));
+    lines.push(i18n.t('ai.desc.paymentTerms', { terms: paymentTerms }));
   }
 
   lines.push(``);
-  lines.push(`六、报价要求`);
-  lines.push(`1. 报价需包含含税单价、总价、交货周期、质保期等信息；`);
-  lines.push(`2. 如有技术或商务偏离，请在报价中明确标注；`);
-  lines.push(`3. 报价有效期不少于 30 天。`);
+  lines.push(i18n.t('ai.desc.quoteTitle'));
+  lines.push(i18n.t('ai.desc.quoteReq1'));
+  lines.push(i18n.t('ai.desc.quoteReq2'));
+  lines.push(i18n.t('ai.desc.quoteReq3'));
 
   return lines.join('\n');
 }
@@ -126,11 +128,21 @@ export async function analyzeQuotationAnomalies(
       if (!qi) continue;
       if (isHighPrice(qi.unitPrice, avg)) {
         anomalies.push(
-          `${item.name}：${r.supplier.name} 报价 ${formatCurrency(qi.unitPrice, inquiry.currency)}，高于均价 ${formatCurrency(avg, inquiry.currency)} 50%+，可能存在虚高风险`,
+          i18n.t('ai.anomaly.highPrice', {
+            item: item.name,
+            supplier: r.supplier.name,
+            price: formatCurrency(qi.unitPrice, inquiry.currency),
+            avg: formatCurrency(avg, inquiry.currency),
+          }),
         );
       } else if (isLowPrice(qi.unitPrice, avg)) {
         anomalies.push(
-          `${item.name}：${r.supplier.name} 报价 ${formatCurrency(qi.unitPrice, inquiry.currency)}，低于均价 ${formatCurrency(avg, inquiry.currency)} 50%+，需核实是否满足技术要求`,
+          i18n.t('ai.anomaly.lowPrice', {
+            item: item.name,
+            supplier: r.supplier.name,
+            price: formatCurrency(qi.unitPrice, inquiry.currency),
+            avg: formatCurrency(avg, inquiry.currency),
+          }),
         );
       }
     }
@@ -145,7 +157,7 @@ export async function analyzeQuotationAnomalies(
       const spread = ((max - min) / min) * 100;
       if (spread > 40) {
         anomalies.push(
-          `报价总价离散度较大（最高与最低相差 ${spread.toFixed(1)}%），建议核实各家报价口径是否一致`,
+          i18n.t('ai.anomaly.spread', { spread: spread.toFixed(1) }),
         );
       }
     }
@@ -159,7 +171,7 @@ export async function analyzeQuotationAnomalies(
       const minD = Math.min(...deliveries);
       if (minD > 0 && maxD / minD > 2) {
         anomalies.push(
-          `交货周期差异显著（最快 ${minD.toFixed(0)} 天 vs 最慢 ${maxD.toFixed(0)} 天），需关注供应链稳定性`,
+          i18n.t('ai.anomaly.delivery', { fastest: minD.toFixed(0), slowest: maxD.toFixed(0) }),
         );
       }
     }
@@ -169,14 +181,17 @@ export async function analyzeQuotationAnomalies(
   const techDeviations = data.submittedRows.filter((r) => r.techDeviations.length > 0);
   if (techDeviations.length) {
     anomalies.push(
-      `${techDeviations.length} 家供应商存在技术偏离，建议技术部门重点评审`,
+      i18n.t('ai.anomaly.techDeviation', { count: techDeviations.length }),
     );
   }
 
   const hasAnomaly = anomalies.length > 0;
   const summary = hasAnomaly
-    ? `检测到 ${anomalies.length} 项需要关注的问题：\n${anomalies.map((a) => `· ${a}`).join('\n')}`
-    : '各供应商报价整体正常，未发现明显异常。单价、总价离散度、交货周期均在合理范围内。';
+    ? i18n.t('ai.anomaly.summaryWithAnomaly', {
+        count: anomalies.length,
+        items: anomalies.map((a) => `· ${a}`).join('\n'),
+      })
+    : i18n.t('ai.anomaly.summaryNoAnomaly');
 
   return {
     summary,
@@ -198,24 +213,34 @@ export async function generateCompareConclusion(
   const submittedCount = data.submittedRows.length;
   const invitedCount = inquiry.invitedSupplierIds.length;
 
-  lines.push(`【比价结论】`);
+  lines.push(i18n.t('ai.conclusion.title'));
   lines.push(``);
 
   // 1. 报价回收情况
-  lines.push(`1. 报价回收：共邀请 ${invitedCount} 家供应商，收到有效报价 ${submittedCount} 家，回收率 ${invitedCount > 0 ? Math.round((submittedCount / invitedCount) * 100) : 0}%。`);
+  lines.push(i18n.t('ai.conclusion.recovery', {
+    invited: invitedCount,
+    submitted: submittedCount,
+    rate: invitedCount > 0 ? Math.round((submittedCount / invitedCount) * 100) : 0,
+  }));
 
   // 2. 价格分析
   if (data.lowestTotalSupplierId) {
     const r = rows.find((x) => x.supplier.id === data.lowestTotalSupplierId);
     if (r) {
       lines.push(``);
-      lines.push(`2. 价格分析：${r.supplier.name} 报价总额最低（${formatCurrency(r.totalAmount, inquiry.currency)}）。`);
+      lines.push(i18n.t('ai.conclusion.priceAnalysis', {
+        supplier: r.supplier.name,
+        amount: formatCurrency(r.totalAmount, inquiry.currency),
+      }));
       if (data.submittedRows.length >= 2) {
         const sorted = [...data.submittedRows].sort((a, b) => a.totalAmount - b.totalAmount);
         const second = sorted[1];
         const diff = second.totalAmount - r.totalAmount;
         const diffPct = r.totalAmount > 0 ? (diff / r.totalAmount) * 100 : 0;
-        lines.push(`   较次低报价低 ${formatCurrency(diff, inquiry.currency)}（${diffPct.toFixed(1)}%）。`);
+        lines.push(i18n.t('ai.conclusion.diffToSecond', {
+          amount: formatCurrency(diff, inquiry.currency),
+          pct: diffPct.toFixed(1),
+        }));
       }
     }
   }
@@ -226,9 +251,20 @@ export async function generateCompareConclusion(
     const s = data.scores[data.topScoreSupplierId];
     if (r && s) {
       lines.push(``);
-      lines.push(`3. 综合评估：${r.supplier.name} 综合评分最高（${s.total.toFixed(2)} 分），`);
-      lines.push(`   其中金额得分 ${s.price.toFixed(1)}、交货得分 ${s.delivery.toFixed(1)}、等级得分 ${s.level.toFixed(1)}、履约得分 ${s.fulfillment.toFixed(1)}。`);
-      lines.push(`   供应商等级：${SUPPLIER_LEVEL_LABEL[r.supplier.level]}，历史履约率 ${(r.supplier.historyFulfillmentRate * 100).toFixed(1)}%。`);
+      lines.push(i18n.t('ai.conclusion.scoreAnalysis', {
+        supplier: r.supplier.name,
+        total: s.total.toFixed(2),
+      }));
+      lines.push(i18n.t('ai.conclusion.scoreBreakdown', {
+        price: s.price.toFixed(1),
+        delivery: s.delivery.toFixed(1),
+        level: s.level.toFixed(1),
+        fulfillment: s.fulfillment.toFixed(1),
+      }));
+      lines.push(i18n.t('ai.conclusion.supplierLevel', {
+        level: i18n.t(`enum.supplierLevel.${r.supplier.level}`),
+        rate: (r.supplier.historyFulfillmentRate * 100).toFixed(1),
+      }));
     }
   }
 
@@ -237,13 +273,16 @@ export async function generateCompareConclusion(
     const r = rows.find((x) => x.supplier.id === data.fastestDeliverySupplierId);
     if (r) {
       lines.push(``);
-      lines.push(`4. 交货能力：${r.supplier.name} 交货最快（平均 ${r.avgDeliveryDays.toFixed(1)} 天）。`);
+      lines.push(i18n.t('ai.conclusion.deliveryAbility', {
+        supplier: r.supplier.name,
+        days: r.avgDeliveryDays.toFixed(1),
+      }));
     }
   }
 
   // 5. 定标建议
   lines.push(``);
-  lines.push(`5. 定标建议：`);
+  lines.push(i18n.t('ai.conclusion.awardTitle'));
   if (data.topScoreSupplierId) {
     const topRow = rows.find((x) => x.supplier.id === data.topScoreSupplierId);
     const lowRow = data.lowestTotalSupplierId
@@ -253,20 +292,28 @@ export async function generateCompareConclusion(
     const lowScore = lowRow ? (data.scores[lowRow.supplier.id]?.total ?? 0) : 0;
     if (topRow) {
       if (topRow.supplier.id === data.lowestTotalSupplierId) {
-        lines.push(`   推荐 ${topRow.supplier.name}：综合评分最高且报价最低，性价比最优。`);
+        lines.push(i18n.t('ai.conclusion.recommendBest', { supplier: topRow.supplier.name }));
       } else if (lowRow) {
         const scoreDiff = topScore - lowScore;
         const priceDiff = topRow.totalAmount - lowRow.totalAmount;
-        lines.push(`   ${topRow.supplier.name} 综合评分领先 ${lowRow.supplier.name} ${scoreDiff.toFixed(1)} 分，但报价高出 ${formatCurrency(priceDiff, inquiry.currency)}。`);
-        lines.push(`   若预算优先，可选 ${lowRow.supplier.name}；若综合质量优先，推荐 ${topRow.supplier.name}。`);
+        lines.push(i18n.t('ai.conclusion.scoreLead', {
+          supplierA: topRow.supplier.name,
+          supplierB: lowRow.supplier.name,
+          diff: scoreDiff.toFixed(1),
+          amount: formatCurrency(priceDiff, inquiry.currency),
+        }));
+        lines.push(i18n.t('ai.conclusion.budgetOrQuality', {
+          budgetSupplier: lowRow.supplier.name,
+          qualitySupplier: topRow.supplier.name,
+        }));
       }
     }
   } else {
-    lines.push(`   暂无足够数据进行推荐，请人工评估。`);
+    lines.push(i18n.t('ai.conclusion.noData'));
   }
 
   lines.push(``);
-  lines.push(`（本结论由系统智能分析生成，仅供决策参考，最终定标请结合实际业务需求。）`);
+  lines.push(i18n.t('ai.conclusion.disclaimer'));
 
   return lines.join('\n');
 }

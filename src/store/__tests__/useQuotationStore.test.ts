@@ -20,6 +20,9 @@ vi.mock('@/api', () => ({
   },
 }));
 
+import { quotationApi } from '@/api';
+import { ApiError } from '@/api/errors';
+
 /** 构造测试用 Quotation */
 function makeQuotation(overrides: Partial<Quotation> = {}): Quotation {
   return {
@@ -45,6 +48,7 @@ function resetStore(quotations: Quotation[] = []) {
 
 beforeEach(() => {
   resetStore([]);
+  vi.clearAllMocks();
   // mock 依赖 store，避免污染
   vi.spyOn(useInquiryStore.getState(), 'addLog').mockImplementation(() => {});
   vi.spyOn(useNotificationStore.getState(), 'addNotification').mockImplementation(() => {});
@@ -177,6 +181,60 @@ describe('useQuotationStore', () => {
     it('未找到返回 undefined', () => {
       resetStore([]);
       expect(useQuotationStore.getState().getQuotationById('nope')).toBeUndefined();
+    });
+  });
+
+  describe('写操作异常处理（Task 2）', () => {
+    it('submitQuotation 成功时返回 { success:true }', async () => {
+      resetStore([makeQuotation({ id: 'quo-ok', status: QuotationStatus.DRAFT })]);
+      const res = await useQuotationStore.getState().submitQuotation('quo-ok');
+      expect(res.success).toBe(true);
+    });
+
+    it('submitQuotation API 失败时回滚本地状态并返回 { success:false, reason:error }', async () => {
+      const q = makeQuotation({ id: 'quo-fail', status: QuotationStatus.DRAFT });
+      resetStore([q]);
+      vi.mocked(quotationApi.submit).mockRejectedValueOnce(new Error('boom'));
+      const res = await useQuotationStore.getState().submitQuotation('quo-fail');
+      expect(res).toEqual(expect.objectContaining({ success: false, reason: 'error' }));
+      expect(res.error).toBeInstanceOf(ApiError);
+      // 本地状态回滚到操作前（仍为 DRAFT，不产生永久 SUBMITTED 状态）
+      expect(useQuotationStore.getState().getQuotationById('quo-fail')?.status).toBe(
+        QuotationStatus.DRAFT,
+      );
+      expect(useQuotationStore.getState().getQuotationById('quo-fail')?.submittedAt).toBeUndefined();
+    });
+
+    it('saveQuotationDraft API 失败时回滚空列表', async () => {
+      resetStore([]);
+      vi.mocked(quotationApi.saveDraft).mockRejectedValueOnce(new Error('boom'));
+      const res = await useQuotationStore.getState().saveQuotationDraft(
+        makeQuotation({ id: 'quo-new' }),
+      );
+      expect(res).toEqual(expect.objectContaining({ success: false, reason: 'error' }));
+      expect(useQuotationStore.getState().quotations).toHaveLength(0);
+    });
+
+    it('重复提交：同一报价 pending 期间再次调用返回 pending 且不重复调 API', async () => {
+      resetStore([makeQuotation({ id: 'quo-pending', status: QuotationStatus.DRAFT })]);
+      let resolveFn: (v: unknown) => void = () => {};
+      const gate = new Promise((resolve) => {
+        resolveFn = resolve;
+      });
+      vi.mocked(quotationApi.submit).mockImplementationOnce(() => gate as Promise<never>);
+      const first = useQuotationStore.getState().submitQuotation('quo-pending');
+      const second = useQuotationStore.getState().submitQuotation('quo-pending');
+      expect(await second).toEqual({ success: false, reason: 'pending' });
+      expect(quotationApi.submit).toHaveBeenCalledTimes(1);
+      resolveFn({});
+      await first;
+    });
+
+    it('submitQuotation 目标不存在返回 { success:false, reason:not_found }', async () => {
+      resetStore([]);
+      const res = await useQuotationStore.getState().submitQuotation('missing');
+      expect(res).toEqual({ success: false, reason: 'not_found' });
+      expect(quotationApi.submit).not.toHaveBeenCalled();
     });
   });
 });

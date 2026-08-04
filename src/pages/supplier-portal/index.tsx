@@ -127,6 +127,7 @@ export default function SupplierPortalPage() {
 
   const [loading, setLoading] = useState(true);
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [formItems, setFormItems] = useState<QuotationFormItem[]>([]);
   const [remark, setRemark] = useState('');
   const [errors, setErrors] = useState<Record<string, Set<string>>>({});
@@ -289,10 +290,19 @@ export default function SupplierPortalPage() {
   };
 
   /** 暂存报价 */
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     const quotation = buildQuotation(QuotationStatus.DRAFT);
-    saveQuotationDraft(quotation);
-    notifySuccess(t('supplierPortal.draftSaved'));
+    setSubmitting(true);
+    try {
+      const result = await saveQuotationDraft(quotation);
+      if (result.success) {
+        notifySuccess(t('supplierPortal.draftSaved'));
+      } else if (result.reason !== 'pending') {
+        notifyError(result.error?.message ?? t('common.operateFailed'));
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   /** 正式提交 */
@@ -307,12 +317,27 @@ export default function SupplierPortalPage() {
       content: t('supplierPortal.confirmSubmitContent'),
       okText: t('supplierPortal.confirmSubmitOk'),
       cancelText: t('supplierPortal.checkAgain'),
-      onOk: () => {
+      onOk: async () => {
         const quotation = buildQuotation(QuotationStatus.SUBMITTED);
-        upsertQuotation(quotation);
-        submitQuotation(quotation.id);
-        setSubmitted(true);
-        notifySuccess(t('supplierPortal.submitSuccessMsg'));
+        setSubmitting(true);
+        try {
+          const upsertResult = await upsertQuotation(quotation);
+          if (!upsertResult.success) {
+            if (upsertResult.reason !== 'pending') {
+              notifyError(upsertResult.error?.message ?? t('common.operateFailed'));
+            }
+            return;
+          }
+          const submitResult = await submitQuotation(quotation.id);
+          if (submitResult.success) {
+            setSubmitted(true);
+            notifySuccess(t('supplierPortal.submitSuccessMsg'));
+          } else if (submitResult.reason !== 'pending') {
+            notifyError(submitResult.error?.message ?? t('common.operateFailed'));
+          }
+        } finally {
+          setSubmitting(false);
+        }
       },
     });
   };
@@ -825,14 +850,15 @@ export default function SupplierPortalPage() {
           <Button icon={<ReloadOutlined />} onClick={handleReset}>
             {t('common.reset')}
           </Button>
-          <Button icon={<SaveOutlined />} onClick={handleSaveDraft} disabled={expired}>
+          <Button icon={<SaveOutlined />} onClick={handleSaveDraft} disabled={expired || submitting} loading={submitting}>
             {t('supplierPortal.saveDraft')}
           </Button>
           <Button
             type="primary"
             icon={<SendOutlined />}
             onClick={handleSubmit}
-            disabled={expired}
+            disabled={expired || submitting}
+            loading={submitting}
           >
             {t('supplierPortal.submitBtn')}
           </Button>

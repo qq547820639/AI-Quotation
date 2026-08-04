@@ -2,12 +2,18 @@
  * 格式化工具：货币、日期、百分比、剩余时间
  */
 import dayjs from 'dayjs';
+import i18n from '@/i18n';
 import { CURRENCY_SYMBOL, Currency, type Currency as CurrencyType, type RemainingTime } from '@/types';
 
-/** 格式化货币金额（含千分位与币种符号） */
+/** 根据当前语言选择数字 locale */
+function getLocale(): string {
+  return i18n.language === 'en-US' ? 'en-US' : 'zh-CN';
+}
+
+/** 格式化货币金额（含千分位与币种符号），金额格式与当前语言一致 */
 export function formatCurrency(amount: number, currency: CurrencyType = Currency.CNY): string {
   const symbol = CURRENCY_SYMBOL[currency] ?? '¥';
-  const formatted = Number(amount || 0).toLocaleString('zh-CN', {
+  const formatted = Number(amount || 0).toLocaleString(getLocale(), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -33,7 +39,7 @@ export function formatPercent(rate: number, digits = 1): string {
   return `${(rate * 100).toFixed(digits)}%`;
 }
 
-/** 计算询价单剩余时间 */
+/** 计算询价单剩余时间（文案经 i18n 国际化） */
 export function getRemainingTime(deadline: string): RemainingTime {
   const now = dayjs();
   const end = dayjs(deadline);
@@ -43,7 +49,7 @@ export function getRemainingTime(deadline: string): RemainingTime {
   const diffMs = end.valueOf() - now.valueOf();
   const expired = diffMs <= 0;
   if (expired) {
-    return { text: '已截止', urgent: true, expired: true };
+    return { text: i18n.t('format.expired'), urgent: true, expired: true };
   }
   const diffDay = end.diff(now, 'day');
   const diffHour = end.diff(now, 'hour');
@@ -51,11 +57,11 @@ export function getRemainingTime(deadline: string): RemainingTime {
   const urgent = diffDay <= 1;
   let text: string;
   if (diffDay >= 1) {
-    text = `剩余 ${diffDay} 天`;
+    text = i18n.t('format.remainingDays', { count: diffDay });
   } else if (diffHour >= 1) {
-    text = `剩余 ${diffHour} 小时`;
+    text = i18n.t('format.remainingHours', { count: diffHour });
   } else {
-    text = `剩余 ${Math.max(diffMin, 0)} 分钟`;
+    text = i18n.t('format.remainingMinutes', { count: Math.max(diffMin, 0) });
   }
   return { text, urgent, expired };
 }
