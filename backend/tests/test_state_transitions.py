@@ -115,16 +115,16 @@ def test_reject_flow(client, buyer_headers, supervisor_headers):
     assert any(n["status"] == "REJECTED" for n in data["approvalNodes"])
 
 
-def test_failed_action_rolls_back_no_partial_state(client, buyer_headers):
-    # 先建一个正常询价，用于后续重复 code 冲突
-    _create_inquiry(client, buyer_headers, "INQ-ROLLBACK-001")
+def test_failed_create_rolls_back_no_partial_state(client, buyer_headers):
+    # 先建一个询价，捕获其服务端生成的 id
+    first = _create_inquiry(client, buyer_headers, "INQ-ROLLBACK-001")
+    first_id = first["id"]
     before = client.get("/api/inquiries", headers=buyer_headers).json()
     before_ids = {i["id"] for i in before}
 
-    # 用相同 code 再建一个（唯一约束冲突）→ 内部 commit 失败应回滚
+    # 用相同 id 再建一个（主键冲突）→ 内部 commit 失败应回滚，无部分状态
     payload = {
-        "id": "inq-rollback-target",
-        "code": "INQ-ROLLBACK-001",
+        "id": first_id,
         "subject": "应回滚的询价",
         "deadline": "2026-09-01 18:00:00",
         "deliveryAddress": "测试地址",
@@ -144,7 +144,7 @@ def test_failed_action_rolls_back_no_partial_state(client, buyer_headers):
             }
         ],
     }
-    # TestClient 默认 raise_server_exceptions=True，唯一约束冲突会直接抛出
+    # TestClient 默认 raise_server_exceptions=True，主键冲突会直接抛出
     # IntegrityError（而非返回 500）；两种情况都符合"失败"语义，关键是后续无部分状态。
     try:
         resp = client.post("/api/inquiries", json=payload, headers=buyer_headers)
@@ -155,5 +155,5 @@ def test_failed_action_rolls_back_no_partial_state(client, buyer_headers):
     after = client.get("/api/inquiries", headers=buyer_headers).json()
     after_ids = {i["id"] for i in after}
     # 无部分状态：新询价未出现，原有询价集合不变
-    assert "inq-rollback-target" not in after_ids
+    assert first_id in after_ids  # 原询价仍在
     assert after_ids == before_ids

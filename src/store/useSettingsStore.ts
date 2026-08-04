@@ -9,6 +9,7 @@ import { loadJSON, saveJSON } from '@/utils/storage';
 import { Currency, type ApprovalConfig } from '@/types';
 import { supervisorUser } from '@/mock/users';
 import { settingsApi, type AppSettings } from '@/api/settingsApi';
+import { ok, fail, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'settings';
 
@@ -68,8 +69,8 @@ const DEFAULTS: Settings = {
 interface SettingsState extends Settings {
   /** W7.4：从 API 同步审批配置（失败时降级到本地） */
   loadFromApi: () => Promise<void>;
-  updateSettings: (patch: Partial<Settings>) => void;
-  resetSettings: () => void;
+  updateSettings: (patch: Partial<Settings>) => Promise<WriteResult>;
+  resetSettings: () => Promise<WriteResult>;
 }
 
 function loadSettings(): Settings {
@@ -102,31 +103,37 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  updateSettings: (patch) =>
-    set((state) => {
-      const next: Settings = {
-        organization: patch.organization ?? state.organization,
-        systemName: patch.systemName ?? state.systemName,
-        currency: patch.currency ?? state.currency,
-        validDays: patch.validDays ?? state.validDays,
-        deadlineLeadDays: patch.deadlineLeadDays ?? state.deadlineLeadDays,
-        timeoutThresholdHours: patch.timeoutThresholdHours ?? state.timeoutThresholdHours,
-        notifications: patch.notifications ?? state.notifications,
-        approval: patch.approval ?? state.approval,
-      };
-      persist(next);
-      settingsApi.update(toAppSettings(next)).catch(() => {
-        /* API 不可用时降级到本地，已在上面持久化 */
-      });
-      return patch;
-    }),
+  // Task 4：本地持久化 + 服务端同步，失败返回 WriteResult（不静默吞掉）
+  updateSettings: async (patch) => {
+    const state = get();
+    const next: Settings = {
+      organization: patch.organization ?? state.organization,
+      systemName: patch.systemName ?? state.systemName,
+      currency: patch.currency ?? state.currency,
+      validDays: patch.validDays ?? state.validDays,
+      deadlineLeadDays: patch.deadlineLeadDays ?? state.deadlineLeadDays,
+      timeoutThresholdHours: patch.timeoutThresholdHours ?? state.timeoutThresholdHours,
+      notifications: patch.notifications ?? state.notifications,
+      approval: patch.approval ?? state.approval,
+    };
+    set(next);
+    persist(next);
+    try {
+      await settingsApi.update(toAppSettings(next));
+      return ok();
+    } catch (e) {
+      return fail(e);
+    }
+  },
 
-  resetSettings: () =>
-    set(() => {
-      persist(DEFAULTS);
-      settingsApi.update(toAppSettings(DEFAULTS)).catch(() => {
-        /* API 不可用时降级到本地，已在上面持久化 */
-      });
-      return DEFAULTS;
-    }),
+  resetSettings: async () => {
+    set(DEFAULTS);
+    persist(DEFAULTS);
+    try {
+      await settingsApi.update(toAppSettings(DEFAULTS));
+      return ok();
+    } catch (e) {
+      return fail(e);
+    }
+  },
 }));

@@ -59,7 +59,7 @@ describe('scanDeadlines', () => {
     useSettingsStore.setState({ notifications: { timeoutAlert: false } });
     const addNotification = vi
       .spyOn(useNotificationStore.getState(), 'addNotification')
-      .mockImplementation(() => {});
+      .mockResolvedValue({ success: true });
     scanDeadlines();
     expect(addNotification).not.toHaveBeenCalled();
   });
@@ -72,7 +72,7 @@ describe('scanDeadlines', () => {
     });
     const addNotification = vi
       .spyOn(useNotificationStore.getState(), 'addNotification')
-      .mockImplementation(() => {});
+      .mockResolvedValue({ success: true });
     scanDeadlines();
     expect(addNotification).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -91,7 +91,7 @@ describe('scanDeadlines', () => {
     });
     const addNotification = vi
       .spyOn(useNotificationStore.getState(), 'addNotification')
-      .mockImplementation(() => {});
+      .mockResolvedValue({ success: true });
     scanDeadlines();
     expect(addNotification).toHaveBeenCalled();
   });
@@ -106,7 +106,7 @@ describe('scanDeadlines', () => {
     });
     const addNotification = vi
       .spyOn(useNotificationStore.getState(), 'addNotification')
-      .mockImplementation(() => {});
+      .mockResolvedValue({ success: true });
     scanDeadlines();
     expect(addNotification).not.toHaveBeenCalled();
   });
@@ -119,7 +119,7 @@ describe('scanDeadlines', () => {
     });
     const addNotification = vi
       .spyOn(useNotificationStore.getState(), 'addNotification')
-      .mockImplementation(() => {});
+      .mockResolvedValue({ success: true });
     scanDeadlines();
     expect(addNotification).not.toHaveBeenCalled();
   });
@@ -132,7 +132,7 @@ describe('scanDeadlines', () => {
     });
     const addNotification = vi
       .spyOn(useNotificationStore.getState(), 'addNotification')
-      .mockImplementation(() => {});
+      .mockResolvedValue({ success: true });
     scanDeadlines();
     expect(addNotification).not.toHaveBeenCalled();
   });
@@ -143,7 +143,7 @@ describe('scanDeadlines', () => {
     });
     const addNotification = vi
       .spyOn(useNotificationStore.getState(), 'addNotification')
-      .mockImplementation(() => {});
+      .mockResolvedValue({ success: true });
     scanDeadlines();
     expect(addNotification).not.toHaveBeenCalled();
   });

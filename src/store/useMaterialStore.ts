@@ -1,15 +1,19 @@
 /**
  * 物料库 store
  * - W7.4：初始化从 mock 加载，支持 loadFromApi 从 API 加载（失败降级）
- * - 写操作同步 localStorage，并异步同步到 API（失败静默降级）
+ * - Task 4：写操作统一返回 WriteResult，乐观更新 + 成功后回滚 + 防重复提交
  */
 import { create } from 'zustand';
 import { materials as mockMaterials } from '@/mock/materials';
 import type { Material } from '@/types';
 import { loadJSON, saveJSON } from '@/utils/storage';
 import { materialApi } from '@/api';
+import { ok, fail, pending, notFound, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'materials';
+
+/** 进行中的写操作（key: op:id），用于防重复提交 */
+const pendingOps: Record<string, boolean> = {};
 
 /** 合并 mock 与 localStorage（localStorage 覆盖同 id） */
 function mergeMaterials(): Material[] {
@@ -27,9 +31,9 @@ interface MaterialState {
   loadFromApi: () => Promise<void>;
   getMaterialById: (id: string) => Material | undefined;
   getMaterialByCode: (code: string) => Material | undefined;
-  addMaterial: (material: Material) => void;
-  updateMaterial: (id: string, patch: Partial<Material>) => void;
-  deleteMaterial: (id: string) => void;
+  addMaterial: (material: Material) => Promise<WriteResult>;
+  updateMaterial: (id: string, patch: Partial<Material>) => Promise<WriteResult>;
+  deleteMaterial: (id: string) => Promise<WriteResult>;
 }
 
 export const useMaterialStore = create<MaterialState>((set, get) => ({
@@ -49,36 +53,69 @@ export const useMaterialStore = create<MaterialState>((set, get) => ({
   getMaterialById: (id) => get().materials.find((m) => m.id === id),
   getMaterialByCode: (code) => get().materials.find((m) => m.code === code),
 
-  addMaterial: (material) => {
-    set((state) => {
-      const materials = [...state.materials, material];
-      saveJSON(STORAGE_KEY, materials);
-      return { materials };
-    });
-    materialApi.create(material).catch(() => {
-      /* API 不可用时降级到本地，已在上面持久化 */
-    });
+  // Task 4：乐观更新 + 服务端确认 + 失败回滚 + 防重复提交
+  addMaterial: async (material) => {
+    if (pendingOps[`add:${material.id}`]) return pending();
+    const snapshot = get().materials;
+    pendingOps[`add:${material.id}`] = true;
+    try {
+      set((state) => {
+        const materials = [...state.materials, material];
+        saveJSON(STORAGE_KEY, materials);
+        return { materials };
+      });
+      await materialApi.create(material);
+      return ok();
+    } catch (e) {
+      set({ materials: snapshot });
+      saveJSON(STORAGE_KEY, snapshot);
+      return fail(e);
+    } finally {
+      pendingOps[`add:${material.id}`] = false;
+    }
   },
 
-  updateMaterial: (id, patch) => {
-    set((state) => {
-      const materials = state.materials.map((m) => (m.id === id ? { ...m, ...patch } : m));
-      saveJSON(STORAGE_KEY, materials);
-      return { materials };
-    });
-    materialApi.update(id, patch).catch(() => {
-      /* API 不可用时降级到本地，已在上面持久化 */
-    });
+  updateMaterial: async (id, patch) => {
+    if (pendingOps[`update:${id}`]) return pending();
+    if (!get().getMaterialById(id)) return notFound();
+    const snapshot = get().materials;
+    pendingOps[`update:${id}`] = true;
+    try {
+      set((state) => {
+        const materials = state.materials.map((m) => (m.id === id ? { ...m, ...patch } : m));
+        saveJSON(STORAGE_KEY, materials);
+        return { materials };
+      });
+      await materialApi.update(id, patch);
+      return ok();
+    } catch (e) {
+      set({ materials: snapshot });
+      saveJSON(STORAGE_KEY, snapshot);
+      return fail(e);
+    } finally {
+      pendingOps[`update:${id}`] = false;
+    }
   },
 
-  deleteMaterial: (id) => {
-    set((state) => {
-      const materials = state.materials.filter((m) => m.id !== id);
-      saveJSON(STORAGE_KEY, materials);
-      return { materials };
-    });
-    materialApi.delete(id).catch(() => {
-      /* API 不可用时降级到本地，已在上面持久化 */
-    });
+  deleteMaterial: async (id) => {
+    if (pendingOps[`delete:${id}`]) return pending();
+    if (!get().getMaterialById(id)) return notFound();
+    const snapshot = get().materials;
+    pendingOps[`delete:${id}`] = true;
+    try {
+      set((state) => {
+        const materials = state.materials.filter((m) => m.id !== id);
+        saveJSON(STORAGE_KEY, materials);
+        return { materials };
+      });
+      await materialApi.delete(id);
+      return ok();
+    } catch (e) {
+      set({ materials: snapshot });
+      saveJSON(STORAGE_KEY, snapshot);
+      return fail(e);
+    } finally {
+      pendingOps[`delete:${id}`] = false;
+    }
   },
 }));

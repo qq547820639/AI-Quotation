@@ -93,7 +93,7 @@ beforeEach(() => {
   resetStore([]);
   vi.clearAllMocks();
   // mock 通知 store，避免污染
-  vi.spyOn(useNotificationStore.getState(), 'addNotification').mockImplementation(() => {});
+  vi.spyOn(useNotificationStore.getState(), 'addNotification').mockResolvedValue({ success: true });
 });
 
 describe('useInquiryStore', () => {

@@ -482,6 +482,8 @@ export interface Inquiry {
   purchaserComments: Record<string, string>;
   /** 审批节点（W5，无审批时为空数组） */
   approvalNodes: ApprovalNode[];
+  /** 乐观锁版本号（Task 6，后端并发控制用） */
+  version?: number;
 }
 
 /* ==================== 通用视图模型 ==================== */

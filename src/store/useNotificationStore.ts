@@ -11,6 +11,7 @@ import { NotificationType, type Notification } from '@/types';
 import { loadJSON, saveJSON } from '@/utils/storage';
 import { notificationApi } from '@/api';
 import { useSettingsStore } from './useSettingsStore';
+import { ok, fail, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'notifications';
 /** 去重窗口：同 inquiryId + type 10 分钟内不重复 */
@@ -37,9 +38,9 @@ interface NotificationState {
   notifications: Notification[];
   /** W7.4：从 API 加载（失败时降级到 localStorage） */
   loadFromApi: () => Promise<void>;
-  addNotification: (payload: NotificationPayload) => void;
-  markRead: (id: string) => void;
-  markAllRead: () => void;
+  addNotification: (payload: NotificationPayload) => Promise<WriteResult>;
+  markRead: (id: string) => Promise<WriteResult>;
+  markAllRead: () => Promise<WriteResult>;
   getUnreadCount: () => number;
 }
 
@@ -63,12 +64,13 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     }
   },
 
-  addNotification: (payload) => {
+  // Task 4：本地持久化 + 服务端同步，失败返回 WriteResult（不静默吞掉）
+  addNotification: async (payload) => {
     // W6：检查设置开关，关闭的类型不写入（SYSTEM 始终写入）
     const settingKey = TYPE_TO_SETTING_KEY[payload.type];
     if (settingKey) {
       const enabled = useSettingsStore.getState().notifications[settingKey];
-      if (enabled === false) return;
+      if (enabled === false) return ok();
     }
     let created: Notification | null = null;
     set((state) => {
@@ -94,15 +96,19 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       saveJSON(STORAGE_KEY, notifications);
       return { notifications };
     });
-    // 同步到 API（fire-and-forget），保证服务端也有该通知
+    // 同步到 API，保证服务端也有该通知；失败返回其结果（本地已持久化）
     if (created) {
-      notificationApi.create(created).catch(() => {
-        /* API 不可用时已在本地持久化 */
-      });
+      try {
+        await notificationApi.create(created);
+        return ok();
+      } catch (e) {
+        return fail(e);
+      }
     }
+    return ok();
   },
 
-  markRead: (id) => {
+  markRead: async (id) => {
     set((state) => {
       const notifications = state.notifications.map((n) =>
         n.id === id ? { ...n, read: true } : n,
@@ -110,20 +116,26 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       saveJSON(STORAGE_KEY, notifications);
       return { notifications };
     });
-    notificationApi.markRead(id).catch(() => {
-      /* API 不可用时降级到本地，已在上面持久化 */
-    });
+    try {
+      await notificationApi.markRead(id);
+      return ok();
+    } catch (e) {
+      return fail(e);
+    }
   },
 
-  markAllRead: () => {
+  markAllRead: async () => {
     set((state) => {
       const notifications = state.notifications.map((n) => ({ ...n, read: true }));
       saveJSON(STORAGE_KEY, notifications);
       return { notifications };
     });
-    notificationApi.markAllRead().catch(() => {
-      /* API 不可用时降级到本地，已在上面持久化 */
-    });
+    try {
+      await notificationApi.markAllRead();
+      return ok();
+    } catch (e) {
+      return fail(e);
+    }
   },
 
   getUnreadCount: () => get().notifications.filter((n) => !n.read).length,

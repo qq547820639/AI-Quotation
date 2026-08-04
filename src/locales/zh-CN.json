@@ -900,6 +900,7 @@
       "parseFailed": "文件解析失败",
       "uploadFirst": "请先上传文件",
       "importSuccessCount": "已导入 {{count}} 条物料",
+      "importFailedCount": "导入失败 {{count}} 条：{{message}}",
       "selectExcel": "选择 Excel/CSV 文件",
       "supportedColumns": "支持列：物料编码、物料名称、物料品类、品牌、规格型号、技术参数、单位、库存。需包含「物料名称」列。",
       "previewCount": "预览（前 10 行，共 {{count}} 条）"

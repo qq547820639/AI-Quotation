@@ -5,6 +5,7 @@
  * - 401：清理会话、记录回跳地址、跳转登录
  */
 import axios from 'axios';
+import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import axiosRetry from 'axios-retry';
 import { message } from 'antd';
 import { parseApiError, ERROR_CODES } from './errors';
@@ -47,6 +48,43 @@ axiosRetry(client, {
   retryDelay: axiosRetry.exponentialDelay,
   shouldResetTimeout: true,
 });
+
+// 重复请求合并（Task 8）：并发相同的 GET 合并为同一请求，避免重复拉取
+type AdapterFn = (config: InternalAxiosRequestConfig) => Promise<AxiosResponse>;
+
+function requestKey(config: InternalAxiosRequestConfig): string {
+  const method = (config.method || 'get').toUpperCase();
+  const params = config.params ?? {};
+  return `${method}:${config.url}:${JSON.stringify(params)}`;
+}
+
+/**
+ * 包装基础 adapter，把并发相同的幂等请求（GET/HEAD，无 signal）合并为同一请求。
+ * 返回的 adapter 供 axios 使用；基础 adapter 可以是 axios-retry 包装后的 adapter。
+ */
+export function createDedupAdapter(baseAdapter: AdapterFn): AdapterFn {
+  const inflight = new Map<string, Promise<AxiosResponse>>();
+  return (config) => {
+    if (isIdempotentMethod(config.method) && !config.signal) {
+      const key = requestKey(config);
+      const existing = inflight.get(key);
+      if (existing) return existing;
+      const p = baseAdapter(config);
+      inflight.set(key, p);
+      // 无论成功失败都在结束后移除，避免 key 泄漏
+      const cleanup = () => inflight.delete(key);
+      void p.then(cleanup, cleanup);
+      return p;
+    }
+    return baseAdapter(config);
+  };
+}
+
+// 在 axios-retry 包装的 adapter 之上再包一层去重
+const originalAdapter = client.defaults.adapter as unknown as AdapterFn | undefined;
+client.defaults.adapter = createDedupAdapter(
+  originalAdapter ?? (() => Promise.reject(new Error('no adapter'))),
+);
 
 // 请求拦截器：注入认证 token
 client.interceptors.request.use(

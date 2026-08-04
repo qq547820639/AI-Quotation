@@ -900,6 +900,7 @@
       "parseFailed": "File parse failed",
       "uploadFirst": "Please upload a file first",
       "importSuccessCount": "{{count}} material(s) imported",
+      "importFailedCount": "{{count}} import(s) failed: {{message}}",
       "selectExcel": "Select Excel/CSV file",
       "supportedColumns": "Supported columns: Material Code, Material Name, Material Category, Brand, Specification Model, Technical Params, Unit, Stock. Must include the \"Material Name\" column.",
       "previewCount": "Preview (first 10 rows, {{count}} total)"

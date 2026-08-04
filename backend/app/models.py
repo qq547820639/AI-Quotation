@@ -97,6 +97,7 @@ class Inquiry(Base):
     updated_at = Column(String, nullable=False)
     selected_supplier_map = Column(JSON, nullable=False, default=dict)  # {itemId: supplierId}
     purchaser_comments = Column(JSON, nullable=False, default=dict)  # {supplierId: comment}
+    version = Column(Integer, nullable=False, default=1)  # 乐观锁版本号（Task 6）
 
     items = relationship("InquiryItem", back_populates="inquiry", cascade="all, delete-orphan", order_by="InquiryItem.id")
     logs = relationship("InquiryLog", back_populates="inquiry", cascade="all, delete-orphan", order_by="InquiryLog.time")

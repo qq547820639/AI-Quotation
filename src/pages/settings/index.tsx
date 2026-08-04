@@ -24,7 +24,7 @@ import PageHeader from '@/components/PageHeader';
 import Permission from '@/components/Permission';
 import { useAuthStore } from '@/store/useAuthStore';
 import { CURRENCY_OPTIONS } from '@/types';
-import { confirmAction, notifySuccess } from '@/utils/confirm';
+import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import i18n from '@/i18n';
 import { removeKey, clearAll } from '@/utils/storage';
 import { useSettingsStore } from '@/store/useSettingsStore';
@@ -68,24 +68,28 @@ export default function SettingsPage() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const users = useAuthStore((s) => s.users);
 
-  const handleSaveBasic = () => {
-    updateSettings({ organization, systemName, currency });
-    notifySuccess(i18n.t('settings.saveSuccess'));
+  const handleSaveBasic = async () => {
+    const result = await updateSettings({ organization, systemName, currency });
+    if (result.success) notifySuccess(i18n.t('settings.saveSuccess'));
+    else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
   };
 
-  const handleSaveRules = () => {
-    updateSettings({ validDays, deadlineLeadDays, timeoutThresholdHours });
-    notifySuccess(i18n.t('settings.saveSuccess'));
+  const handleSaveRules = async () => {
+    const result = await updateSettings({ validDays, deadlineLeadDays, timeoutThresholdHours });
+    if (result.success) notifySuccess(i18n.t('settings.saveSuccess'));
+    else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
   };
 
-  const handleSaveNotifications = () => {
-    updateSettings({ notifications });
-    notifySuccess(i18n.t('settings.saveSuccess'));
+  const handleSaveNotifications = async () => {
+    const result = await updateSettings({ notifications });
+    if (result.success) notifySuccess(i18n.t('settings.saveSuccess'));
+    else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
   };
 
-  const handleSaveApproval = () => {
-    updateSettings({ approval });
-    notifySuccess(i18n.t('settings.approval.saveSuccess'));
+  const handleSaveApproval = async () => {
+    const result = await updateSettings({ approval });
+    if (result.success) notifySuccess(i18n.t('settings.approval.saveSuccess'));
+    else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
   };
 
   const handleToggleNotification = (key: string, checked: boolean) =>

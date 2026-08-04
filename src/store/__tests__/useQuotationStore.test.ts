@@ -51,7 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // mock 依赖 store，避免污染
   vi.spyOn(useInquiryStore.getState(), 'addLog').mockImplementation(() => {});
-  vi.spyOn(useNotificationStore.getState(), 'addNotification').mockImplementation(() => {});
+  vi.spyOn(useNotificationStore.getState(), 'addNotification').mockResolvedValue({ success: true });
 });
 
 describe('useQuotationStore', () => {

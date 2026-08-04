@@ -38,11 +38,16 @@ const STORAGE_KEY = 'inquiries';
 /** 进行中的写操作（key: op:id），用于防重复提交 */
 const pendingOps: Record<string, boolean> = {};
 
-/** 生成询价单编号：INQYYYYMMDD + 3 位序号（基于已有数量递增，避免碰撞） */
-function generateCode(existingCount: number): string {
-  const date = dayjs().format('YYYYMMDD');
-  const seq = String(existingCount + 1).padStart(3, '0');
-  return `INQ${date}${seq}`;
+/** 将服务端返回的询价合并进本地状态（Task 6/7：同步 version 与服务端生成的 code） */
+function applyServerInquiry(server: Inquiry) {
+  if (!server || !server.id) return;
+  useInquiryStore.setState((state) => {
+    const inquiries = state.inquiries.map((i) =>
+      i.id === server.id ? { ...i, ...server } : i,
+    );
+    saveJSON(STORAGE_KEY, inquiries);
+    return { inquiries };
+  });
 }
 
 /** 生成日志条目（W4：操作人取自 useAuthStore） */
@@ -175,7 +180,11 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         return { inquiries };
       });
-      await inquiryApi.create(inquiry);
+      const created = await inquiryApi.create(inquiry);
+      // Task 7：编号由服务端生成，创建成功后用服务端 code 覆盖本地占位
+      if (created && created.id) {
+        applyServerInquiry(created);
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -188,7 +197,8 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   updateInquiry: async (id, patch) => {
     if (pendingOps[`update:${id}`]) return pending();
-    if (!get().getInquiryById(id)) return notFound();
+    const current = get().getInquiryById(id);
+    if (!current) return notFound();
     const snapshot = get().inquiries;
     pendingOps[`update:${id}`] = true;
     try {
@@ -201,7 +211,11 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         return { inquiries };
       });
-      await inquiryApi.update(id, patch);
+      await inquiryApi.update(id, { ...patch, version: current?.version });
+      const updated = get().getInquiryById(id);
+      if (updated) {
+        applyServerInquiry({ ...updated, version: (updated.version ?? 0) + 1 });
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -238,12 +252,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
     const source = get().getInquiryById(id);
     if (!source) return undefined;
     if (pendingOps[`copy:${id}`]) return undefined;
-    const newId = `inq-${dayjs().valueOf()}`;
+    const newId = `inq-${dayjs().valueOf()}-${Math.random().toString(36).slice(2, 6)}`;
     const nowStr = dayjs().format('YYYY-MM-DD HH:mm:ss');
+    // 占位编号：真实编号由服务端生成，创建成功后用 applyServerInquiry 覆盖（Task 7）
+    const placeholderCode = `INQ${dayjs().format('YYYYMMDD')}${String(dayjs().valueOf()).slice(-3)}`;
     const copy: Inquiry = {
       ...source,
       id: newId,
-      code: generateCode(get().inquiries.length),
+      code: placeholderCode,
       subject: `${source.subject}（副本）`,
       status: InquiryStatus.DRAFT,
       quotations: [],
@@ -262,12 +278,15 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
     });
     inquiryApi
       .create(copy)
-      .then(() => {
-        pendingOps[`copy:${id}`] = false;
+      .then((created) => {
+        // Task 7：用服务端生成的编号覆盖本地占位
+        if (created && created.id) applyServerInquiry(created);
       })
       .catch(() => {
         set({ inquiries: snapshot });
         saveJSON(STORAGE_KEY, snapshot);
+      })
+      .finally(() => {
         pendingOps[`copy:${id}`] = false;
       });
     return copy;

@@ -11,13 +11,16 @@ export const inquiryApi = {
   update: (id: string, data: Partial<Inquiry>) =>
     client.put<Inquiry>(`/inquiries/${id}`, data).then((r) => r.data),
   delete: (id: string) => client.delete(`/inquiries/${id}`),
-  submitApproval: (id: string) =>
-    client.post<Inquiry>(`/inquiries/${id}/submit-approval`).then((r) => r.data),
-  approve: (id: string, comment?: string) =>
-    client.post<Inquiry>(`/inquiries/${id}/approve`, { comment }).then((r) => r.data),
-  reject: (id: string, comment?: string) =>
-    client.post<Inquiry>(`/inquiries/${id}/reject`, { comment }).then((r) => r.data),
-  confirm: (id: string) => client.post<Inquiry>(`/inquiries/${id}/confirm`).then((r) => r.data),
-  cancel: (id: string) => client.post<Inquiry>(`/inquiries/${id}/cancel`).then((r) => r.data),
-  send: (id: string) => client.post<Inquiry>(`/inquiries/${id}/send`).then((r) => r.data),
+  submitApproval: (id: string, version?: number) =>
+    client.post<Inquiry>(`/inquiries/${id}/submit-approval`, { version }).then((r) => r.data),
+  approve: (id: string, comment?: string, version?: number) =>
+    client.post<Inquiry>(`/inquiries/${id}/approve`, { comment, version }).then((r) => r.data),
+  reject: (id: string, comment?: string, version?: number) =>
+    client.post<Inquiry>(`/inquiries/${id}/reject`, { comment, version }).then((r) => r.data),
+  confirm: (id: string, version?: number) =>
+    client.post<Inquiry>(`/inquiries/${id}/confirm`, { version }).then((r) => r.data),
+  cancel: (id: string, version?: number) =>
+    client.post<Inquiry>(`/inquiries/${id}/cancel`, { version }).then((r) => r.data),
+  send: (id: string, version?: number) =>
+    client.post<Inquiry>(`/inquiries/${id}/send`, { version }).then((r) => r.data),
 };

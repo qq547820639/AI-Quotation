@@ -67,9 +67,12 @@ def test_create_inquiry_returns_created(client, buyer_headers):
     resp = client.post("/api/inquiries", json=payload, headers=buyer_headers)
     assert resp.status_code in (200, 201)
     data = resp.json()
-    assert data["code"] == "INQ-TEST-001"
+    # Task 7：编号由服务端生成，忽略客户端传入的 code
+    assert data["code"].startswith("INQ")
+    assert data["code"] != payload["code"]
     assert data["status"] == "DRAFT"
     assert data["ownerId"] == "u-1"
+    assert data["version"] == 1
     assert len(data["items"]) == 1
     assert data["items"][0]["name"] == "工业交换机"
 

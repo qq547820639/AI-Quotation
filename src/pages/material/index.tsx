@@ -114,14 +114,24 @@ export default function MaterialPage() {
     },
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     if (!importPreview.length) {
       notifyWarning(t('material.import.uploadFirst'));
       return;
     }
     setImporting(true);
-    importPreview.forEach((m) => addMaterial(m));
-    notifySuccess(t('material.import.importSuccessCount', { count: importPreview.length }));
+    const results = await Promise.all(importPreview.map((m) => addMaterial(m)));
+    const failed = results.filter((r) => !r.success);
+    if (failed.length) {
+      notifyError(
+        t('material.import.importFailedCount', {
+          count: failed.length,
+          message: failed[0].error?.message ?? '',
+        }),
+      );
+    } else {
+      notifySuccess(t('material.import.importSuccessCount', { count: importPreview.length }));
+    }
     setImportPreview([]);
     setImportOpen(false);
     setImporting(false);
@@ -192,12 +202,12 @@ export default function MaterialPage() {
     try {
       const values = await form.validateFields();
       setSubmitting(true);
+      let result;
       if (editingId) {
         // 编辑：code 只读，不更新
         const { code: _code, ...patch } = values;
         void _code;
-        updateMaterial(editingId, patch);
-        notifySuccess(t('material.form.updated'));
+        result = await updateMaterial(editingId, patch);
       } else {
         // 新增
         const newMaterial: Material = {
@@ -211,9 +221,13 @@ export default function MaterialPage() {
           unit: values.unit,
           stockQty: values.stockQty,
         };
-        addMaterial(newMaterial);
-        notifySuccess(t('material.form.added'));
+        result = await addMaterial(newMaterial);
       }
+      if (!result.success) {
+        notifyError(result.error?.message ?? t('common.operateFailed'));
+        return;
+      }
+      notifySuccess(editingId ? t('material.form.updated') : t('material.form.added'));
       setModalOpen(false);
       form.resetFields();
     } catch {
@@ -230,8 +244,12 @@ export default function MaterialPage() {
       content: t('material.form.confirmDeleteDetail', { name: material.name, code: material.code }),
       okText: t('common.delete'),
       danger: true,
-      onOk: () => {
-        deleteMaterial(material.id);
+      onOk: async () => {
+        const result = await deleteMaterial(material.id);
+        if (!result.success) {
+          notifyError(result.error?.message ?? t('common.operateFailed'));
+          return;
+        }
         notifySuccess(t('material.form.deleted'));
       },
     });

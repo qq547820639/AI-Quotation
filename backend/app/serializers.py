@@ -205,6 +205,7 @@ def inquiry_to_schema(inquiry: Inquiry, db=None) -> InquirySchema:
         selectedSupplierMap=inquiry.selected_supplier_map or {},
         purchaserComments=inquiry.purchaser_comments or {},
         approvalNodes=[approval_node_to_schema(n) for n in inquiry.approval_nodes],
+        version=inquiry.version,
     )
 
 

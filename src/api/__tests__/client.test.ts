@@ -20,7 +20,7 @@ vi.mock('antd', () => ({
   },
 }));
 
-import { client } from '../client';
+import { client, createDedupAdapter } from '../client';
 import { message } from 'antd';
 
 /** 保存原始 adapter，避免污染其它测试 */
@@ -175,6 +175,60 @@ describe('parseApiError 统一错误解析', () => {
     const err = parseApiError(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }));
     expect(err.code).toBe(ERROR_CODES.TIMEOUT);
     expect(err.message).toBe(i18n.t('errors.timeout'));
+  });
+});
+
+describe('重复请求合并（Task 8.2）', () => {
+  /** 构造一个可挂起的 adapter，用于模拟并发请求 */
+  function hangingAdapter(calls: (config: InternalAxiosRequestConfig) => void) {
+    return async (config: InternalAxiosRequestConfig) => {
+      calls(config);
+      const response: AxiosResponse = {
+        data: { ok: true },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+      return response;
+    };
+  }
+
+  it('并发相同 GET 合并为同一请求，只调用一次基础 adapter', async () => {
+    const seen: string[] = [];
+    const base = hangingAdapter((c) => seen.push((c.url ?? '') + ':' + JSON.stringify(c.params ?? {})));
+    const dedup = createDedupAdapter(base);
+    const [a, b, c] = await Promise.all([
+      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
+      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
+      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
+    ]);
+    expect(seen).toHaveLength(1);
+    expect(a.data).toEqual({ ok: true });
+    expect(b.data).toEqual({ ok: true });
+    expect(c.data).toEqual({ ok: true });
+  });
+
+  it('不同参数或非幂等请求不合并', async () => {
+    const seen: string[] = [];
+    const base = hangingAdapter((c) => seen.push((c.url ?? '') + ':' + (c.method ?? '')));
+    const dedup = createDedupAdapter(base);
+    await Promise.all([
+      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
+      dedup({ method: 'GET', url: '/materials', params: { page: 2 } } as InternalAxiosRequestConfig),
+      dedup({ method: 'POST', url: '/materials' } as InternalAxiosRequestConfig),
+    ]);
+    // GET 不同参数 → 2 次；POST 非幂等 → 1 次
+    expect(seen).toHaveLength(3);
+  });
+
+  it('请求结束后释放 key，后续相同请求可再次发起', async () => {
+    const seen: string[] = [];
+    const base = hangingAdapter((c) => seen.push(c.url ?? ''));
+    const dedup = createDedupAdapter(base);
+    await dedup({ method: 'GET', url: '/materials' } as InternalAxiosRequestConfig);
+    await dedup({ method: 'GET', url: '/materials' } as InternalAxiosRequestConfig);
+    expect(seen).toHaveLength(2);
   });
 });
 

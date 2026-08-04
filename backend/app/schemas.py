@@ -201,6 +201,7 @@ class InquirySchema(BaseModel):
     selectedSupplierMap: Dict[str, str]
     purchaserComments: Dict[str, str]
     approvalNodes: List[ApprovalNodeSchema]
+    version: int = 1
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -240,6 +241,12 @@ class NotificationCreate(BaseModel):
 
 class ApprovalAction(BaseModel):
     comment: Optional[str] = None
+    version: Optional[int] = None  # 乐观锁版本号（Task 6）
+
+
+class VersionBody(BaseModel):
+    """动作端点携带的乐观锁版本号（Task 6）"""
+    version: Optional[int] = None
 
 
 class BatchMaterials(BaseModel):
