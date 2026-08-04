@@ -8,7 +8,11 @@ import {
   analyzeQuotationAnomalies,
   generateCompareConclusion,
 } from '../aiService';
-import { prepareCompareData, type SupplierQuoteRow } from '@/components/quotation/scoreUtils';
+import {
+  prepareCompareData,
+  getQuotationItem,
+  type SupplierQuoteRow,
+} from '@/components/quotation/scoreUtils';
 import {
   CooperationStatus,
   Currency,
@@ -307,6 +311,50 @@ describe('analyzeQuotationAnomalies', () => {
     const result = await analyzeQuotationAnomalies(inquiry, data);
     expect(result.hasAnomaly).toBe(true);
     expect(result.summary).toContain('已超过目标价');
+  });
+
+  it('某供应商报价缺失某物料时正常处理不崩溃，且不误报异常', async () => {
+    // 询价含两个物料，供应商 A 只报价了物料1（缺失物料2），供应商 B 两个都报
+    const inquiry = makeInquiry({
+      items: [
+        makeItem({ id: 'item-1' }),
+        makeItem({ id: 'item-2', name: '物料B', code: 'MAT002', targetPrice: undefined }),
+      ],
+    });
+    const suppliers = [
+      makeSupplier({ id: 'sup-1', name: 'A' }),
+      makeSupplier({ id: 'sup-2', name: 'B' }),
+    ];
+    const quotations = [
+      makeQuotation({
+        id: 'q-1',
+        supplierId: 'sup-1',
+        supplierName: 'A',
+        totalAmount: 1000,
+        items: [
+          { id: 'qi-1', quotationId: 'q-1', inquiryItemId: 'item-1', unitPrice: 100, taxIncludedTotal: 1000, taxRate: 0.13, attachments: [], deliveryDays: 10 },
+        ],
+      }),
+      makeQuotation({
+        id: 'q-2',
+        supplierId: 'sup-2',
+        supplierName: 'B',
+        totalAmount: 2000,
+        items: [
+          { id: 'qi-2', quotationId: 'q-2', inquiryItemId: 'item-1', unitPrice: 100, taxIncludedTotal: 1000, taxRate: 0.13, attachments: [], deliveryDays: 10 },
+          { id: 'qi-3', quotationId: 'q-2', inquiryItemId: 'item-2', unitPrice: 200, taxIncludedTotal: 2000, taxRate: 0.13, attachments: [], deliveryDays: 10 },
+        ],
+      }),
+    ];
+    const data = prepareCompareData(inquiry, suppliers, quotations);
+    // 供应商 A 缺失 item-2 的报价
+    const rowA = data.rows.find((r) => r.supplier.id === 'sup-1');
+    expect(getQuotationItem(rowA!, 'item-2')).toBeUndefined();
+    // 分析不崩溃，且返回结构完整
+    const result = await analyzeQuotationAnomalies(inquiry, data);
+    expect(typeof result.summary).toBe('string');
+    expect(result.hasAnomaly).toBe(false);
+    expect(result.anomalyCount).toBe(0);
   });
 
   it('最低报价未超目标价时不触发超预算异常', async () => {

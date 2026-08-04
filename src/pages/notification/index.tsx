@@ -108,13 +108,11 @@ export default function NotificationPage() {
                 <List.Item
                   style={{
                     background: n.read ? 'transparent' : 'var(--color-primary-bg)',
-                    padding: '12px 16px',
+                    padding: 0,
                     borderRadius: 8,
                     marginBottom: 8,
                     border: '1px solid var(--color-border-light)',
-                    cursor: n.inquiryId ? 'pointer' : 'default',
                   }}
-                  onClick={() => handleClick(n)}
                   actions={[
                     !n.read ? (
                       <Button
@@ -135,26 +133,48 @@ export default function NotificationPage() {
                     ),
                   ]}
                 >
-                  <List.Item.Meta
-                    avatar={<Badge dot={!n.read} offset={[-4, 4]} />}
-                    title={
-                      <Space size={8}>
-                        <Text strong={!n.read}>{n.title}</Text>
-                        <Tag color={TYPE_COLOR[n.type]} style={{ marginInlineEnd: 0 }}>
-                          {t(`notification.type.${n.type}`)}
-                        </Tag>
-                      </Space>
+                  <div
+                    role={n.inquiryId ? 'button' : undefined}
+                    tabIndex={n.inquiryId ? 0 : undefined}
+                    aria-label={n.inquiryId ? t('notification.openDetail', { title: n.title }) : undefined}
+                    style={{
+                      padding: '12px 16px',
+                      cursor: n.inquiryId ? 'pointer' : 'default',
+                      width: '100%',
+                    }}
+                    onClick={() => handleClick(n)}
+                    onKeyDown={
+                      n.inquiryId
+                        ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              handleClick(n);
+                            }
+                          }
+                        : undefined
                     }
-                    description={
-                      <Space direction="vertical" size={4}>
-                        {n.content && <Text type="secondary" style={{ fontSize: 13 }}>{n.content}</Text>}
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {formatDateTime(n.time)}
-                          {n.inquiryId && t('notification.clickToViewDetail')}
-                        </Text>
-                      </Space>
-                    }
-                  />
+                  >
+                    <List.Item.Meta
+                      avatar={<Badge dot={!n.read} offset={[-4, 4]} />}
+                      title={
+                        <Space size={8}>
+                          <Text strong={!n.read}>{n.title}</Text>
+                          <Tag color={TYPE_COLOR[n.type]} style={{ marginInlineEnd: 0 }}>
+                            {t(`notification.type.${n.type}`)}
+                          </Tag>
+                        </Space>
+                      }
+                      description={
+                        <Space direction="vertical" size={4}>
+                          {n.content && <Text type="secondary" style={{ fontSize: 13 }}>{n.content}</Text>}
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {formatDateTime(n.time)}
+                            {n.inquiryId && t('notification.clickToViewDetail')}
+                          </Text>
+                        </Space>
+                      }
+                    />
+                  </div>
                 </List.Item>
               )}
             />

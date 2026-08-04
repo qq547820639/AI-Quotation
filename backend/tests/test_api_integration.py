@@ -77,6 +77,36 @@ def test_create_inquiry_returns_created(client, buyer_headers):
     assert data["items"][0]["name"] == "工业交换机"
 
 
+def test_create_inquiry_missing_subject_returns_422(client, buyer_headers):
+    """创建询价缺少必填字段 subject → 422，且异常响应为结构化 JSON（含 detail）"""
+    resp = client.post(
+        "/api/inquiries",
+        json={"deadline": "2026-09-01 18:00:00"},
+        headers=buyer_headers,
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert "detail" in body
+    assert body["error_type"] == "validation_error"
+    assert body["request_id"]
+    # 请求头携带的 request_id 与响应体一致
+    assert resp.headers.get("X-Request-Id") == body["request_id"]
+
+
+def test_create_inquiry_blank_subject_returns_422(client, buyer_headers):
+    """创建询价 subject 为空白字符串 → 422，结构化错误含细节"""
+    resp = client.post(
+        "/api/inquiries",
+        json={"subject": "   "},
+        headers=buyer_headers,
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["error_type"] == "validation_error"
+    assert "detail" in body
+    assert body["request_id"]
+
+
 def test_get_inquiry_detail(client, buyer_headers):
     resp = client.get("/api/inquiries/inq-2", headers=buyer_headers)
     assert resp.status_code == 200

@@ -61,6 +61,8 @@ jobs:
         run: cd backend && pip install -r requirements.txt
       - name: Backend import smoke test
         run: cd backend && python -c "from app.main import app; print('Backend import OK')"
+      - name: Verify Alembic migration
+        run: cd backend && DB_PATH=ci_migration.db python -m alembic upgrade head && rm -f ci_migration.db
       - name: Run backend tests (pytest)
         run: cd backend && python -m pytest -v
       - name: Upload backend test logs on failure

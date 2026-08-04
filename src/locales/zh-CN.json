@@ -260,6 +260,7 @@
     "noInquiryData": "暂无询价数据",
     "noQuotationData": "暂无报价数据",
     "noPendingTasks": "暂无待处理任务",
+    "openTask": "打开待处理任务「{{subject}}」",
     "pendingTasks": "待处理任务",
     "quickAction": {
       "createInquiry": "新建询价单",
@@ -914,6 +915,7 @@
     "compare": {
       "title": "报价对比",
       "description": "选择询价单横向对比供应商报价并辅助定标",
+      "openCompare": "打开询价单「{{subject}}」的报价对比",
       "selectInquiry": "选择询价单",
       "byMaterial": "按物料对比",
       "bySupplier": "按供应商对比",
@@ -1209,6 +1211,7 @@
     "unreadWithCount": "未读（{{count}}）",
     "allTypes": "全部类型",
     "clickToViewDetail": " · 点击查看询价单详情",
+    "openDetail": "查看通知「{{title}}」详情",
     "type": {
       "INQUIRY_SENT": "询价发送",
       "QUOTATION_SUBMITTED": "报价提交",
@@ -1410,6 +1413,14 @@
   },
   "ai": {
     "separator": "、",
+    "backend": {
+      "label": "AI 引擎：",
+      "local": "本地规则分析",
+      "remote": "远程 AI 分析",
+      "degraded": "降级模式（本地规则）",
+      "unavailable": "AI 不可用",
+      "confirmationRequired": "需确认数据发送"
+    },
     "desc": {
       "overviewTitle": "一、采购需求概述",
       "overviewIntro": "本次采购项目「{{subject}}」，共涉及 {{count}} 项物料，欢迎合格供应商参与报价。",

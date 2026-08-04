@@ -49,7 +49,7 @@ import { exportMultiSheet } from '@/utils/excel';
 import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import i18n from '@/i18n';
 import { useIsMobile } from '@/utils/useIsMobile';
-import { analyzeQuotationAnomalies, type AnomalyAnalysisResult } from '@/utils/aiService';
+import { analyzeQuotationAnomalies, getAIBackendStatus, type AnomalyAnalysisResult } from '@/utils/aiService';
 import CompareByMaterialTable from '@/components/quotation/CompareByMaterialTable';
 import CompareBySupplierTable from '@/components/quotation/CompareBySupplierTable';
 import SupplierQuotationDrawer from '@/components/quotation/SupplierQuotationDrawer';
@@ -381,9 +381,18 @@ export default function QuotationComparePage() {
                 <Col xs={24} sm={12} lg={8} xl={6} key={inq.id}>
                   <Card
                     hoverable
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t('quotation.compare.openCompare', { subject: inq.subject })}
                     size="small"
                     style={{ borderRadius: 8 }}
                     onClick={() => navigate(`/quotation/compare/${inq.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(`/quotation/compare/${inq.id}`);
+                      }
+                    }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                       <Text strong style={{ fontSize: 14 }}>{inq.subject}</Text>
@@ -508,6 +517,32 @@ export default function QuotationComparePage() {
       <Button icon={<RobotOutlined />} loading={aiLoading} onClick={handleAiAnalyze}>
         {t('quotation.compare.aiAnalysis')}
       </Button>
+      {(() => {
+        const aiStatus = getAIBackendStatus();
+        const color =
+          aiStatus.status === 'remote'
+            ? 'purple'
+            : aiStatus.status === 'local'
+              ? 'blue'
+              : aiStatus.status === 'degraded'
+                ? 'orange'
+                : 'red';
+        const label =
+          aiStatus.status === 'remote'
+            ? t('ai.backend.remote')
+            : aiStatus.status === 'local'
+              ? t('ai.backend.local')
+              : aiStatus.status === 'degraded'
+                ? t('ai.backend.degraded')
+                : t('ai.backend.unavailable');
+        return (
+          <Tag color={color} icon={<RobotOutlined />} style={{ fontSize: 12, lineHeight: '24px' }}>
+            {t('ai.backend.label')}
+            {label}
+            {aiStatus.confirmRequired ? `（${t('ai.backend.confirmationRequired')}）` : ''}
+          </Tag>
+        );
+      })()}
       {isPendingApproval && (
         <Tag color="orange" icon={<SafetyCertificateOutlined />} style={{ fontSize: 13, padding: '4px 12px' }}>
           {t('quotation.compare.inApproval')}

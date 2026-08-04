@@ -260,6 +260,7 @@
     "noInquiryData": "No inquiry data",
     "noQuotationData": "No quotation data",
     "noPendingTasks": "No pending tasks",
+    "openTask": "Open pending task \"{{subject}}\"",
     "pendingTasks": "Pending Tasks",
     "quickAction": {
       "createInquiry": "New Inquiry",
@@ -914,6 +915,7 @@
     "compare": {
       "title": "Quotation Compare",
       "description": "Select an inquiry to compare supplier quotations side by side and assist with awarding",
+      "openCompare": "Open quotation comparison for inquiry \"{{subject}}\"",
       "selectInquiry": "Select Inquiry",
       "byMaterial": "By Material",
       "bySupplier": "By Supplier",
@@ -1209,6 +1211,7 @@
     "unreadWithCount": "Unread ({{count}})",
     "allTypes": "All Types",
     "clickToViewDetail": " · Click to view inquiry detail",
+    "openDetail": "View notification \"{{title}}\" detail",
     "type": {
       "INQUIRY_SENT": "Inquiry Sent",
       "QUOTATION_SUBMITTED": "Quotation Submitted",
@@ -1410,6 +1413,14 @@
   },
   "ai": {
     "separator": ", ",
+    "backend": {
+      "label": "AI Engine: ",
+      "local": "Local Rule Analysis",
+      "remote": "Remote AI Analysis",
+      "degraded": "Degraded (Local Rules)",
+      "unavailable": "AI Unavailable",
+      "confirmationRequired": "Data Confirmation Required"
+    },
     "desc": {
       "overviewTitle": "1. Procurement Overview",
       "overviewIntro": "This procurement project \"{{subject}}\" covers {{count}} item(s). Qualified suppliers are welcome to participate.",

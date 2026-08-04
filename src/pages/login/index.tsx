@@ -86,6 +86,7 @@ export default function LoginPage() {
                 value={userId}
                 onChange={setUserId}
                 showSearch
+                aria-label={t('login.selectUser')}
                 optionFilterProp="label"
                 options={users.map((u) => ({
                   label: `${u.name}（${u.role}·${u.organization}）`,

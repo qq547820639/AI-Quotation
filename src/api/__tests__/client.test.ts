@@ -22,6 +22,7 @@ vi.mock('antd', () => ({
 
 import { client, createDedupAdapter } from '../client';
 import { message } from 'antd';
+import { useAuthStore } from '@/store/useAuthStore';
 
 /** 保存原始 adapter，避免污染其它测试 */
 const originalAdapter = client.defaults.adapter;
@@ -260,6 +261,22 @@ describe('client 响应拦截器', () => {
     await vi.waitFor(() => {
       expect(localStorage.getItem('redirect_after_login')).toBeNull();
     });
+  });
+
+  it('401 响应：调用 resetSession 清除会话并跳转 /login', async () => {
+    const resetSpy = vi.spyOn(useAuthStore.getState(), 'resetSession');
+    const loc = { pathname: '/inquiry/list', search: '', href: '/inquiry/list' };
+    Object.defineProperty(window, 'location', { configurable: true, value: loc });
+    localStorage.setItem('procurement_token', 'to-be-cleared');
+    client.defaults.adapter = errorAdapter(401, { message: '未授权' });
+    await expect(client.get('/secure')).rejects.toThrow();
+    // 401 清理为异步（动态 import store），等待 resetSession 被调用
+    await vi.waitFor(() => {
+      expect(resetSpy).toHaveBeenCalled();
+    });
+    expect(localStorage.getItem('procurement_token')).toBeNull();
+    // 跳转登录页
+    expect(loc.href).toBe('/login');
   });
 
   it('403 响应：提示权限不足（国际化文案）', async () => {

@@ -1,6 +1,11 @@
 import '@testing-library/jest-dom/vitest';
-import { afterEach } from 'vitest';
+import { afterEach, expect } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import * as axeMatchers from 'vitest-axe/matchers';
+import 'vitest-axe/extend-expect';
+
+// 注册 vitest-axe 的 toHaveNoViolations 匹配器
+expect.extend(axeMatchers);
 
 // 兜底：jsdom 环境未注入 localStorage 时（或运行在 node 环境）使用内存版 polyfill
 if (typeof globalThis.localStorage === 'undefined') {

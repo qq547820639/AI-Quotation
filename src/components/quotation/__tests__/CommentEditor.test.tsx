@@ -89,6 +89,27 @@ describe('CommentEditor 防抖自动保存', () => {
 });
 
 describe('CommentEditor 保存状态', () => {
+  it('保存进行中展示「保存中…」，完成后展示「已保存」', async () => {
+    let resolveSave!: (v: boolean) => void;
+    const pendingSave = new Promise<boolean>((res) => {
+      resolveSave = res;
+    });
+    setup({ onSave: vi.fn().mockReturnValue(pendingSave) });
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: '可接受' } });
+    await vi.advanceTimersByTimeAsync(800);
+
+    // 保存进行中（onSave 未返回）时展示「保存中…」
+    expect(screen.getByText('保存中…')).toBeInTheDocument();
+    expect(screen.queryByText('已保存')).not.toBeInTheDocument();
+
+    // 保存完成后切换为「已保存」
+    resolveSave(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText('已保存')).toBeInTheDocument();
+    expect(screen.queryByText('保存中…')).not.toBeInTheDocument();
+  });
+
   it('保存成功置 saved，展示「已保存」', async () => {
     const { onSave } = setup();
     const textarea = screen.getByRole('textbox');

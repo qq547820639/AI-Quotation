@@ -260,7 +260,7 @@ function StatusPieChart({ inquiries }: { inquiries: Inquiry[] }) {
     );
   }
 
-  return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
+  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.inquiryStatus')} style={{ width: '100%', height: 300 }} />;
 }
 
 /** 近期报价趋势折线图（近 7 天每天 SUBMITTED 报价数量） */
@@ -359,7 +359,7 @@ function QuotationTrendChart({
     );
   }
 
-  return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
+  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.quotationTrend')} style={{ width: '100%', height: 300 }} />;
 }
 
 /** 供应商报价频次 Top10（横向 BarChart，B6 新增） */
@@ -442,7 +442,7 @@ function SupplierFrequencyChart({ inquiries }: { inquiries: Inquiry[] }) {
     return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
   }
 
-  return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
+  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.supplierFrequency')} style={{ width: '100%', height: 300 }} />;
 }
 
 /** 物料品类分布（PieChart Rose 模式，B6 新增） */
@@ -511,7 +511,7 @@ function CategoryDistributionChart({ inquiries }: { inquiries: Inquiry[] }) {
     return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
   }
 
-  return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
+  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.materialCategory')} style={{ width: '100%', height: 300 }} />;
 }
 
 /** 询价审批漏斗（FunnelChart，B6 新增） */
@@ -626,7 +626,7 @@ function ApprovalFunnelChart({ inquiries }: { inquiries: Inquiry[] }) {
     return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
   }
 
-  return <div ref={domRef} style={{ width: '100%', height: 300 }} />;
+  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.approvalFunnel')} style={{ width: '100%', height: 300 }} />;
 }
 
 /* ============================ 统计卡片 ============================ */
@@ -1025,47 +1025,50 @@ export default function DashboardPage() {
                 renderItem={(item) => {
                   const r = getRemainingTime(item.deadline);
                   return (
-                    <List.Item
-                      role="button"
-                      tabIndex={0}
-                      style={{ cursor: 'pointer', padding: '10px 0' }}
-                      onClick={() => navigate(`/inquiry/detail/${item.id}`)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/inquiry/detail/${item.id}`); } }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: WARNING_COLOR,
-                            marginRight: 10,
-                            flexShrink: 0,
-                          }}
-                        />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div
+                    <List.Item style={{ padding: 0 }}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label={t('dashboard.openTask', { subject: item.subject })}
+                        style={{ cursor: 'pointer', padding: '10px 0', width: '100%' }}
+                        onClick={() => navigate(`/inquiry/detail/${item.id}`)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/inquiry/detail/${item.id}`); } }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                          <span
                             style={{
-                              fontSize: 13,
-                              color: 'var(--color-text)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
+                              display: 'inline-block',
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              background: WARNING_COLOR,
+                              marginRight: 10,
+                              flexShrink: 0,
                             }}
-                          >
-                            {item.subject}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontSize: 13,
+                                color: 'var(--color-text)',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {item.subject}
+                            </div>
+                            <Space size={8} style={{ marginTop: 2 }}>
+                              <Text style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                                {item.code}
+                              </Text>
+                              <Text style={{ fontSize: 12, color: WARNING_COLOR }}>
+                                {r.text}
+                              </Text>
+                            </Space>
                           </div>
-                          <Space size={8} style={{ marginTop: 2 }}>
-                            <Text style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-                              {item.code}
-                            </Text>
-                            <Text style={{ fontSize: 12, color: WARNING_COLOR }}>
-                              {r.text}
-                            </Text>
-                          </Space>
+                          <RightOutlined style={{ color: '#C9CDD4', fontSize: 12 }} />
                         </div>
-                        <RightOutlined style={{ color: '#C9CDD4', fontSize: 12 }} />
                       </div>
                     </List.Item>
                   );

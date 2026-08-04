@@ -409,4 +409,63 @@ describe('useInquiryStore', () => {
       expect(inquiryApi.update).not.toHaveBeenCalled();
     });
   });
+
+  describe('并发与多物料供应商定标（Task 17）', () => {
+    it('并发更新不同实体互不覆盖', async () => {
+      resetStore([
+        makeInquiry({ id: 'a', subject: 'A' }),
+        makeInquiry({ id: 'b', subject: 'B' }),
+      ]);
+      const [ra, rb] = await Promise.all([
+        useInquiryStore.getState().updateInquiry('a', { subject: 'A-new' }),
+        useInquiryStore.getState().updateInquiry('b', { subject: 'B-new' }),
+      ]);
+      expect(ra.success).toBe(true);
+      expect(rb.success).toBe(true);
+      // 两个实体各自的修改都保留，互不覆盖
+      expect(useInquiryStore.getState().getInquiryById('a')?.subject).toBe('A-new');
+      expect(useInquiryStore.getState().getInquiryById('b')?.subject).toBe('B-new');
+    });
+
+    it('更新一个物料的供应商选择不覆盖其他物料的选择（完整映射）', async () => {
+      const inq = makeInquiry({
+        id: 'inq-multi',
+        status: InquiryStatus.ALL_QUOTED,
+        selectedSupplierMap: { 'item-1': 'sup-1' },
+      });
+      resetStore([inq]);
+      await useInquiryStore.getState().selectSupplier('inq-multi', 'item-2', 'sup-2');
+      const updated = useInquiryStore.getState().getInquiryById('inq-multi');
+      // 原有 item-1 的选择保留，item-2 的选择被追加
+      expect(updated?.selectedSupplierMap).toEqual({
+        'item-1': 'sup-1',
+        'item-2': 'sup-2',
+      });
+    });
+
+    it('重复修改同一物料选择会更新为新值（不残留旧值）', async () => {
+      const inq = makeInquiry({ id: 'inq-multi2', status: InquiryStatus.ALL_QUOTED });
+      resetStore([inq]);
+      await useInquiryStore.getState().selectSupplier('inq-multi2', 'item-1', 'sup-1');
+      await useInquiryStore.getState().selectSupplier('inq-multi2', 'item-1', 'sup-2');
+      const updated = useInquiryStore.getState().getInquiryById('inq-multi2');
+      expect(updated?.selectedSupplierMap).toEqual({ 'item-1': 'sup-2' });
+    });
+
+    it('重复修改同一物料会调用 API 更新最新完整映射', async () => {
+      const inq = makeInquiry({
+        id: 'inq-multi3',
+        status: InquiryStatus.ALL_QUOTED,
+        selectedSupplierMap: { 'item-1': 'sup-1' },
+      });
+      resetStore([inq]);
+      await useInquiryStore.getState().selectSupplier('inq-multi3', 'item-2', 'sup-2');
+      expect(inquiryApi.update).toHaveBeenCalledWith(
+        'inq-multi3',
+        expect.objectContaining({
+          selectedSupplierMap: { 'item-1': 'sup-1', 'item-2': 'sup-2' },
+        }),
+      );
+    });
+  });
 });

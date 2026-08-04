@@ -97,6 +97,7 @@ npx tsc --noEmit    # TypeScript 类型检查
 npm run test        # 单元测试（Vitest）
 npm run build       # 生产构建
 cd backend && .venv/bin/python -m pytest   # 后端测试（API 集成 / 权限 / 状态流转）
+cd backend && .venv/bin/python -m alembic upgrade head   # 数据库迁移（Alembic）
 npm run e2e         # E2E 测试（Playwright，需先启动 Docker）
 ```
 
@@ -125,8 +126,19 @@ npm run e2e         # E2E 测试（Playwright，需先启动 Docker）
 
 ### 后端测试（pytest）
 
-- 17 条用例
-- 覆盖：认证、询价/报价/供应商核心 API 集成、权限矩阵、数据库事务与状态流转
+运行方式：
+
+```bash
+cd backend && python3 -m pytest -q
+```
+
+覆盖：认证、询价/报价/供应商核心 API 集成、权限矩阵、数据库事务与状态流转、非法输入（422）校验、可观测性（request_id / 健康检查 / 日志脱敏）。
+
+数据库迁移（Alembic）：
+
+```bash
+cd backend && python3 -m alembic upgrade head
+```
 
 ### E2E 测试（Playwright）
 

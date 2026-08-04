@@ -1,6 +1,6 @@
 """Pydantic 请求/响应 schema，对齐前端 src/types/index.ts 字段"""
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 # ============ 基础类型 ============
@@ -219,8 +219,17 @@ class NotificationSchema(BaseModel):
 # ============ 请求 schema ============
 
 class InquiryCreate(BaseModel):
-    """允许全字段透传，extra allow 兼容前端传完整对象"""
+    """允许全字段透传，extra allow 兼容前端传完整对象；subject 必填（Task 17.2）"""
     model_config = ConfigDict(extra="allow")
+    subject: str
+
+    @field_validator("subject")
+    @classmethod
+    def subject_not_blank(cls, v: str) -> str:
+        """询价主题必填：缺失或空白均触发 422 校验错误"""
+        if not v or not v.strip():
+            raise ValueError("询价主题不能为空")
+        return v
 
 
 class InquiryUpdate(BaseModel):
