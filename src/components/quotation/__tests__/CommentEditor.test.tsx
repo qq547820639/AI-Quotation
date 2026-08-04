@@ -119,3 +119,40 @@ describe('CommentEditor 保存状态', () => {
     expect(onSave).toHaveBeenLastCalledWith('sup-1', '需复核价格');
   });
 });
+
+describe('CommentEditor 保存前 trim 与旧响应保护（Task 10.1）', () => {
+  it('保存前去除首尾空白，onSave 收到 trim 后的值', async () => {
+    const { onSave } = setup();
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: '  质量不错  ' } });
+    await vi.advanceTimersByTimeAsync(800);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith('sup-1', '质量不错');
+  });
+
+  it('保存期间用户继续输入时，旧响应不把新草稿标记为已保存', async () => {
+    // 手动控制的 deferred promise，模拟在途保存
+    let resolveSave!: (v: boolean) => void;
+    const pendingSave = new Promise<boolean>((res) => {
+      resolveSave = res;
+    });
+    const { onSave } = setup({ onSave: vi.fn().mockReturnValue(pendingSave) });
+    const textarea = screen.getByRole('textbox');
+
+    // 第一次输入触发保存（在途）
+    fireEvent.change(textarea, { target: { value: 'abc' } });
+    await vi.advanceTimersByTimeAsync(800);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith('sup-1', 'abc');
+
+    // 保存仍在途时用户继续输入新内容
+    fireEvent.change(textarea, { target: { value: 'abcd' } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 旧保存响应返回（成功），但草稿已更新，不得显示「已保存」
+    resolveSave(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByText('已保存')).not.toBeInTheDocument();
+  });
+});

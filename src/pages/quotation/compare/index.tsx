@@ -3,7 +3,7 @@
  * 路由：/quotation/compare（无 id 展示可对比询价单列表）、/quotation/compare/:inquiryId
  * 参考：飞书多维表格密集型数据展示
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -101,6 +101,7 @@ export default function QuotationComparePage() {
   const [dirtyFlags, setDirtyFlags] = useState<Record<string, boolean>>({});
   const [aiAnalysis, setAiAnalysis] = useState<AnomalyAnalysisResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // 可对比询价单（至少有一份已提交报价）
   const comparableInquiries = useMemo(
@@ -113,8 +114,13 @@ export default function QuotationComparePage() {
 
   const inquiry = inquiryId ? getInquiryById(inquiryId) : undefined;
 
-  // 切换询价单时重置评语草稿、保存状态与抽屉
+  // 切换询价单时重置评语草稿、保存状态与抽屉。
+  // 用 ref 记录已处理的询价单 id，仅在真正切换时重置，避免每次评语保存触发的
+  // inquiry 对象更新（同 id）导致草稿被反复重置、覆盖用户未提交内容（Task 11.1/11.2）。
+  const processedInquiryIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (processedInquiryIdRef.current === inquiry?.id) return;
+    processedInquiryIdRef.current = inquiry?.id;
     setDrawerSupplierId(null);
     setSummaryOpen(false);
     setScoreDetailOpen(false);
@@ -125,7 +131,7 @@ export default function QuotationComparePage() {
     } else {
       setCommentDraft({});
     }
-  }, [inquiry?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inquiry]);
 
   const data = useMemo(() => {
     if (!inquiry) return null;
@@ -275,8 +281,9 @@ export default function QuotationComparePage() {
 
   // ===== 导出 Excel =====
   const handleExport = () => {
-    if (!inquiry || !data) return;
-
+    if (!inquiry || !data || exporting) return;
+    setExporting(true);
+    try {
     // sheet1 按物料对比
     const s1Header: (string | number)[] = [
       t('quotation.compare.excel.materialName'),
@@ -348,6 +355,11 @@ export default function QuotationComparePage() {
       { name: t('quotation.compare.excel.sheet4'), header: s4Header, rows: s4Rows },
     ]);
     notifySuccess(i18n.t('quotation.compare.exportSuccess'));
+    } catch {
+      notifyError(i18n.t('quotation.compare.exportFailed'));
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ===== 无 inquiryId：可对比询价单卡片列表 =====
@@ -484,7 +496,7 @@ export default function QuotationComparePage() {
         showSearch
         optionFilterProp="label"
       />
-      <Button icon={<DownloadOutlined />} onClick={handleExport}>
+      <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
         {t('quotation.compare.exportExcel')}
       </Button>
       <Button icon={<FileSearchOutlined />} onClick={() => setSummaryOpen(true)}>

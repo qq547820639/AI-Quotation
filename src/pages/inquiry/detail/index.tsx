@@ -125,9 +125,9 @@ export default function InquiryDetailPage() {
     comment: string;
   }>({ open: false, type: 'approve', comment: '' });
 
-  // PDF 导出区域 ref + loading 态（B5）
+  // 导出区域 ref + 导出中状态（Excel/PDF 共用，防重复点击）
   const detailRef = useRef<HTMLDivElement | null>(null);
-  const [pdfExporting, setPdfExporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // 当前询价单关联的报价
   const inquiryQuotations = useMemo(
@@ -190,16 +190,17 @@ export default function InquiryDetailPage() {
 
   // ===== 操作 =====
   const handleExportPDF = () => {
-    if (pdfExporting) return;
-    setPdfExporting(true);
+    if (exporting) return;
+    setExporting(true);
     exportPDFWithFallback(detailRef.current, {
       filename: `询价单-${inquiry.code}`,
       hideSelector: '.no-print',
     })
+      .then(() => notifySuccess(i18n.t('inquiry.detail.pdfExportSuccess')))
       .catch(() => {
         notifyWarning(i18n.t('inquiry.detail.pdfExportFailed'));
       })
-      .finally(() => setPdfExporting(false));
+      .finally(() => setExporting(false));
   };
 
   const handleCopy = () => {
@@ -307,28 +308,36 @@ export default function InquiryDetailPage() {
   };
 
   const handleExport = () => {
-    const header = [
-      i18n.t('inquiry.export.materialName'),
-      i18n.t('inquiry.export.materialCode'),
-      i18n.t('inquiry.export.category'),
-      i18n.t('inquiry.export.brand'),
-      i18n.t('inquiry.export.spec'),
-      i18n.t('inquiry.export.unit'),
-      i18n.t('inquiry.export.quantity'),
-      i18n.t('inquiry.export.targetPrice'),
-    ];
-    const rows = inquiry.items.map((item) => [
-      item.name,
-      item.code,
-      item.category,
-      item.brand,
-      item.spec,
-      item.unit,
-      item.quantity,
-      item.targetPrice ?? '',
-    ]);
-    exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
-    notifySuccess(i18n.t('inquiry.export.success'));
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const header = [
+        i18n.t('inquiry.export.materialName'),
+        i18n.t('inquiry.export.materialCode'),
+        i18n.t('inquiry.export.category'),
+        i18n.t('inquiry.export.brand'),
+        i18n.t('inquiry.export.spec'),
+        i18n.t('inquiry.export.unit'),
+        i18n.t('inquiry.export.quantity'),
+        i18n.t('inquiry.export.targetPrice'),
+      ];
+      const rows = inquiry.items.map((item) => [
+        item.name,
+        item.code,
+        item.category,
+        item.brand,
+        item.spec,
+        item.unit,
+        item.quantity,
+        item.targetPrice ?? '',
+      ]);
+      exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
+      notifySuccess(i18n.t('inquiry.export.success'));
+    } catch {
+      notifyError(i18n.t('inquiry.export.failed'));
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ===== 物料清单列 =====
@@ -522,7 +531,7 @@ export default function InquiryDetailPage() {
   ];
 
   return (
-    <Spin spinning={pdfExporting} tip={i18n.t('inquiry.detail.exportingPDF')}>
+    <Spin spinning={exporting} tip={i18n.t('inquiry.detail.exporting')}>
       <PageHeader
         title={inquiry.subject}
         description={t('inquiry.detail.inquiryCodePrefix', { code: inquiry.code })}
@@ -597,7 +606,7 @@ export default function InquiryDetailPage() {
                 },
               }}
             >
-              <Button icon={<ExportOutlined />}>
+              <Button icon={<ExportOutlined />} loading={exporting}>
                 {t('common.export')}
               </Button>
             </Dropdown>

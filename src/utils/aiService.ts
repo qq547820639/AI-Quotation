@@ -14,6 +14,7 @@ import {
   type CompareData,
   type SupplierQuoteRow,
   getAvgUnitPrice,
+  getMinUnitPrice,
   getQuotationItem,
   isHighPrice,
   isLowPrice,
@@ -183,6 +184,21 @@ export async function analyzeQuotationAnomalies(
     anomalies.push(
       i18n.t('ai.anomaly.techDeviation', { count: techDeviations.length }),
     );
+  }
+
+  // 5. 超目标价/预算提示（Task 11.4：即便最低报价也超过目标价时应提示）
+  for (const item of inquiry.items) {
+    if (item.targetPrice == null) continue;
+    const minPrice = getMinUnitPrice(data.submittedRows, item.id);
+    if (minPrice !== undefined && minPrice > item.targetPrice) {
+      anomalies.push(
+        i18n.t('ai.anomaly.overBudget', {
+          item: item.name,
+          price: formatCurrency(minPrice, inquiry.currency),
+          budget: formatCurrency(item.targetPrice, inquiry.currency),
+        }),
+      );
+    }
   }
 
   const hasAnomaly = anomalies.length > 0;

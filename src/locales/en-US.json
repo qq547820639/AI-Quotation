@@ -603,6 +603,8 @@
       "viewQuotationCompare": "View Quotation Compare",
       "exportExcel": "Export Excel",
       "exportingPDF": "Generating PDF…",
+      "exporting": "Exporting…",
+      "pdfExportSuccess": "PDF exported",
       "pdfExportFailed": "PDF export failed, please retry",
       "approvalProcess": "Approval Process",
       "materialListTitle": "Materials ({{count}})",
@@ -671,6 +673,7 @@
     "export": {
       "filename": "Inquiry_{{code}}",
       "success": "Export successful",
+      "failed": "Export failed, please retry",
       "materialName": "Material Name",
       "materialCode": "Material Code",
       "category": "Category",
@@ -953,6 +956,7 @@
       "switchInquiry": "Switch inquiry",
       "exportExcel": "Export Excel",
       "exportSuccess": "Excel exported",
+      "exportFailed": "Export failed, please retry",
       "generateSummary": "Generate Summary",
       "inApproval": "In Approval",
       "confirmResult": "Confirm Award",
@@ -1435,6 +1439,7 @@
       "spread": "Total quotation spread is large (max-min differs by {{spread}}%), please verify consistent quotation basis",
       "delivery": "Delivery cycle differs significantly (fastest {{fastest}} days vs slowest {{slowest}} days), pay attention to supply chain stability",
       "techDeviation": "{{count}} supplier(s) have technical deviations, recommend technical review",
+      "overBudget": "{{item}}: lowest quote {{price}} exceeds target price {{budget}}, budget concern",
       "summaryWithAnomaly": "Detected {{count}} issue(s) to address:\n{{items}}",
       "summaryNoAnomaly": "All supplier quotations are normal with no obvious anomalies. Unit price, total spread, and delivery cycle are all within reasonable ranges."
     },

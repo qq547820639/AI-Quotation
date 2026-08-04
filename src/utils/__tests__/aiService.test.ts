@@ -282,6 +282,58 @@ describe('analyzeQuotationAnomalies', () => {
     const result = await analyzeQuotationAnomalies(inquiry, data);
     expect(result.summary).toContain('技术偏离');
   });
+
+  it('即便最低报价也超过目标价时触发超预算异常（Task 11.4）', async () => {
+    // targetPrice=100，两家最低报价均 150 > 100 → 触发 overBudget
+    const inquiry = makeInquiry();
+    const suppliers = [makeSupplier({ id: 'sup-1', name: 'A' }), makeSupplier({ id: 'sup-2', name: 'B' })];
+    const quotations = [
+      makeQuotation({
+        id: 'q-1',
+        supplierId: 'sup-1',
+        supplierName: 'A',
+        totalAmount: 1500,
+        items: [{ id: 'qi-1', quotationId: 'q-1', inquiryItemId: 'item-1', unitPrice: 150, taxIncludedTotal: 1500, taxRate: 0.13, attachments: [], deliveryDays: 10 }],
+      }),
+      makeQuotation({
+        id: 'q-2',
+        supplierId: 'sup-2',
+        supplierName: 'B',
+        totalAmount: 1500,
+        items: [{ id: 'qi-2', quotationId: 'q-2', inquiryItemId: 'item-1', unitPrice: 150, taxIncludedTotal: 1500, taxRate: 0.13, attachments: [], deliveryDays: 10 }],
+      }),
+    ];
+    const data = prepareCompareData(inquiry, suppliers, quotations);
+    const result = await analyzeQuotationAnomalies(inquiry, data);
+    expect(result.hasAnomaly).toBe(true);
+    expect(result.summary).toContain('已超过目标价');
+  });
+
+  it('最低报价未超目标价时不触发超预算异常', async () => {
+    // targetPrice=100，最低报价 90 < 100 → 不触发 overBudget
+    const inquiry = makeInquiry();
+    const suppliers = [makeSupplier({ id: 'sup-1', name: 'A' }), makeSupplier({ id: 'sup-2', name: 'B' })];
+    const quotations = [
+      makeQuotation({
+        id: 'q-1',
+        supplierId: 'sup-1',
+        supplierName: 'A',
+        totalAmount: 900,
+        items: [{ id: 'qi-1', quotationId: 'q-1', inquiryItemId: 'item-1', unitPrice: 90, taxIncludedTotal: 900, taxRate: 0.13, attachments: [], deliveryDays: 10 }],
+      }),
+      makeQuotation({
+        id: 'q-2',
+        supplierId: 'sup-2',
+        supplierName: 'B',
+        totalAmount: 1000,
+        items: [{ id: 'qi-2', quotationId: 'q-2', inquiryItemId: 'item-1', unitPrice: 100, taxIncludedTotal: 1000, taxRate: 0.13, attachments: [], deliveryDays: 10 }],
+      }),
+    ];
+    const data = prepareCompareData(inquiry, suppliers, quotations);
+    const result = await analyzeQuotationAnomalies(inquiry, data);
+    // 均价 95，90 未低于 47.5%（isLowPrice 阈值），且最低价低于目标价 → 无异常
+    expect(result.hasAnomaly).toBe(false);
+  });
 });
 
 describe('generateCompareConclusion', () => {

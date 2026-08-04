@@ -95,20 +95,37 @@ function CommentEditorBase({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty, supplierId]);
 
+  /**
+   * 统一保存入口：保存前去除首尾空白。
+   * 若保存期间用户继续输入，旧响应不得把新草稿标记为 saved/error，
+   * 仅当保存值仍等于当前草稿时才更新状态，避免旧响应覆盖新内容。
+   */
+  const performSave = useCallback(
+    async (val: string) => {
+      const trimmed = val.trim();
+      dirtyRef.current = false;
+      setDirty(false);
+      onChange(supplierId, trimmed);
+      reportStatus('saving');
+      const ok = await onSave(supplierId, trimmed);
+      if (draftRef.current.trim() === trimmed) {
+        reportStatus(ok ? 'saved' : 'error');
+      } else {
+        // 保存期间已有更新的输入，保持待保存状态
+        reportStatus('idle');
+      }
+    },
+    [supplierId, onChange, onSave, reportStatus],
+  );
+
   const flush = useCallback(async () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
     if (!dirtyRef.current) return;
-    const val = draftRef.current;
-    dirtyRef.current = false;
-    setDirty(false);
-    onChange(supplierId, val);
-    reportStatus('saving');
-    const ok = await onSave(supplierId, val);
-    reportStatus(ok ? 'saved' : 'error');
-  }, [supplierId, onChange, onSave, reportStatus]);
+    await performSave(draftRef.current);
+  }, [performSave]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -133,10 +150,7 @@ function CommentEditorBase({
   };
 
   const handleRetry = async () => {
-    const val = draftRef.current;
-    reportStatus('saving');
-    const ok = await onSave(supplierId, val);
-    reportStatus(ok ? 'saved' : 'error');
+    await performSave(draftRef.current);
   };
 
   const statusNode = (() => {

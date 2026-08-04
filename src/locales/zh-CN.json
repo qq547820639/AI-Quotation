@@ -603,6 +603,8 @@
       "viewQuotationCompare": "查看报价对比",
       "exportExcel": "导出 Excel",
       "exportingPDF": "正在生成 PDF…",
+      "exporting": "正在导出…",
+      "pdfExportSuccess": "PDF 导出成功",
       "pdfExportFailed": "PDF 导出失败，请重试",
       "approvalProcess": "审批流程",
       "materialListTitle": "物料清单（{{count}} 项）",
@@ -671,6 +673,7 @@
     "export": {
       "filename": "询价单_{{code}}",
       "success": "导出成功",
+      "failed": "导出失败，请重试",
       "materialName": "物料名称",
       "materialCode": "物料编码",
       "category": "品类",
@@ -953,6 +956,7 @@
       "switchInquiry": "切换询价单",
       "exportExcel": "导出 Excel",
       "exportSuccess": "已导出 Excel",
+      "exportFailed": "导出失败，请重试",
       "generateSummary": "生成对比摘要",
       "inApproval": "审批中",
       "confirmResult": "确认定标",
@@ -1435,6 +1439,7 @@
       "spread": "报价总价离散度较大（最高与最低相差 {{spread}}%），建议核实各家报价口径是否一致",
       "delivery": "交货周期差异显著（最快 {{fastest}} 天 vs 最慢 {{slowest}} 天），需关注供应链稳定性",
       "techDeviation": "{{count}} 家供应商存在技术偏离，建议技术部门重点评审",
+      "overBudget": "{{item}}：最低报价 {{price}} 已超过目标价 {{budget}}，需关注预算",
       "summaryWithAnomaly": "检测到 {{count}} 项需要关注的问题：\n{{items}}",
       "summaryNoAnomaly": "各供应商报价整体正常，未发现明显异常。单价、总价离散度、交货周期均在合理范围内。"
     },
