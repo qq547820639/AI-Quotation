@@ -5,6 +5,14 @@
 每个动作断言 status 变化 + 日志追加 + 无权限用户被拒（403）。
 事务：重复 code 触发唯一约束失败，断言无部分状态（回滚）。
 """
+import pytest
+
+from app.state_machine import (
+    INQUIRY_TRANSITIONS,
+    QUOTATION_TRANSITIONS,
+    validate_inquiry_transition,
+    validate_quotation_transition,
+)
 
 
 def _create_inquiry(client, headers, code):
@@ -157,3 +165,78 @@ def test_failed_create_rolls_back_no_partial_state(client, buyer_headers):
     # 无部分状态：新询价未出现，原有询价集合不变
     assert first_id in after_ids  # 原询价仍在
     assert after_ids == before_ids
+
+
+# ============ P2-14 Task 19：全状态机参数化测试（合法 + 非法转换） ============
+
+# 询价状态机：由 state_machine.INQUIRY_TRANSITIONS 推导出全部"合法"转换
+LEGAL_INQUIRY_TRANSITIONS = [
+    (frm, to) for frm, targets in INQUIRY_TRANSITIONS.items() for to in targets
+]
+# 显式列举有代表性的"非法"转换（跨阶段跳跃 / 反向 / 终态转出）
+ILLEGAL_INQUIRY_TRANSITIONS = [
+    ("DRAFT", "COMPLETED"),
+    ("DRAFT", "PENDING_CONFIRM"),
+    ("INQUIRING", "COMPLETED"),
+    ("PENDING_APPROVAL", "INQUIRING"),
+    ("PENDING_CONFIRM", "PENDING_APPROVAL"),
+    ("COMPLETED", "DRAFT"),
+    ("COMPLETED", "INQUIRING"),
+    ("CANCELLED", "DRAFT"),
+    ("TIMEOUT", "INQUIRING"),
+]
+
+
+@pytest.mark.parametrize("from_status,to_status", LEGAL_INQUIRY_TRANSITIONS)
+def test_inquiry_legal_transition_parametrized(from_status, to_status):
+    """状态机中声明的每条询价转换都应是合法的"""
+    assert validate_inquiry_transition(from_status, to_status) is True
+
+
+@pytest.mark.parametrize("from_status,to_status", ILLEGAL_INQUIRY_TRANSITIONS)
+def test_inquiry_illegal_transition_parametrized(from_status, to_status):
+    """跨阶段跳跃 / 反向 / 终态转出应为非法（返回 False）"""
+    assert validate_inquiry_transition(from_status, to_status) is False
+
+
+# 报价状态机：DRAFT→SUBMITTED、SUBMITTED→DRAFT（撤回修改）、TIMEOUT 为终态
+LEGAL_QUOTATION_TRANSITIONS = [
+    (frm, to) for frm, targets in QUOTATION_TRANSITIONS.items() for to in targets
+]
+ILLEGAL_QUOTATION_TRANSITIONS = [
+    ("DRAFT", "TIMEOUT"),
+    ("DRAFT", "COMPLETED"),
+    ("SUBMITTED", "TIMEOUT"),
+    ("TIMEOUT", "DRAFT"),
+    ("TIMEOUT", "SUBMITTED"),
+]
+
+
+@pytest.mark.parametrize("from_status,to_status", LEGAL_QUOTATION_TRANSITIONS)
+def test_quotation_legal_transition_parametrized(from_status, to_status):
+    """报价状态机中声明的每条转换都应是合法的"""
+    assert validate_quotation_transition(from_status, to_status) is True
+
+
+@pytest.mark.parametrize("from_status,to_status", ILLEGAL_QUOTATION_TRANSITIONS)
+def test_quotation_illegal_transition_parametrized(from_status, to_status):
+    """报价非法转换返回 False"""
+    assert validate_quotation_transition(from_status, to_status) is False
+
+
+@pytest.mark.parametrize(
+    "action,expected",
+    [
+        ("approve", "PENDING_CONFIRM"),
+        ("reject", "PENDING_CONFIRM"),
+        ("confirm", "COMPLETED"),
+    ],
+)
+def test_action_requires_valid_state_api(client, buyer_headers, supervisor_headers, action, expected):
+    """在 DRAFT 状态直接执行各类后置动作，均应为非法转换（409），而非部分成功"""
+    inq = _create_inquiry(client, buyer_headers, f"INQ-ILLEGAL-{action}")
+    headers = supervisor_headers if action in ("approve", "reject", "confirm") else buyer_headers
+    body = {"comment": "x"} if action in ("approve", "reject") else {"version": 1}
+    resp = client.post(f"/api/inquiries/{inq['id']}/{action}", json=body, headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error_type"] == "invalid_state_transition"

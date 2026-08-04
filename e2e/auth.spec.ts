@@ -14,7 +14,7 @@ test.describe('认证流程', () => {
     await page.locator('.ant-select-item-option').filter({ hasText: '李明辉' }).click();
 
     // 输入密码（演示环境任意值）
-    await page.locator('input[type="password"]').fill('test123');
+    await page.locator('input[type="password"]').fill('123456');
 
     // 点击登录
     await page.getByRole('button', { name: /登录|Login/ }).click();
@@ -33,7 +33,7 @@ test.describe('认证流程', () => {
     await page.goto('/login');
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill('admin123');
+    await page.locator('input[type="password"]').fill('123456');
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 

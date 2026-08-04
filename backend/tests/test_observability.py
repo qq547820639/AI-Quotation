@@ -29,6 +29,36 @@ def test_ready_returns_ready(client):
     assert body["db"] == "connected"
 
 
+def _broken_db_session():
+    """模拟数据库连接不可用：SessionLocal() 成功但 execute() 抛错（更贴近连接丢失场景）"""
+    class BrokenSession:
+        def execute(self, *args, **kwargs):
+            raise RuntimeError("database connection refused")
+        def close(self):
+            pass
+    return BrokenSession()
+
+
+def test_ready_returns_503_when_db_unavailable(client, monkeypatch):
+    """数据库不可用场景：/api/ready 应返回 503（not_ready / disconnected）"""
+    monkeypatch.setattr("app.main.SessionLocal", _broken_db_session)
+    r = client.get("/api/ready")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["status"] == "not_ready"
+    assert body["db"] == "disconnected"
+
+
+def test_health_returns_degraded_when_db_unavailable(client, monkeypatch):
+    """数据库不可用场景：/api/health 仍返回 200（进程存活），但 status=degraded / db=disconnected"""
+    monkeypatch.setattr("app.main.SessionLocal", _broken_db_session)
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "degraded"
+    assert body["db"] == "disconnected"
+
+
 def test_redact_masks_sensitive_values():
     """日志脱敏：敏感 key 的值被掩码，非敏感字段保留"""
     data = {

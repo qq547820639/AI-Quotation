@@ -6,6 +6,9 @@ import { suppliers as mockSuppliers } from '@/mock/suppliers';
 import { CooperationStatus, type Supplier } from '@/types';
 import { loadJSON, saveJSON } from '@/utils/storage';
 import { supplierApi } from '@/api';
+import { useConnectivityStore } from './useConnectivityStore';
+import { MOCK_FALLBACK_ENABLED } from '@/config';
+import { queryClient, QUERY_KEYS } from '@/lib/queryClient';
 import i18n from '@/i18n';
 import {
   ok,
@@ -21,6 +24,11 @@ const STORAGE_KEY = 'suppliers';
 
 /** 进行中的写操作（key: op:id），用于防重复提交 */
 const pendingOps: Record<string, boolean> = {};
+
+/** 写操作成功后同步 React Query 服务端缓存（P1-10 Task 15） */
+function syncCache(suppliers: Supplier[]) {
+  queryClient.setQueryData(QUERY_KEYS.suppliers, suppliers);
+}
 
 /** 合并 mock 与 localStorage（localStorage 覆盖同 id） */
 function mergeSuppliers(): Supplier[] {
@@ -85,18 +93,26 @@ interface SupplierState {
 }
 
 export const useSupplierStore = create<SupplierState>((set, get) => ({
-  suppliers: mergeSuppliers(),
+  // P1-10 Task 15：生产模式不预置 mock 数据
+  suppliers: MOCK_FALLBACK_ENABLED ? mergeSuppliers() : [],
   loading: false,
 
-  // W7.4：从 API 加载，失败时降级到 localStorage/mock
+  // W7.4 + P1-10 Task 15：从 API 加载；生产模式失败不静默回退 mock
   loadFromApi: async () => {
     set({ loading: true });
     try {
       const data = await supplierApi.list();
       set({ suppliers: data, loading: false });
       saveJSON(STORAGE_KEY, data);
+      queryClient.setQueryData(QUERY_KEYS.suppliers, data);
+      useConnectivityStore.getState().markSynced();
     } catch {
-      set({ suppliers: mergeSuppliers(), loading: false });
+      if (MOCK_FALLBACK_ENABLED) {
+        set({ suppliers: mergeSuppliers(), loading: false });
+      } else {
+        set({ loading: false });
+        useConnectivityStore.getState().markOffline();
+      }
     }
   },
 
@@ -122,6 +138,7 @@ export const useSupplierStore = create<SupplierState>((set, get) => ({
         return { suppliers };
       });
       await supplierApi.update(id, {});
+      syncCache(get().suppliers);
       return ok();
     } catch (e) {
       set({ suppliers: snapshot });
@@ -144,6 +161,7 @@ export const useSupplierStore = create<SupplierState>((set, get) => ({
         return { suppliers };
       });
       await supplierApi.update(id, patch);
+      syncCache(get().suppliers);
       return ok();
     } catch (e) {
       set({ suppliers: snapshot });
@@ -160,7 +178,12 @@ export const useSupplierStore = create<SupplierState>((set, get) => ({
         const supplier = get().getSupplierById(id);
         // 仅对 DISABLED 项执行启用；其余已启用/其他状态均跳过，避免反向操作
         if (!supplier || supplier.cooperationStatus !== CooperationStatus.DISABLED) {
-          return { id, success: false, skipped: true, reason: i18n.t('supplier.list.alreadyEnabled') };
+          return {
+            id,
+            success: false,
+            skipped: true,
+            reason: i18n.t('supplier.list.alreadyEnabled'),
+          };
         }
         return runSupplierToggle(id, get().toggleSupplierStatus(id));
       }),
@@ -174,7 +197,12 @@ export const useSupplierStore = create<SupplierState>((set, get) => ({
         const supplier = get().getSupplierById(id);
         // 仅对非 DISABLED 项执行停用；已停用项跳过，避免反向启用
         if (!supplier || supplier.cooperationStatus === CooperationStatus.DISABLED) {
-          return { id, success: false, skipped: true, reason: i18n.t('supplier.list.alreadyDisabled') };
+          return {
+            id,
+            success: false,
+            skipped: true,
+            reason: i18n.t('supplier.list.alreadyDisabled'),
+          };
         }
         return runSupplierToggle(id, get().toggleSupplierStatus(id));
       }),

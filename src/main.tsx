@@ -3,8 +3,9 @@ import ReactDOM from 'react-dom/client';
 import { ConfigProvider, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { queryClient } from '@/lib/queryClient';
 import * as Sentry from '@sentry/react';
 import App from './App';
 import './i18n'; // i18n 初始化（B1）
@@ -31,16 +32,7 @@ const themeToken = {
   borderRadius: 8,
 };
 
-// React Query 客户端（W7.3）
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30 * 1000, // 30 秒内不重新请求
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-});
+// React Query 客户端（W7.3 + P1-10 Task 15 统一服务端缓存职责，模块化于 lib/queryClient.ts）
 
 // MSW 启动逻辑（W7.3）
 async function enableMocking() {

@@ -22,7 +22,7 @@ interface AuthState {
   /** 采购组织列表（供 MainLayout 等切换使用，避免直接 import mock） */
   organizations: string[];
   login: (userId: string, password?: string) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
   /** 401 时完整清除会话（token + 用户/权限状态），不触发后端请求 */
   resetSession: () => void;
   hasPermission: (perm: Permission) => boolean;
@@ -82,14 +82,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  logout: () => {
-    clearSessionLocally();
-    set({ currentUser, isAuthenticated: false });
-    getAuthAdapter()
-      .logout()
-      .catch(() => {
-        /* 登出后端调用失败不阻塞本地登出 */
-      });
+  logout: async () => {
+    // 先撤销服务端会话（此时本地仍持有有效 Bearer token，后端请求拦截器才能注入），
+    // 成功后再清本地 token 与用户态，避免"先清本地导致服务端会话无法撤销"。
+    try {
+      await getAuthAdapter().logout();
+    } catch {
+      /* 服务端撤销失败（网络异常等）不阻塞本地登出 */
+    } finally {
+      clearSessionLocally();
+      set({ currentUser, isAuthenticated: false });
+    }
   },
 
   resetSession: () => {

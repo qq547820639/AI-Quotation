@@ -216,14 +216,14 @@ export const COOPERATION_STATUS_OPTIONS: OptionItem<CooperationStatus>[] = (
 ).map((value) => ({ label: COOPERATION_STATUS_LABEL[value], value }));
 
 /** 币种下拉选项 */
-export const CURRENCY_OPTIONS: OptionItem<Currency>[] = (Object.keys(CURRENCY_LABEL) as Currency[]).map(
-  (value) => ({ label: CURRENCY_LABEL[value], value }),
-);
+export const CURRENCY_OPTIONS: OptionItem<Currency>[] = (
+  Object.keys(CURRENCY_LABEL) as Currency[]
+).map((value) => ({ label: CURRENCY_LABEL[value], value }));
 
 /** 日志类型下拉选项 */
-export const LOG_TYPE_OPTIONS: OptionItem<LogType>[] = (Object.keys(LOG_TYPE_LABEL) as LogType[]).map(
-  (value) => ({ label: LOG_TYPE_LABEL[value], value }),
-);
+export const LOG_TYPE_OPTIONS: OptionItem<LogType>[] = (
+  Object.keys(LOG_TYPE_LABEL) as LogType[]
+).map((value) => ({ label: LOG_TYPE_LABEL[value], value }));
 
 /* ==================== 实体类型 ==================== */
 
@@ -526,6 +526,39 @@ export interface Notification {
   read: boolean;
 }
 
+/** 用户级通知偏好（P1-8 Task 12） */
+export interface UserNotificationPreferencesSchema {
+  deadlineReminder: boolean;
+  deadlineReminderHours: number;
+  quotationSubmitted: boolean;
+  approvalResult: boolean;
+  inquirySent: boolean;
+}
+
+/** 逐供应商交付状态（P1-8 Task 12） */
+export interface DeliveryRecord {
+  supplierId: string;
+  supplierName: string;
+  /** pending/sent/delivered/failed/bounced/opened/submitted */
+  deliveryStatus: string;
+  invitationStatus: string;
+  sentAt?: string | null;
+  openedAt?: string | null;
+  submittedAt?: string | null;
+  deliveryError?: string | null;
+}
+
+/** 询价发送结果汇总（P1-8 Task 12） */
+export interface DeliverySummary {
+  total: number;
+  pending: number;
+  sent: number;
+  delivered: number;
+  failed: number;
+  submitted: number;
+  allDelivered: boolean;
+}
+
 /* ==================== 审批（W5） ==================== */
 
 /** 审批节点状态 */
@@ -574,4 +607,54 @@ export interface ApprovalConfig {
   amountThreshold: number;
   /** 审批人用户 id */
   approverId: string;
+}
+
+/* ==================== P2-12 Task 17：服务端分页 / 表偏好 / 快照 / 导出 ==================== */
+
+/** 询价列表服务端分页查询参数（P2-12 Task 17） */
+export interface InquiryListParams {
+  page?: number;
+  pageSize?: number;
+  /** 关键词：匹配 code / subject / ownerName */
+  keyword?: string;
+  /** 逗号分隔的状态列表，如 "INQUIRING,ALL_QUOTED" */
+  status?: string;
+  /** 创建时间范围起点 YYYY-MM-DD */
+  dateFrom?: string;
+  /** 创建时间范围终点 YYYY-MM-DD */
+  dateTo?: string;
+  /** 排序，如 "updatedAt:desc" */
+  sort?: string;
+}
+
+/** 询价列表服务端分页响应（P2-12 Task 17） */
+export interface PaginatedInquiries {
+  items: Inquiry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** 用户级表格偏好请求/响应（P2-12 Task 17，与 useTablePreferences 结构对齐） */
+export interface TablePreferencesPayload {
+  pageKey: string;
+  data: Record<string, unknown>;
+}
+
+/** 报价不可变快照概要（P2-12 Task 17） */
+export interface QuotationSnapshot {
+  id: string;
+  inquiryId: string;
+  inquiryCode: string;
+  createdAt: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  /** 冻结的报价与询价摘要 JSON */
+  snapshot: Record<string, unknown>;
+}
+
+/** 服务端导出请求（P2-12 Task 17） */
+export interface ExportRequest {
+  format: 'pdf' | 'xlsx';
+  scope?: 'inquiry' | 'compare';
 }

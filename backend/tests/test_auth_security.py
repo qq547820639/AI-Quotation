@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.auth import hash_password, verify_password, reset_login_attempts
+from app.auth import hash_password, verify_password, reset_login_attempts, hash_token
 from app.config import LOGIN_MAX_ATTEMPTS
 from app.models import Token
 from app.database import SessionLocal
@@ -84,7 +84,7 @@ def test_token_expiry_rejected(client, monkeypatch):
 
     # 手动将 token 过期时间改为过去
     db = SessionLocal()
-    rec = db.query(Token).filter(Token.token == token).first()
+    rec = db.query(Token).filter(Token.token_hash == hash_token(token)).first()
     rec.expires_at = datetime.utcnow() - timedelta(seconds=1)
     db.commit()
     db.close()
@@ -94,7 +94,7 @@ def test_token_expiry_rejected(client, monkeypatch):
 
     # 过期 token 已被清理
     db = SessionLocal()
-    assert db.query(Token).filter(Token.token == token).first() is None
+    assert db.query(Token).filter(Token.token_hash == hash_token(token)).first() is None
     db.close()
 
 

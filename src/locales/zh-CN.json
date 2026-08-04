@@ -120,7 +120,13 @@
     "seconds": "秒",
     "query": "查询",
     "times": "次",
-    "attachments": "附件"
+    "attachments": "附件",
+    "offline": "离线",
+    "online": "在线",
+    "dataStale": "数据可能过期",
+    "lastSync": "最后同步 {{time}}",
+    "neverSynced": "尚未同步",
+    "dataFresh": "数据已同步"
   },
   "menu": {
     "dashboard": "工作台",
@@ -138,6 +144,16 @@
     "log": "操作日志",
     "settings": "系统设置",
     "supplierPortal": "供应商门户"
+  },
+  "materialCategories": {
+    "industrialElectronics": "工业电子",
+    "hardware": "五金件",
+    "automation": "自动化",
+    "officeEquipment": "办公设备",
+    "packaging": "包材",
+    "protectiveEquipment": "劳保",
+    "transmission": "传动件",
+    "chemical": "化工"
   },
   "enum": {
     "inquiryStatus": {
@@ -329,6 +345,7 @@
       "batchCancelSummary": "已选 {{total}} 条，将取消 {{executable}} 条，{{skipped}} 条不可取消",
       "batchCancelSkippedReason": "状态不允许取消",
       "batchCancelSuccess": "已取消 {{count}} 条询价单",
+      "exportPdf": "导出 PDF（服务端）",
       "batchCancelFailed": "有 {{count}} 条询价单取消失败",
       "clearSelection": "清空选择"
     },
@@ -669,7 +686,27 @@
       "approveOk": "确认通过",
       "rejectOk": "确认驳回",
       "approveSuccessMsg": "审批已通过",
-      "rejectWarning": "驳回请填写审批意见"
+      "rejectWarning": "驳回请填写审批意见",
+      "sendPartial": "已发送 {{sent}} 家，{{pending}} 家待发送，{{failed}} 家投递失败",
+      "sendPending": "已发送 {{sent}} 家，{{pending}} 家待发送",
+      "deliveryStatus": "询价投递状态",
+      "deliveryProgress": "已送达 {{sent}} / {{total}} 家（{{percent}}%）",
+      "deliverySupplier": "供应商",
+      "deliveryStatusColumn": "投递状态",
+      "deliveryStatusValue": {
+        "pending": "待发送",
+        "sent": "已发送",
+        "delivered": "已送达",
+        "failed": "失败",
+        "bounced": "退信",
+        "opened": "已打开",
+        "submitted": "已提交"
+      },
+      "deliverySentAt": "发送时间",
+      "deliveryError": "投递失败原因",
+      "resendDelivery": "重发",
+      "resendSuccess": "已重新发送询价",
+      "resendFailed": "重发失败，请重试"
     },
     "export": {
       "filename": "询价单_{{code}}",
@@ -907,7 +944,9 @@
       "importFailedCount": "导入失败 {{count}} 条：{{message}}",
       "selectExcel": "选择 Excel/CSV 文件",
       "supportedColumns": "支持列：物料编码、物料名称、物料品类、品牌、规格型号、技术参数、单位、库存。需包含「物料名称」列。",
-      "previewCount": "预览（前 10 行，共 {{count}} 条）"
+      "previewCount": "预览（前 10 行，共 {{count}} 条）",
+      "noRows": "未解析到任何数据行",
+      "noValidRows": "未解析到有效物料行（需包含\"物料名称\"列）"
     }
   },
   "quotation": {
@@ -1017,6 +1056,10 @@
       "sortDeliveryAsc": "交货升序",
       "sortScoreDesc": "评分降序",
       "hideUnquoted": "隐藏未报价供应商",
+      "riskTitle": "报价回收风险提示",
+      "riskUnquoted": "已有 {{count}} 家供应商未提交报价（共邀请 {{total}} 家）。",
+      "riskUnquotedHint": "建议在截止前提醒未报价供应商尽快提交。",
+      "riskAnomalyHint": "检测到异常报价，请核实后谨慎定标。",
       "aiResult": "AI 异常分析结果（{{count}} 项）",
       "aiResultNoAnomaly": "AI 分析结果",
       "aiGenerated": "AI 生成",
@@ -1212,6 +1255,8 @@
     "allTypes": "全部类型",
     "clickToViewDetail": " · 点击查看询价单详情",
     "openDetail": "查看通知「{{title}}」详情",
+    "deadlineTitle": "询价单 {{code}} 即将截止",
+    "deadlineContent": "{{subject}}（剩余 {{hours}} 小时）",
     "type": {
       "INQUIRY_SENT": "询价发送",
       "QUOTATION_SUBMITTED": "报价提交",
@@ -1225,7 +1270,20 @@
       "SYSTEM": "系统"
     },
     "total": "共 {{count}} 条",
-    "unreadCount": "{{count}} 条未读"
+    "unreadCount": "{{count}} 条未读",
+    "pref": {
+      "title": "通知偏好",
+      "inquirySent": "询价发送",
+      "inquirySentDesc": "询价单发送给供应商时通知",
+      "quotationSubmitted": "报价提交",
+      "quotationSubmittedDesc": "供应商提交报价时通知",
+      "deadlineReminder": "截止提醒",
+      "deadlineReminderDesc": "报价截止前提醒采购人员",
+      "approvalResult": "审批结果",
+      "approvalResultDesc": "审批通过/驳回时通知",
+      "deadlineReminderHours": "提前提醒小时数",
+      "deadlineReminderHoursDesc": "截止前多少小时触发提醒"
+    }
   },
   "settings": {
     "title": "系统设置",
@@ -1571,7 +1629,68 @@
     "totalAmountLabel": "报价总金额：",
     "remarkLabel": "报价备注：",
     "remarkPlaceholder": "补充说明（如整体优惠、交货安排等）",
-    "submitBtn": "正式提交"
+    "submitBtn": "正式提交",
+    "revokedTitle": "邀请已撤销",
+    "revokedSubTitle": "该报价邀请已被撤销，您无法继续报价。如有疑问请联系采购方。",
+    "expiredTitle": "邀请已过期",
+    "expiredSubTitle": "该报价邀请已过期或询价已截止，您无法继续报价。",
+    "terminalTitle": "询价已截止",
+    "terminalSubTitle": "该询价单已结束或已取消，报价通道已关闭。",
+    "loadFailedTitle": "加载失败",
+    "loadFailedSubTitle": "无法加载报价信息，请稍后重试或联系采购方。",
+    "receiptTitle": "报价提交成功",
+    "receiptCodeLabel": "回执编号：",
+    "receiptSubmittedAtLabel": "提交时间：",
+    "receiptTotalLabel": "报价总金额：",
+    "reviseBtn": "重新报价",
+    "reviseConfirmTitle": "确认重新报价？",
+    "reviseConfirmContent": "重新报价后，您可修改报价内容并重新提交。",
+    "reviseSuccess": "已重新打开报价，可修改后重新提交",
+    "reviseFailed": "当前询价不允许重新报价",
+    "closeBtn": "关闭",
+    "loadFailed": "加载失败，请稍后重试",
+    "uploadTooLarge": "文件过大，请上传 10MB 以内的文件",
+    "uploadTypeInvalid": "文件类型不支持，请上传 PDF、Office 文档或图片",
+    "uploadRetry": "重试上传",
+    "step": {
+      "read": "阅读询价",
+      "fill": "填写报价",
+      "upload": "上传附件",
+      "review": "检查提交",
+      "submitted": "提交成功"
+    },
+    "autoSaveSaving": "正在保存...",
+    "autoSaveSaved": "已保存 {{time}}",
+    "autoSaveFailed": "保存失败",
+    "errorSummaryTitle": "请修正以下 {{count}} 项错误后再提交",
+    "errorField": {
+      "unitPrice": "物料单价",
+      "deliveryDays": "交货周期"
+    },
+    "batchToolbar": "批量设置",
+    "selectedCount": "已选 {{count}} 项",
+    "batchApplyAllHint": "未选择时应用于全部物料",
+    "batchTaxRate": "批量税率",
+    "batchDeliveryDays": "批量交货周期",
+    "batchPaymentTerms": "批量付款条件",
+    "leavePageTitle": "离开此页面？",
+    "leavePageContent": "您有未保存的更改，离开后将丢失。",
+    "leave": "离开",
+    "continueEdit": "继续编辑",
+    "templateFilename": "报价模板",
+    "exportTemplateSuccess": "已导出报价模板",
+    "exportTemplate": "导出模板",
+    "importExcel": "导入 Excel",
+    "importParseFailed": "导入文件解析失败，请使用导出的模板",
+    "importSuccess": "成功导入 {{count}} 条报价",
+    "importNoMatch": "未匹配到任何物料，请检查模板",
+    "copyPrevious": "复制上一轮",
+    "copyPreviousEmpty": "没有可复制的上一轮报价",
+    "copyPreviousSuccess": "已复制上一轮报价",
+    "receiptDownloadTitle": "报价回执",
+    "receiptFilename": "报价回执",
+    "receiptDownloadSuccess": "回执已下载",
+    "downloadReceipt": "下载回执"
   },
   "globalSearch": {
     "title": "全局搜索",

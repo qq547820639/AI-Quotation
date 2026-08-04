@@ -3,6 +3,14 @@ uvicorn[standard]==0.32.0
 sqlalchemy==2.0.36
 pydantic==2.9.2
 pytest==8.3.3
+pytest-cov==7.1.0
 httpx==0.28.1
 bcrypt==4.2.1
 alembic==1.14.0
+python-multipart==0.0.20
+# PostgreSQL 驱动（生产环境；DATABASE_URL 形如 postgresql://... 时使用）
+psycopg2-binary==2.9.10
+
+# P2-12 Task 17：服务端导出（Excel / PDF）
+openpyxl==3.1.5
+reportlab==5.0.0

@@ -54,6 +54,7 @@ def attachments_for(db, owner_type: str, owner_id: str) -> list[AttachmentSchema
     ).all()
     return [AttachmentSchema(
         id=a.id, name=a.name, url=a.url, size=a.size, uploadTime=a.upload_time,
+        scanStatus=a.scan_status, scanResult=a.scan_result,
     ) for a in rows]
 
 

@@ -21,23 +21,23 @@
 
 ## 🧰 技术栈
 
-| 类别 | 技术 |
-|---|---|
-| 前端框架 | React 18 + TypeScript 5 |
-| 构建 | Vite 5 |
-| UI | Ant Design 5 + @ant-design/icons |
-| 路由 | React Router 6 |
-| 状态 | Zustand 4（持久化到 localStorage） |
-| 数据请求 | axios + MSW 2（本地 mock） |
-| 图表 | ECharts 5（按需引入） |
-| Excel / PDF | SheetJS (xlsx) / jsPDF + html2canvas |
-| 日期 | dayjs |
-| 国际化 | i18next + react-i18next |
-| 错误监控 | Sentry（可选） + web-vitals |
-| 测试 | Vitest 2（单元）+ Playwright（E2E） |
-| 规范 | ESLint 9 (flat) + Prettier 3 + Husky + lint-staged |
-| 后端 | FastAPI 0.115 + SQLAlchemy 2.0 + SQLite |
-| 部署 | Docker Compose（nginx + uvicorn） |
+| 类别        | 技术                                                                   |
+| ----------- | ---------------------------------------------------------------------- |
+| 前端框架    | React 18 + TypeScript 5                                                |
+| 构建        | Vite 5                                                                 |
+| UI          | Ant Design 5 + @ant-design/icons                                       |
+| 路由        | React Router 6                                                         |
+| 状态        | Zustand 4（持久化到 localStorage）                                     |
+| 数据请求    | axios + MSW 2（本地 mock）                                             |
+| 图表        | ECharts 5（按需引入）                                                  |
+| Excel / PDF | SheetJS (xlsx) / jsPDF + html2canvas                                   |
+| 日期        | dayjs                                                                  |
+| 国际化      | i18next + react-i18next                                                |
+| 错误监控    | Sentry（可选） + web-vitals                                            |
+| 测试        | Vitest 2（单元）+ Playwright（E2E）                                    |
+| 规范        | ESLint 9 (flat) + Prettier 3 + Husky + lint-staged                     |
+| 后端        | FastAPI 0.115 + SQLAlchemy 2.0 + SQLite（开发）/ PostgreSQL 16（生产） |
+| 部署        | Docker Compose（nginx + uvicorn）                                      |
 
 ---
 
@@ -45,11 +45,11 @@
 
 ### 📋 环境要求
 
-| 工具 | 版本 |
-|---|---|
-| Node.js | >= 18 |
-| npm | >= 9 |
-| Python | >= 3.11（仅本地后端开发需要） |
+| 工具    | 版本                          |
+| ------- | ----------------------------- |
+| Node.js | >= 18                         |
+| npm     | >= 9                          |
+| Python  | >= 3.11（仅本地后端开发需要） |
 
 ### 方式一：Docker Compose 一键部署（推荐 🐳）
 
@@ -107,13 +107,62 @@ npm run e2e         # E2E 测试（Playwright，需先启动 Docker）
 
 ## 🔐 环境变量
 
-| 变量 | 说明 | 默认 |
-|---|---|---|
-| `VITE_API_BASE_URL` | 后端 API 基地址 | `/api` |
-| `VITE_ENABLE_MSW` | 是否启用 MSW 本地 mock（`true` / `false`） | `true` |
-| `VITE_API_PROXY_TARGET` | 关闭 MSW 时的代理目标（仅 dev） | `http://localhost:8080` |
-| `VITE_SENTRY_DSN` | Sentry DSN（可选，留空则不启用） | - |
-| `DB_PATH` | 后端 SQLite 数据库路径 | `backend/procurement.db` |
+| 变量                    | 说明                                                                        | 默认                       |
+| ----------------------- | --------------------------------------------------------------------------- | -------------------------- |
+| `VITE_API_BASE_URL`     | 后端 API 基地址                                                             | `/api`                     |
+| `VITE_ENABLE_MSW`       | 是否启用 MSW 本地 mock（`true` / `false`）                                  | `true`                     |
+| `VITE_API_PROXY_TARGET` | 关闭 MSW 时的代理目标（仅 dev）                                             | `http://localhost:8080`    |
+| `VITE_SENTRY_DSN`       | Sentry DSN（可选，留空则不启用）                                            | -                          |
+| `DATABASE_URL`          | 后端数据库连接串。含 `postgresql://` 走 PostgreSQL（生产），否则回退 SQLite | `sqlite:///<DB_PATH>`      |
+| `DB_PATH`               | 后端 SQLite 数据库路径（仅 SQLite 场景）                                    | `backend/procurement.db`   |
+| `SECRET_KEY`            | 后端签名/加密密钥（**生产必须通过环境变量注入**）                           | `dev-secret-key-change-me` |
+
+> 🔐 **密钥不入库**：`SECRET_KEY`、`POSTGRES_PASSWORD`、JWT 密钥等所有敏感信息一律通过环境变量 / docker-compose `environment` 注入，**绝不写入源码或提交到仓库**。完整后端环境变量示例见 `backend/.env.example`。
+
+---
+
+## 🔒 安全附件上传（P1-8 Task 13）
+
+供应商门户附件上传已实现完整的**安全校验**与**存储抽象**：
+
+### 校验链路
+
+- **大小**：≤ 10MB（`MAX_UPLOAD_SIZE`）
+- **MIME / 扩展名**：白名单校验（`ALLOWED_UPLOAD_MIME_TYPES` / `ALLOWED_UPLOAD_EXTENSIONS`）
+- **文件名清洗**：`sanitize_filename` 去除路径分隔符与危险字符，物理文件使用随机 `gen_id` 命名，**不信任原始文件名**
+- **归属鉴权**：上传/删除/下载均校验附件归属该邀请对应供应商的报价（`quotation` / `quotation_item`）
+
+### 存储抽象（`backend/app/storage.py`）
+
+- `Storage` 接口：`save / delete / read / url_for`
+- **LocalStorage**：默认本地存储（`UPLOAD_DIR`）
+- **S3Storage**：预留的 S3/MinIO 实现（boto3），配置完整即可启用：
+
+| 变量            | 说明              |
+| --------------- | ----------------- |
+| `S3_ENDPOINT`   | S3/MinIO 端点 URL |
+| `S3_BUCKET`     | 存储桶名称        |
+| `S3_ACCESS_KEY` | 访问密钥 ID       |
+| `S3_SECRET_KEY` | 密钥              |
+
+> 未配置 S3 时自动回退本地存储。**下载鉴权**：沿用现有邀请 token 鉴权下载端点（`GET /api/portal/attachments/{id}/download`），不暴露静态文件路径；S3 模式可生成 15 分钟预签名 URL。
+
+### 病毒扫描预留
+
+- `Attachment` 新增 `scan_status`（`pending/scanned/clean/infected/error`）与 `scan_result` 字段
+- 预留接口 `POST /api/portal/attachments/{id}/scan`（占位扫描器 `app/scanner.py`，可替换为 ClamAV / VirusTotal）
+- 迁移：`backend/alembic/versions/0005_attachment_scan.py`
+
+### 孤儿文件清理
+
+```bash
+cd backend && python3 -m app.scripts.cleanup_orphans            # 删除无数据库记录的孤儿文件
+cd backend && python3 -m app.scripts.cleanup_orphans --dry-run  # 仅列出不删除
+```
+
+### 审计日志
+
+附件上传 / 删除 / 下载 / 扫描均写入结构化审计日志（`audit_logger`，`extra_fields` 记录 `action / attachment_id / owner`）。
 
 ---
 
@@ -121,8 +170,8 @@ npm run e2e         # E2E 测试（Playwright，需先启动 Docker）
 
 ### 单元测试（Vitest）
 
-- 18 个测试文件 / 229 条用例
-- 覆盖：API Client 重试与错误解析、Store 写操作回滚与防重复提交、评分算法、格式化、存储、供应商匹配、物料导入、AI 服务、截止监听、状态机、表格设置、权限定义
+- 26 个测试文件 / 297 条用例（实测 `npx vitest run` 全过）
+- 覆盖：API Client 重试与错误解析、Store 写操作回滚与防重复提交、评分算法、格式化、存储、供应商匹配、物料导入、AI 服务、截止监听、状态机、表格设置、权限定义、供应商门户、无障碍（axe）
 
 ### 后端测试（pytest）
 
@@ -132,7 +181,8 @@ npm run e2e         # E2E 测试（Playwright，需先启动 Docker）
 cd backend && python3 -m pytest -q
 ```
 
-覆盖：认证、询价/报价/供应商核心 API 集成、权限矩阵、数据库事务与状态流转、非法输入（422）校验、可观测性（request_id / 健康检查 / 日志脱敏）。
+- 实测 **163 passed, 1 skipped**，覆盖率 **81.18%（≥ 80% 门禁）**
+- 覆盖：认证与会话安全、询价/报价/供应商核心 API 集成、权限与资源越权矩阵、状态机合法/非法转换、金额精度、并发/乐观锁/幂等、邀请 Token 安全、供应商门户安全、AI 超时/回退/结构校验、数据库迁移 round-trip、PostgreSQL 集成（条件跳过）、可观测性（request_id / 健康检查 / 日志脱敏）
 
 数据库迁移（Alembic）：
 
@@ -142,8 +192,28 @@ cd backend && python3 -m alembic upgrade head
 
 ### E2E 测试（Playwright）
 
-- 7 个文件 / 28 条用例
-- 覆盖：核心业务链路（询价→报价→审批→定标）、异常场景（超时/网络中断/500/401/403/重复点击/部分批量失败/表单校验/数据冲突/刷新/返回/保存失败重试/不同权限）、认证、供应商门户、权限控制、国际化与主题
+- 7 个文件 / 28 条用例，覆盖 5 个浏览器项目：**chromium / firefox / webkit / mobile-android / mobile-ios**
+- 覆盖：核心业务链路（询价→报价→审批→定标）、异常场景（超时/网络中断/500/401/403/重复点击/部分批量失败/表单校验/数据冲突/刷新/返回/保存失败重试/不同权限）、认证与会话、供应商门户（邀请 Token 路由）、权限控制、国际化与主题
+- 供应商门户走**不可预测邀请 Token** 路由（`/supplier-portal/:invitationToken`），不再依赖内部登录 Token 或可枚举 ID
+- 运行：`npm run e2e`（需先 `docker compose up -d --build` 启动真实前后端；CI 的 `docker-e2e` 任务在 Docker 环境执行并上传 trace/截图/视频产物）
+
+---
+
+## 📦 交付说明（供应商安全参与与生产部署闭环）
+
+本轮将项目从"高完成度演示/试用系统"提升为"真实供应商可安全参与、关键业务流程可信、可生产部署"的询报价系统。核心能力：
+
+- **供应商安全邀请闭环**：`supplier_invitations` 表 + 密码学安全邀请 Token（库中只存哈希）+ 专用邀请鉴权 + 字段级最小化 + 7 种页面状态，枚举 ID 无法越权。
+- **组织级与资源级数据权限**：统一 Policy 层，创建询价的 `organization/owner/created_by` 由服务端强制生成，所有 list/get/update/delete/action 做资源级校验。
+- **服务端强约束状态机**：询价/报价/审批状态机，非法转换返回结构化 409，动作接口幂等并支持 `Idempotency-Key`。
+- **金额精度**：Decimal/Numeric 存储，服务端重算未税/税额/含税/总额。
+- **鉴权会话安全**：短期 Access + 可轮换 Refresh + HttpOnly/Secure/SameSite Cookie，会话列表/单会话撤销/全部退出/Refresh 重用检测，安全响应头。
+- **PostgreSQL + Alembic**：生产仅 Alembic 管理 schema，Docker 健康检查 `/api/ready`，健康条件控制依赖。
+- **真实通知与附件**：异步可重试发送（邮件等可扩展渠道）+ 逐供应商交付状态；安全附件上传（本地/S3/MinIO）+ 病毒扫描预留 + 下载鉴权。
+- **服务端 AI**：`/api/ai/*` 可插拔 Provider，超时/重试/熔断/成本统计/结构校验/脱敏/审计，不可用回退本地规则。
+- **mock 隔离**：演示模式显式环境变量，生产构建默认禁止 mock fallback，后端不可用显示离线状态。
+
+详细迁移、环境变量、API 变更、安全/权限模型、状态机转换表见 `docs/deployment.md` 与 `docs/architecture.md`。
 
 ---
 

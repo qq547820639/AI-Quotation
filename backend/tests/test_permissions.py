@@ -83,3 +83,52 @@ def test_supplier_manage_requires_admin(client, buyer_headers, admin_headers):
         headers=admin_headers,
     )
     assert resp.status_code == 200
+
+
+# ============ P2-14 Task 19：审批人指定与审批权限（非指定审批人） ============
+
+def _create_inquiry(client, headers, subject="审批权限测试"):
+    payload = {
+        "subject": subject,
+        "deadline": "2026-09-01 18:00:00",
+        "deliveryAddress": "测试地址",
+        "contact": "测试 13800000000",
+        "paymentTerms": "货到付款",
+        "items": [{
+            "materialId": "mat-1", "name": "工业交换机", "code": "MAT001",
+            "category": "电子设备", "brand": "华为", "spec": "8口千兆",
+            "techParams": "8口", "unit": "台", "quantity": 10,
+        }],
+    }
+    resp = client.post("/api/inquiries", json=payload, headers=headers)
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()
+
+
+def test_submit_approval_designates_configured_approver(client, buyer_headers):
+    """提交审批后，审批节点应指定配置的审批人（settings.approval_approver_id，默认 u-2）"""
+    inq = _create_inquiry(client, buyer_headers)
+    iid = inq["id"]
+    client.post(f"/api/inquiries/{iid}/send", headers=buyer_headers)
+    resp = client.post(f"/api/inquiries/{iid}/submit-approval", headers=buyer_headers)
+    assert resp.status_code == 200, resp.text
+    pending = [n for n in resp.json()["approvalNodes"] if n["status"] == "PENDING"]
+    assert pending, "提交审批后应存在 PENDING 审批节点"
+    assert pending[0]["approverId"] == "u-2"
+
+
+def test_non_designated_approver_rejected(client, buyer_headers, supervisor_headers):
+    """非指定审批人（采购人员 u-1，无 INQUIRY_APPROVE）无法审批 → 403；指定审批人 u-2 可审批"""
+    inq = _create_inquiry(client, buyer_headers)
+    iid = inq["id"]
+    client.post(f"/api/inquiries/{iid}/send", headers=buyer_headers)
+    client.post(f"/api/inquiries/{iid}/submit-approval", headers=buyer_headers)
+    # 采购人员 u-1 无审批权限 → 403，且状态不变
+    resp = client.post(f"/api/inquiries/{iid}/approve", json={"comment": "越权审批"}, headers=buyer_headers)
+    assert resp.status_code == 403
+    detail = client.get(f"/api/inquiries/{iid}", headers=buyer_headers).json()
+    assert detail["status"] == "PENDING_APPROVAL"
+    # 指定审批人 u-2（采购主管）→ 200
+    resp = client.post(f"/api/inquiries/{iid}/approve", json={"comment": "同意"}, headers=supervisor_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "PENDING_CONFIRM"

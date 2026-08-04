@@ -10,3 +10,5 @@ export { materialApi } from './materialApi';
 export { authApi } from './authApi';
 export { notificationApi } from './notificationApi';
 export { settingsApi } from './settingsApi';
+export { portalApi } from './portal';
+export { usersApi } from './usersApi';

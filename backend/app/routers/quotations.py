@@ -10,6 +10,7 @@ from ..models import User, Quotation, QuotationItem, Inquiry, InquiryLog
 from ..schemas import QuotationSchema, QuotationCreate, QuotationDraft, SuccessResult
 from ..auth import get_current_user
 from ..serializers import quotation_to_schema, gen_id, now_str
+from ..events import publish
 
 router = APIRouter(prefix="/quotations", tags=["quotations"])
 
@@ -168,4 +169,6 @@ def submit_quotation(
         inquiry.updated_at = ts
     db.commit()
     db.refresh(q)
+    # P2-12 Task 17：广播报价提交事件，SSE 订阅端据此刷新未读/详情/比价/通知中心
+    publish("quotation_submitted", {"quotationId": q.id, "inquiryId": q.inquiry_id, "supplierId": q.supplier_id})
     return quotation_to_schema(q, db)

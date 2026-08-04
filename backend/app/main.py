@@ -19,12 +19,20 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
 from sqlalchemy import text
 
-from .config import CORS_ORIGINS
+from .config import (
+    CORS_ORIGINS,
+    DB_AUTO_CREATE,
+    CSP_DEFAULT,
+    HSTS_ENABLED,
+    HSTS_MAX_AGE,
+    REFERRER_POLICY,
+    PERMISSIONS_POLICY,
+)
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401  触发所有 ORM 模型注册到 Base.metadata
 from .logging import get_request_id, new_request_id, set_request_id, setup_logging
 from .seed import init_db
-from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics
+from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics, portal, ai, users, events
 
 # 结构化日志配置（P5.3）
 setup_logging()
@@ -33,8 +41,9 @@ logger = logging.getLogger("procurement")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动：建表 + 注入种子
-    Base.metadata.create_all(bind=engine)
+    # 启动：仅 dev/test 自动建表（prod 依赖 Alembic 迁移）
+    if DB_AUTO_CREATE:
+        Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
         init_db(db)
@@ -86,6 +95,26 @@ async def log_requests(request: Request, call_next):
             }
         },
     )
+    return response
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """安全响应头中间件（P1-6）：为所有响应添加 CSP / HSTS / nosniff / Referrer-Policy / Permissions-Policy。
+
+    - CSP 宽松默认，可从环境变量 CSP_DEFAULT 配置
+    - HSTS 仅生产（HSTS_ENABLED=true）时下发
+    """
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", CSP_DEFAULT)
+    if HSTS_ENABLED:
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            f"max-age={HSTS_MAX_AGE}; includeSubDomains",
+        )
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", REFERRER_POLICY)
+    response.headers.setdefault("Permissions-Policy", PERMISSIONS_POLICY)
     return response
 
 
@@ -183,6 +212,10 @@ app.include_router(quotations.router, prefix=API_PREFIX)
 app.include_router(notifications.router, prefix=API_PREFIX)
 app.include_router(settings.router, prefix=API_PREFIX)
 app.include_router(metrics.router, prefix=API_PREFIX)  # Web Vitals 上报（G2）
+app.include_router(portal.router, prefix=API_PREFIX)
+app.include_router(ai.router, prefix=API_PREFIX)  # AI 服务（P1-9 Task 14）
+app.include_router(users.router, prefix=API_PREFIX)  # 用户级表格偏好（P2-12 Task 17）
+app.include_router(events.router, prefix=API_PREFIX)  # SSE 实时事件（P2-12 Task 17）
 
 
 @app.get("/")
@@ -192,7 +225,11 @@ def root():
 
 @app.get("/api/health")
 def health_check():
-    """健康检查端点：真实探测数据库连通性（G3，无认证，供 Docker healthcheck / 监控使用）"""
+    """Liveness 探针（供 Docker healthcheck / 监控使用）：进程存活即返回 200。
+
+    真实探测数据库连通性（SELECT 1），但 DB 不可用时仍返回 HTTP 200（status=degraded），
+    用于区分「进程是否存活」与「依赖是否就绪」——进程存活不应被依赖故障误判为重启。
+    """
     db_ok = False
     db_error = None
     try:
@@ -214,7 +251,10 @@ def health_check():
 
 @app.get("/api/ready")
 def ready_check():
-    """就绪检查：DB 连通 + 关键表（users/inquiries）可查询，返回 ready 状态"""
+    """Readiness 探针：DB 连通 + 关键表（users/inquiries）可查询才算就绪，否则返回 503。
+
+    用于编排依赖（如 compose 中 frontend 等待 backend 就绪、负载均衡摘除流量）。
+    """
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))

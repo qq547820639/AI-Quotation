@@ -15,7 +15,7 @@ const PURCHASER = '李明辉'; // u-1 采购人员，无 INQUIRY_APPROVE / SETTI
 const SUP1 = '上海恒远工业设备有限公司'; // sup-1，初始 COOPERATING
 
 /** 登录（选中用户 + 任意密码） */
-async function login(page: Page, name: string, password = 'test123') {
+async function login(page: Page, name: string, password = '123456') {
   await page.goto('/login');
   await page.locator('.ant-select-selector').click();
   await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
@@ -91,7 +91,11 @@ test.describe('异常场景', () => {
   test('后端 500：提示服务器错误', async ({ page }) => {
     await page.route('**/api/suppliers/*', async (route) => {
       if (route.request().method() === 'PUT') {
-        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'boom' }) });
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'boom' }),
+        });
       } else {
         await route.continue();
       }
@@ -109,7 +113,11 @@ test.describe('异常场景', () => {
   test('401 token 失效：清理会话并跳转登录', async ({ page }) => {
     await page.route('**/api/suppliers/*', async (route) => {
       if (route.request().method() === 'PUT') {
-        await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ detail: 'unauthorized' }) });
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'unauthorized' }),
+        });
       } else {
         await route.continue();
       }
@@ -126,7 +134,11 @@ test.describe('异常场景', () => {
   test('403 无权限：提示无权限访问', async ({ page }) => {
     await page.route('**/api/suppliers/*', async (route) => {
       if (route.request().method() === 'PUT') {
-        await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ detail: 'forbidden' }) });
+        await route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'forbidden' }),
+        });
       } else {
         await route.continue();
       }
@@ -144,7 +156,11 @@ test.describe('异常场景', () => {
   test('409 数据冲突：提示数据已被他人修改', async ({ page }) => {
     await page.route('**/api/suppliers/*', async (route) => {
       if (route.request().method() === 'PUT') {
-        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ detail: 'conflict' }) });
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'conflict' }),
+        });
       } else {
         await route.continue();
       }
@@ -179,7 +195,10 @@ test.describe('异常场景', () => {
     await confirmOk(page);
 
     // 请求未完成时再次点击确定，应被 pendingOps 拦截（不发起第二次请求）
-    await page.locator('.ant-modal-confirm-btns .ant-btn-primary').click({ force: true, timeout: 500 }).catch(() => {});
+    await page
+      .locator('.ant-modal-confirm-btns .ant-btn-primary')
+      .click({ force: true, timeout: 500 })
+      .catch(() => {});
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
 
     expect(putCount).toBe(1);
@@ -206,15 +225,29 @@ test.describe('异常场景', () => {
     await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
 
     // 勾选 sup-1 与 sup-2 两行
-    await page.locator('.ant-table-row').filter({ hasText: SUP1 }).locator('.ant-checkbox-input').click();
-    await page.locator('.ant-table-row').filter({ hasText: '苏州联创自动化科技有限公司' }).locator('.ant-checkbox-input').click();
+    await page
+      .locator('.ant-table-row')
+      .filter({ hasText: SUP1 })
+      .locator('.ant-checkbox-input')
+      .click();
+    await page
+      .locator('.ant-table-row')
+      .filter({ hasText: '苏州联创自动化科技有限公司' })
+      .locator('.ant-checkbox-input')
+      .click();
 
     await page.getByRole('button', { name: /批量停用|Batch Disable/ }).click();
     await confirmOk(page);
 
     // 部分成功：提示成功 1 家 + 失败 1 家（而非笼统"全部成功"）
-    await expect(page.locator('.ant-message')).toContainText(/已成功处理 1 家供应商|Processed 1 supplier/, { timeout: 10000 });
-    await expect(page.locator('.ant-message')).toContainText(/有 1 家供应商操作失败|Failed to process 1 supplier/, { timeout: 10000 });
+    await expect(page.locator('.ant-message')).toContainText(
+      /已成功处理 1 家供应商|Processed 1 supplier/,
+      { timeout: 10000 },
+    );
+    await expect(page.locator('.ant-message')).toContainText(
+      /有 1 家供应商操作失败|Failed to process 1 supplier/,
+      { timeout: 10000 },
+    );
   });
 
   test('表单校验失败：必填项为空给出校验错误', async ({ page }) => {
@@ -227,9 +260,12 @@ test.describe('异常场景', () => {
     await subject.fill('');
     await page.getByRole('button', { name: /下一步|Next/ }).click();
 
-    await expect(page.locator('.ant-form-item-explain-error').first()).toContainText(/请输入询价主题|Subject/, {
-      timeout: 5000,
-    });
+    await expect(page.locator('.ant-form-item-explain-error').first()).toContainText(
+      /请输入询价主题|Subject/,
+      {
+        timeout: 5000,
+      },
+    );
   });
 
   test('页面刷新：刷新后仍保持登录态且数据可加载', async ({ page }) => {
@@ -265,7 +301,11 @@ test.describe('异常场景', () => {
       if (route.request().method() === 'PUT') {
         if (first) {
           first = false;
-          await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'boom' }) });
+          await route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'boom' }),
+          });
         } else {
           await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
         }
@@ -279,7 +319,9 @@ test.describe('异常场景', () => {
     await confirmOk(page);
 
     // 首次失败：提示服务器错误
-    await expect(page.locator('.ant-message')).toContainText(/服务器错误|Server error/, { timeout: 10000 });
+    await expect(page.locator('.ant-message')).toContainText(/服务器错误|Server error/, {
+      timeout: 10000,
+    });
 
     // 重试成功：再次停用（乐观更新已回滚，按钮仍为"停用"）
     const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });

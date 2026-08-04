@@ -3,15 +3,16 @@
 首启时若 DB 为空，注入种子数据（从 src/mock/ 转写）。
 init_db(db) 由 main.py lifespan 调用。
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from .models import (
     User, Material, Supplier, Inquiry, InquiryItem, InquiryLog, ApprovalNode,
-    Quotation, QuotationItem, AppSettings,
+    Quotation, QuotationItem, AppSettings, SupplierInvitation,
 )
 from .auth import hash_password
-from .config import DEMO_USER_PASSWORD
+from .config import DEMO_USER_PASSWORD, INVITATION_TOKEN_TTL_HOURS
+from .invitations import hash_invitation_token
 
 
 # ============ 日期辅助（对齐 mock 的 dayjs offset 语义） ============
@@ -407,6 +408,51 @@ QUOTATIONS = [
 ]
 
 
+# ============ 供应商邀请 ============
+
+# 为处于 INQUIRING / PARTIAL_QUOTED / ALL_QUOTED 状态的询价邀请供应商创建邀请。
+# 也包含 inq-7（COMPLETED）的邀请，用于验证终态询价邀请被拒绝（403）。
+# INVITATION_TOKENS 以 (inquiry_id, supplier_id) 为键，暴露原始 token 供测试/门户使用。
+INVITATION_TOKENS = {
+    ("inq-3", "sup-2"): "inv-token-inq3-sup2-000000000000000000000000000000000000000000000000",
+    ("inq-3", "sup-5"): "inv-token-inq3-sup5-000000000000000000000000000000000000000000000000",
+    ("inq-4", "sup-5"): "inv-token-inq4-sup5-000000000000000000000000000000000000000000000000",
+    ("inq-4", "sup-2"): "inv-token-inq4-sup2-000000000000000000000000000000000000000000000000",
+    ("inq-5", "sup-1"): "inv-token-inq5-sup1-000000000000000000000000000000000000000000000000",
+    ("inq-5", "sup-3"): "inv-token-inq5-sup3-000000000000000000000000000000000000000000000000",
+    ("inq-5", "sup-5"): "inv-token-inq5-sup5-000000000000000000000000000000000000000000000000",
+    ("inq-7", "sup-2"): "inv-token-inq7-sup2-000000000000000000000000000000000000000000000000",
+    ("inq-7", "sup-4"): "inv-token-inq7-sup4-000000000000000000000000000000000000000000000000",
+}
+
+# 各询价对应的创建者（用于 created_by）
+INVITATION_CREATED_BY = {
+    "inq-3": "u-1", "inq-4": "u-5", "inq-5": "u-1", "inq-7": "u-1",
+}
+
+
+def _seed_invitations(db: Session):
+    """为种子的询价单创建供应商邀请。必填：token_hash 唯一性。"""
+    now = datetime.now(timezone.utc)
+    for (inquiry_id, supplier_id), raw_token in INVITATION_TOKENS.items():
+        existing = db.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == inquiry_id,
+            SupplierInvitation.supplier_id == supplier_id,
+        ).first()
+        if existing is not None:
+            continue
+        db.add(SupplierInvitation(
+            id=f"inv-{inquiry_id}-{supplier_id}",
+            inquiry_id=inquiry_id,
+            supplier_id=supplier_id,
+            token_hash=hash_invitation_token(raw_token),
+            expires_at=now + timedelta(hours=INVITATION_TOKEN_TTL_HOURS),
+            status="pending",
+            created_at=now,
+            created_by=INVITATION_CREATED_BY.get(inquiry_id, "u-1"),
+        ))
+
+
 # ============ 初始化 ============
 
 def init_db(db: Session):
@@ -525,5 +571,8 @@ def init_db(db: Session):
         notification_deadline_reminder_hours=24, notification_quotation_submitted=True,
         notification_approval_result=True,
     ))
+
+    # 供应商邀请（供门户 E2E 使用）
+    _seed_invitations(db)
 
     db.commit()

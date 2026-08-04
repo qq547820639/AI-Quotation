@@ -117,7 +117,7 @@ export const appRouter = createBrowserRouter([
     ],
   },
   {
-    path: '/supplier-portal/:inquiryId/:supplierId',
+    path: '/supplier-portal/:invitationToken',
     element: <SupplierLayout />,
     children: [{ index: true, element: <SupplierPortalPage /> }],
   },

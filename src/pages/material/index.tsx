@@ -41,18 +41,9 @@ import { type Material } from '@/types';
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
 import { buildMaterials, parseMaterialFile } from '@/utils/materialImport';
 import { useIsMobile } from '@/utils/useIsMobile';
+import { getMaterialCategoryOptions } from '@/constants/materialCategories';
 
 const { Text } = Typography;
-
-/** 品类筛选选项 */
-const CATEGORY_OPTIONS = [
-  { label: '工业电子', value: '工业电子' },
-  { label: '五金件', value: '五金件' },
-  { label: '自动化', value: '自动化' },
-  { label: '办公设备', value: '办公设备' },
-  { label: '包材', value: '包材' },
-  { label: '劳保', value: '劳保' },
-];
 
 /** 表单字段类型 */
 interface MaterialFormValues {
@@ -146,10 +137,7 @@ export default function MaterialPage() {
     return materials.filter((m) => {
       if (applied.keyword) {
         const kw = applied.keyword.toLowerCase();
-        if (
-          !m.name.toLowerCase().includes(kw) &&
-          !m.code.toLowerCase().includes(kw)
-        ) {
+        if (!m.name.toLowerCase().includes(kw) && !m.code.toLowerCase().includes(kw)) {
           return false;
         }
       }
@@ -315,11 +303,7 @@ export default function MaterialPage() {
       width: 100,
       align: 'right',
       render: (qty?: number) =>
-        qty != null ? (
-          <Text>{qty}</Text>
-        ) : (
-          <Text type="secondary">-</Text>
-        ),
+        qty != null ? <Text>{qty}</Text> : <Text type="secondary">-</Text>,
       sorter: (a, b) => (a.stockQty ?? 0) - (b.stockQty ?? 0),
     },
     {
@@ -388,18 +372,22 @@ export default function MaterialPage() {
             />
           </Col>
           <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('material.list.categoryShort')}</div>
+            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              {t('material.list.categoryShort')}
+            </div>
             <Select
               placeholder={t('common.selectPlaceholder')}
               value={filterCategory}
               onChange={(val) => setFilterCategory(val)}
-              options={CATEGORY_OPTIONS}
+              options={getMaterialCategoryOptions()}
               style={{ width: '100%' }}
               allowClear
             />
           </Col>
           <Col xs={24} sm={12} md={8} lg={6}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('material.list.brand')}</div>
+            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              {t('material.list.brand')}
+            </div>
             <Input
               placeholder={t('common.inputPlaceholder')}
               value={filterBrand}
@@ -407,13 +395,7 @@ export default function MaterialPage() {
               allowClear
             />
           </Col>
-          <Col
-            xs={24}
-            sm={12}
-            md={8}
-            lg={6}
-            style={{ display: 'flex', alignItems: 'flex-end' }}
-          >
+          <Col xs={24} sm={12} md={8} lg={6} style={{ display: 'flex', alignItems: 'flex-end' }}>
             <Space>
               <Button type="primary" icon={<SearchOutlined />} onClick={handleQuery}>
                 {t('common.query')}
@@ -444,17 +426,37 @@ export default function MaterialPage() {
               showTotal: (total) => t('material.list.total', { count: total }),
             }}
             renderItem={(record) => (
-              <List.Item style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}>
+              <List.Item
+                style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}
+              >
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
                   <Text strong>{record.code}</Text>
                   <Tag color="blue">{record.category}</Tag>
                 </div>
-                <Text strong style={{ display: 'block', marginBottom: 4 }}>{record.name}</Text>
-                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
-                  <span>{t('material.list.brand')}: {record.brand || '-'}</span>
-                  <span>{t('material.list.specModel')}: {record.spec || '-'}</span>
-                  <span>{t('material.list.unit')}: {record.unit}</span>
-                  <span>{t('material.list.stockQty')}: {record.stockQty != null ? record.stockQty : '-'}</span>
+                <Text strong style={{ display: 'block', marginBottom: 4 }}>
+                  {record.name}
+                </Text>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--color-text-tertiary)',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '4px 12px',
+                  }}
+                >
+                  <span>
+                    {t('material.list.brand')}: {record.brand || '-'}
+                  </span>
+                  <span>
+                    {t('material.list.specModel')}: {record.spec || '-'}
+                  </span>
+                  <span>
+                    {t('material.list.unit')}: {record.unit}
+                  </span>
+                  <span>
+                    {t('material.list.stockQty')}: {record.stockQty != null ? record.stockQty : '-'}
+                  </span>
                 </div>
                 {record.techParams && (
                   <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
@@ -463,12 +465,23 @@ export default function MaterialPage() {
                 )}
                 <Space size={0} wrap style={{ marginTop: 8 }}>
                   {canManage && (
-                    <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={() => handleEdit(record)}
+                    >
                       {t('material.list.edit')}
                     </Button>
                   )}
                   {canManage && (
-                    <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record)}>
+                    <Button
+                      type="link"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => handleDelete(record)}
+                    >
                       {t('material.list.delete')}
                     </Button>
                   )}
@@ -477,12 +490,12 @@ export default function MaterialPage() {
             )}
           />
         ) : (
-        <Table<Material>
-          rowKey="id"
-          columns={columns}
-          dataSource={filteredMaterials}
-          scroll={{ x: 1300 }}
-          pagination={{
+          <Table<Material>
+            rowKey="id"
+            columns={columns}
+            dataSource={filteredMaterials}
+            scroll={{ x: 1300 }}
+            pagination={{
               pageSize: 10,
               showSizeChanger: true,
               showTotal: (total) => t('material.list.total', { count: total }),
@@ -514,11 +527,7 @@ export default function MaterialPage() {
         width={640}
         destroyOnClose
       >
-        <Form<MaterialFormValues>
-          form={form}
-          layout="vertical"
-          preserve={false}
-        >
+        <Form<MaterialFormValues> form={form} layout="vertical" preserve={false}>
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item
@@ -546,7 +555,7 @@ export default function MaterialPage() {
               >
                 <Select
                   placeholder={t('material.form.categorySelectPlaceholder')}
-                  options={CATEGORY_OPTIONS}
+                  options={getMaterialCategoryOptions()}
                   showSearch
                   optionFilterProp="label"
                 />
@@ -620,7 +629,9 @@ export default function MaterialPage() {
           </Text>
           {importPreview.length > 0 && (
             <>
-              <Text strong>{t('material.import.previewCount', { count: importPreview.length })}</Text>
+              <Text strong>
+                {t('material.import.previewCount', { count: importPreview.length })}
+              </Text>
               <Table<Material>
                 size="small"
                 rowKey="id"
@@ -637,7 +648,12 @@ export default function MaterialPage() {
                     render: (c: string) => <Tag color="blue">{c}</Tag>,
                   },
                   { title: t('material.form.brand'), dataIndex: 'brand', width: 100 },
-                  { title: t('material.form.specModel'), dataIndex: 'spec', width: 140, ellipsis: true },
+                  {
+                    title: t('material.form.specModel'),
+                    dataIndex: 'spec',
+                    width: 140,
+                    ellipsis: true,
+                  },
                   { title: t('material.form.unit'), dataIndex: 'unit', width: 70, align: 'center' },
                 ]}
               />

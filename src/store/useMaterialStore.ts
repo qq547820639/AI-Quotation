@@ -8,12 +8,20 @@ import { materials as mockMaterials } from '@/mock/materials';
 import type { Material } from '@/types';
 import { loadJSON, saveJSON } from '@/utils/storage';
 import { materialApi } from '@/api';
+import { useConnectivityStore } from './useConnectivityStore';
+import { MOCK_FALLBACK_ENABLED } from '@/config';
+import { queryClient, QUERY_KEYS } from '@/lib/queryClient';
 import { ok, fail, pending, notFound, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'materials';
 
 /** 进行中的写操作（key: op:id），用于防重复提交 */
 const pendingOps: Record<string, boolean> = {};
+
+/** 写操作成功后同步 React Query 服务端缓存（P1-10 Task 15） */
+function syncCache(materials: Material[]) {
+  queryClient.setQueryData(QUERY_KEYS.materials, materials);
+}
 
 /** 合并 mock 与 localStorage（localStorage 覆盖同 id） */
 function mergeMaterials(): Material[] {
@@ -37,16 +45,23 @@ interface MaterialState {
 }
 
 export const useMaterialStore = create<MaterialState>((set, get) => ({
-  materials: mergeMaterials(),
+  // P1-10 Task 15：生产模式不预置 mock 数据
+  materials: MOCK_FALLBACK_ENABLED ? mergeMaterials() : [],
 
-  // W7.4：从 API 加载，失败时降级到 localStorage/mock
+  // W7.4 + P1-10 Task 15：从 API 加载；生产模式失败不静默回退 mock
   loadFromApi: async () => {
     try {
       const data = await materialApi.list();
       set({ materials: data });
       saveJSON(STORAGE_KEY, data);
+      queryClient.setQueryData(QUERY_KEYS.materials, data);
+      useConnectivityStore.getState().markSynced();
     } catch {
-      set({ materials: mergeMaterials() });
+      if (MOCK_FALLBACK_ENABLED) {
+        set({ materials: mergeMaterials() });
+      } else {
+        useConnectivityStore.getState().markOffline();
+      }
     }
   },
 
@@ -65,6 +80,7 @@ export const useMaterialStore = create<MaterialState>((set, get) => ({
         return { materials };
       });
       await materialApi.create(material);
+      syncCache(get().materials);
       return ok();
     } catch (e) {
       set({ materials: snapshot });
@@ -87,6 +103,7 @@ export const useMaterialStore = create<MaterialState>((set, get) => ({
         return { materials };
       });
       await materialApi.update(id, patch);
+      syncCache(get().materials);
       return ok();
     } catch (e) {
       set({ materials: snapshot });
@@ -109,6 +126,7 @@ export const useMaterialStore = create<MaterialState>((set, get) => ({
         return { materials };
       });
       await materialApi.delete(id);
+      syncCache(get().materials);
       return ok();
     } catch (e) {
       set({ materials: snapshot });

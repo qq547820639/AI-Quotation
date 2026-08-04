@@ -10,7 +10,7 @@ test.describe('i18n 与主题', () => {
     await page.goto('/login');
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill('admin123');
+    await page.locator('input[type="password"]').fill('123456');
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
   });
@@ -29,7 +29,9 @@ test.describe('i18n 与主题', () => {
     await englishOption.click();
 
     // 验证页面文案变化：菜单或标题出现英文
-    await expect(page.locator('body')).toContainText(/Dashboard|Inquiry|Supplier/i, { timeout: 5000 });
+    await expect(page.locator('body')).toContainText(/Dashboard|Inquiry|Supplier/i, {
+      timeout: 5000,
+    });
 
     // 切回中文（恢复默认状态）
     await langBtn.click();
@@ -39,7 +41,11 @@ test.describe('i18n 与主题', () => {
 
   test('切换暗色主题并验证持久化', async ({ page }) => {
     // 找到主题切换按钮（aria-label 含 switchToLight/switchToDark）
-    const themeBtn = page.locator('button[aria-label*="switchTo"], button:has(.anticon-moon), button:has(.anticon-sun)').first();
+    const themeBtn = page
+      .locator(
+        'button[aria-label*="switchTo"], button:has(.anticon-moon), button:has(.anticon-sun)',
+      )
+      .first();
     await expect(themeBtn).toBeVisible({ timeout: 5000 });
 
     // 记录切换前的 data-theme 或 body class
@@ -48,7 +54,8 @@ test.describe('i18n 与主题', () => {
       const bc = document.body.className;
       const ds = document.documentElement.getAttribute('data-theme');
       // 也检查 antd 暗色算法标志（color scheme）
-      const cs = document.documentElement.style.colorScheme || getComputedStyle(document.body).colorScheme;
+      const cs =
+        document.documentElement.style.colorScheme || getComputedStyle(document.body).colorScheme;
       return JSON.stringify({ dt, bc, ds, cs });
     });
 
@@ -61,7 +68,8 @@ test.describe('i18n 与主题', () => {
       const dt = document.documentElement.getAttribute('data-theme');
       const bc = document.body.className;
       const ds = document.documentElement.getAttribute('data-theme');
-      const cs = document.documentElement.style.colorScheme || getComputedStyle(document.body).colorScheme;
+      const cs =
+        document.documentElement.style.colorScheme || getComputedStyle(document.body).colorScheme;
       return JSON.stringify({ dt, bc, ds, cs });
     });
     expect(afterTheme).not.toBe(beforeTheme);
@@ -74,7 +82,8 @@ test.describe('i18n 与主题', () => {
       const dt = document.documentElement.getAttribute('data-theme');
       const bc = document.body.className;
       const ds = document.documentElement.getAttribute('data-theme');
-      const cs = document.documentElement.style.colorScheme || getComputedStyle(document.body).colorScheme;
+      const cs =
+        document.documentElement.style.colorScheme || getComputedStyle(document.body).colorScheme;
       return JSON.stringify({ dt, bc, ds, cs });
     });
     // 持久化后的主题应与切换后一致

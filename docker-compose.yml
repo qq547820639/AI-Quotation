@@ -1,16 +1,43 @@
 version: '3.8'
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-procurement}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-procurement}
+      POSTGRES_DB: ${POSTGRES_DB:-procurement}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-procurement} -d ${POSTGRES_DB:-procurement}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build: ./backend
     ports:
       - "8080:8080"
-    volumes:
-      - ./data:/app/data
     environment:
-      - DB_PATH=/app/data/procurement.db
+      # 生产使用 PostgreSQL：通过 DATABASE_URL 连接（psycopg2 驱动）
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-procurement}:${POSTGRES_PASSWORD:-procurement}@postgres:5432/${POSTGRES_DB:-procurement}
+      - APP_ENV=prod
+      - DB_AUTO_CREATE=false
+      - APP_DEMO_MODE=${APP_DEMO_MODE:-false}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # 启动前先执行迁移（prod 禁用 create_all，必须由 Alembic 建表），再启动 uvicorn
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8080"
     healthcheck:
-      # python:3.11-slim 不自带 wget/curl，改用 python urllib 探测（真实触发 DB 连通性检查）
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health', timeout=5)"]
+      # python:3.11-slim 不自带 wget/curl，改用 python urllib 探测 /api/ready（readiness：DB+关键表就绪才 200）
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/ready', timeout=5)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -23,10 +50,14 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost"]
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
+
+volumes:
+  pgdata:

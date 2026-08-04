@@ -95,10 +95,10 @@ describe('useAuthStore', () => {
   });
 
   describe('logout', () => {
-    it('登出：清空 isAuthenticated，currentUser 回到默认，并调用后端', async () => {
+    it('登出：先撤销服务端会话，再清空本地状态', async () => {
       await useAuthStore.getState().login('u-6');
       expect(useAuthStore.getState().isAuthenticated).toBe(true);
-      useAuthStore.getState().logout();
+      await useAuthStore.getState().logout();
       expect(useAuthStore.getState().isAuthenticated).toBe(false);
       expect(useAuthStore.getState().currentUser.id).toBe(currentUser.id);
       expect(mockLogout).toHaveBeenCalled();

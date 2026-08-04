@@ -7,7 +7,19 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Badge, Button, Card, Empty, List, Segmented, Space, Tag, Typography } from 'antd';
+import {
+  Badge,
+  Button,
+  Card,
+  Empty,
+  InputNumber,
+  List,
+  Segmented,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+} from 'antd';
 import { BellOutlined, CheckOutlined } from '@ant-design/icons';
 import PageHeader from '@/components/PageHeader';
 import { useNotificationStore } from '@/store/useNotificationStore';
@@ -31,13 +43,14 @@ export default function NotificationPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const notifications = useNotificationStore((s) => s.notifications);
+  const unreadCount = useNotificationStore((s) => s.unreadCount);
   const markRead = useNotificationStore((s) => s.markRead);
   const markAllRead = useNotificationStore((s) => s.markAllRead);
+  const preferences = useNotificationStore((s) => s.preferences);
+  const updatePreferences = useNotificationStore((s) => s.updatePreferences);
 
   const [readFilter, setReadFilter] = useState<ReadFilter>('all');
   const [typeFilter, setTypeFilter] = useState<NotificationType | 'ALL'>('ALL');
-
-  const unreadCount = notifications.filter((n) => !n.read).length;
 
   const filtered = useMemo(() => {
     return notifications.filter((n) => {
@@ -51,6 +64,30 @@ export default function NotificationPage() {
     markRead(n.id);
     if (n.inquiryId) navigate(`/inquiry/detail/${n.inquiryId}`);
   };
+
+  const preferenceItems: { key: keyof typeof preferences; label: string; desc: string }[] = [
+    {
+      key: 'inquirySent',
+      label: t('notification.pref.inquirySent'),
+      desc: t('notification.pref.inquirySentDesc'),
+    },
+    {
+      key: 'quotationSubmitted',
+      label: t('notification.pref.quotationSubmitted'),
+      desc: t('notification.pref.quotationSubmittedDesc'),
+    },
+    {
+      key: 'deadlineReminder',
+      label: t('notification.pref.deadlineReminder'),
+      desc: t('notification.pref.deadlineReminderDesc'),
+    },
+    {
+      key: 'approvalResult',
+      label: t('notification.pref.approvalResult'),
+      desc: t('notification.pref.approvalResultDesc'),
+    },
+  ];
+  const booleanPrefKeys = preferenceItems.map((i) => i.key);
 
   return (
     <div>
@@ -68,6 +105,45 @@ export default function NotificationPage() {
         }
       />
 
+      <Card title={t('notification.pref.title')} style={{ borderRadius: 8, marginBottom: 16 }}>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {booleanPrefKeys.map((key) => (
+            <Space key={key} style={{ width: '100%', justifyContent: 'space-between' }}>
+              <Space direction="vertical" size={0}>
+                <Text>{preferenceItems.find((i) => i.key === key)!.label}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {preferenceItems.find((i) => i.key === key)!.desc}
+                </Text>
+              </Space>
+              <Switch
+                checked={preferences[key] as boolean}
+                onChange={(checked) => {
+                  updatePreferences({ ...preferences, [key]: checked });
+                }}
+              />
+            </Space>
+          ))}
+          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Space direction="vertical" size={0}>
+              <Text>{t('notification.pref.deadlineReminderHours')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t('notification.pref.deadlineReminderHoursDesc')}
+              </Text>
+            </Space>
+            <InputNumber
+              min={1}
+              max={168}
+              value={preferences.deadlineReminderHours}
+              onChange={(v) => {
+                if (v != null) {
+                  updatePreferences({ ...preferences, deadlineReminderHours: v });
+                }
+              }}
+            />
+          </Space>
+        </Space>
+      </Card>
+
       <Card style={{ borderRadius: 8 }}>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           {/* 筛选栏 */}
@@ -76,8 +152,14 @@ export default function NotificationPage() {
               value={readFilter}
               onChange={(v) => setReadFilter(v as ReadFilter)}
               options={[
-                { label: t('notification.allWithCount', { count: notifications.length }), value: 'all' },
-                { label: t('notification.unreadWithCount', { count: unreadCount }), value: 'unread' },
+                {
+                  label: t('notification.allWithCount', { count: notifications.length }),
+                  value: 'all',
+                },
+                {
+                  label: t('notification.unreadWithCount', { count: unreadCount }),
+                  value: 'unread',
+                },
               ]}
             />
             <Segmented
@@ -85,9 +167,18 @@ export default function NotificationPage() {
               onChange={(v) => setTypeFilter(v as NotificationType | 'ALL')}
               options={[
                 { label: t('notification.allTypes'), value: 'ALL' },
-                { label: t('notification.type.INQUIRY_SENT'), value: NotificationType.INQUIRY_SENT },
-                { label: t('notification.type.QUOTATION_SUBMITTED'), value: NotificationType.QUOTATION_SUBMITTED },
-                { label: t('notification.type.DEADLINE_APPROACHING'), value: NotificationType.DEADLINE_APPROACHING },
+                {
+                  label: t('notification.type.INQUIRY_SENT'),
+                  value: NotificationType.INQUIRY_SENT,
+                },
+                {
+                  label: t('notification.type.QUOTATION_SUBMITTED'),
+                  value: NotificationType.QUOTATION_SUBMITTED,
+                },
+                {
+                  label: t('notification.type.DEADLINE_APPROACHING'),
+                  value: NotificationType.DEADLINE_APPROACHING,
+                },
                 { label: t('notification.type.APPROVAL'), value: NotificationType.APPROVAL },
                 { label: t('notification.type.SYSTEM'), value: NotificationType.SYSTEM },
               ]}
@@ -136,7 +227,9 @@ export default function NotificationPage() {
                   <div
                     role={n.inquiryId ? 'button' : undefined}
                     tabIndex={n.inquiryId ? 0 : undefined}
-                    aria-label={n.inquiryId ? t('notification.openDetail', { title: n.title }) : undefined}
+                    aria-label={
+                      n.inquiryId ? t('notification.openDetail', { title: n.title }) : undefined
+                    }
                     style={{
                       padding: '12px 16px',
                       cursor: n.inquiryId ? 'pointer' : 'default',
@@ -166,7 +259,11 @@ export default function NotificationPage() {
                       }
                       description={
                         <Space direction="vertical" size={4}>
-                          {n.content && <Text type="secondary" style={{ fontSize: 13 }}>{n.content}</Text>}
+                          {n.content && (
+                            <Text type="secondary" style={{ fontSize: 13 }}>
+                              {n.content}
+                            </Text>
+                          )}
                           <Text type="secondary" style={{ fontSize: 12 }}>
                             {formatDateTime(n.time)}
                             {n.inquiryId && t('notification.clickToViewDetail')}

@@ -5,6 +5,7 @@
  * - 通知去重由 useNotificationStore 的 10 分钟窗口保证
  */
 import dayjs from 'dayjs';
+import i18n from '@/i18n';
 import { InquiryStatus, NotificationType } from '@/types';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
@@ -37,8 +38,11 @@ export function scanDeadlines(): void {
     addNotification({
       inquiryId: inq.id,
       type: NotificationType.DEADLINE_APPROACHING,
-      title: `询价单 ${inq.code} 即将截止`,
-      content: `${inq.subject}（剩余 ${Math.ceil(diffHours)} 小时）`,
+      title: i18n.t('notification.deadlineTitle', { code: inq.code }),
+      content: i18n.t('notification.deadlineContent', {
+        subject: inq.subject,
+        hours: Math.ceil(diffHours),
+      }),
     });
   }
 }

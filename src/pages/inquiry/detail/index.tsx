@@ -2,10 +2,11 @@
  * 询价单详情与流程追溯（Task 14）
  * 分区展示基本信息、物料清单、供应商邀请名单、报价进度、报价对比摘要、附件、操作记录与流程时间轴
  */
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
+import { inquiryApi } from '@/api';
 import {
   Button,
   Card,
@@ -61,8 +62,16 @@ import {
   type InquiryLog,
   type Quotation,
   type Supplier,
+  type DeliveryRecord,
+  type DeliverySummary,
 } from '@/types';
-import { formatCurrency, formatDate, formatDateTime, formatPercent, getRemainingTime } from '@/utils/format';
+import {
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  formatPercent,
+  getRemainingTime,
+} from '@/utils/format';
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
 import { exportAOA } from '@/utils/excel';
 import { isCancelable, isEditable } from '@/utils/inquiryStatus';
@@ -149,12 +158,44 @@ export default function InquiryDetailPage() {
       .filter((s): s is Supplier => Boolean(s));
   }, [inquiry, suppliers]);
 
+  // P1-8 Task 12：交付状态（真实投递结果，避免谎报"已全部发送成功"）
+  const [deliveries, setDeliveries] = useState<DeliveryRecord[]>([]);
+  const [deliverySummary, setDeliverySummary] = useState<DeliverySummary | null>(null);
+
+  const loadDeliveries = useCallback(async () => {
+    try {
+      const data = await inquiryApi.getDeliveries(id);
+      setDeliveries(data.suppliers);
+      setDeliverySummary(data.summary);
+    } catch {
+      // 忽略：未发送或接口不可用时保持为空
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (inquiry?.status === InquiryStatus.INQUIRING) {
+      loadDeliveries();
+    }
+  }, [inquiry?.status, loadDeliveries]);
+
+  /** 重发单个供应商询价（P1-8 Task 12） */
+  const handleResendDelivery = useCallback(
+    async (supplierId: string) => {
+      try {
+        await inquiryApi.resendDelivery(id, supplierId);
+        notifySuccess(t('inquiry.detail.resendSuccess'));
+        loadDeliveries();
+      } catch {
+        notifyError(t('inquiry.detail.resendFailed'));
+      }
+    },
+    [id, t, loadDeliveries],
+  );
+
   // 操作记录按时间正序
   const sortedLogs = useMemo(() => {
     if (!inquiry) return [];
-    return [...inquiry.logs].sort(
-      (a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf(),
-    );
+    return [...inquiry.logs].sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf());
   }, [inquiry]);
 
   // 加载中 → Skeleton
@@ -185,8 +226,7 @@ export default function InquiryDetailPage() {
   const remaining = getRemainingTime(inquiry.deadline);
   const submittedCount = submittedQuotations.length;
   const invitedCount = inquiry.invitedSupplierIds.length;
-  const progressPercent =
-    invitedCount > 0 ? Math.round((submittedCount / invitedCount) * 100) : 0;
+  const progressPercent = invitedCount > 0 ? Math.round((submittedCount / invitedCount) * 100) : 0;
 
   // ===== 操作 =====
   const handleExportPDF = () => {
@@ -237,9 +277,36 @@ export default function InquiryDetailPage() {
       title: i18n.t('inquiry.detail.resendTitle'),
       content: i18n.t('inquiry.detail.resendContent', { code: inquiry.code }),
       okText: i18n.t('inquiry.detail.resendOk'),
-      onOk: () => {
-        sendInquiry(inquiry.id);
-        notifySuccess(i18n.t('inquiry.detail.sendSuccess'));
+      onOk: async () => {
+        const result = await sendInquiry(inquiry.id);
+        if (result.success) {
+          // 展示真实投递结果，避免无条件显示"已全部发送成功"
+          try {
+            const data = await inquiryApi.getDeliveries(inquiry.id);
+            setDeliveries(data.suppliers);
+            setDeliverySummary(data.summary);
+            const s = data.summary;
+            if (s.failed > 0) {
+              notifyWarning(
+                i18n.t('inquiry.detail.sendPartial', {
+                  sent: s.sent,
+                  pending: s.pending,
+                  failed: s.failed,
+                }),
+              );
+            } else if (s.pending > 0) {
+              notifyWarning(
+                i18n.t('inquiry.detail.sendPending', { sent: s.sent, pending: s.pending }),
+              );
+            } else {
+              notifySuccess(i18n.t('inquiry.detail.sendSuccess', { count: s.sent }));
+            }
+          } catch {
+            notifySuccess(
+              i18n.t('inquiry.detail.sendSuccess', { count: inquiry.invitedSupplierIds.length }),
+            );
+          }
+        }
       },
     });
   };
@@ -272,7 +339,9 @@ export default function InquiryDetailPage() {
   const handleConfirmApproval = () => {
     const isApprove = approvalModal.type === 'approve';
     confirmAction({
-      title: isApprove ? i18n.t('inquiry.detail.confirmApproveTitle') : i18n.t('inquiry.detail.confirmRejectTitle'),
+      title: isApprove
+        ? i18n.t('inquiry.detail.confirmApproveTitle')
+        : i18n.t('inquiry.detail.confirmRejectTitle'),
       content: isApprove
         ? i18n.t('inquiry.detail.approveContent')
         : i18n.t('inquiry.detail.rejectContent'),
@@ -348,15 +417,20 @@ export default function InquiryDetailPage() {
     { title: t('material.list.brand'), dataIndex: 'brand', key: 'brand', width: 100 },
     { title: t('material.list.spec'), dataIndex: 'spec', key: 'spec', width: 160, ellipsis: true },
     { title: t('material.list.unit'), dataIndex: 'unit', key: 'unit', width: 70, align: 'center' },
-    { title: t('common.quantity'), dataIndex: 'quantity', key: 'quantity', width: 90, align: 'right' },
+    {
+      title: t('common.quantity'),
+      dataIndex: 'quantity',
+      key: 'quantity',
+      width: 90,
+      align: 'right',
+    },
     {
       title: t('inquiry.detail.targetPrice'),
       dataIndex: 'targetPrice',
       key: 'targetPrice',
       width: 120,
       align: 'right',
-      render: (price?: number) =>
-        price != null ? formatCurrency(price, inquiry.currency) : '-',
+      render: (price?: number) => (price != null ? formatCurrency(price, inquiry.currency) : '-'),
     },
     {
       title: t('inquiry.detail.expectedDeliveryDate'),
@@ -407,16 +481,13 @@ export default function InquiryDetailPage() {
       key: 'cooperationStatus',
       width: 100,
       align: 'center',
-      render: (_, record) => (
-        <CooperationStatusTag status={record.supplier.cooperationStatus} />
-      ),
+      render: (_, record) => <CooperationStatusTag status={record.supplier.cooperationStatus} />,
     },
     {
       title: t('inquiry.detail.mainCategory'),
       key: 'mainCategories',
       width: 200,
-      render: (_, record) =>
-        record.supplier.mainCategories.map((c) => <Tag key={c}>{c}</Tag>),
+      render: (_, record) => record.supplier.mainCategories.map((c) => <Tag key={c}>{c}</Tag>),
     },
     {
       title: t('supplier.detail.responseRate'),
@@ -430,7 +501,8 @@ export default function InquiryDetailPage() {
       key: 'avgDeliveryDays',
       width: 100,
       align: 'center',
-      render: (_, record) => t('inquiry.detail.deliveryDaysUnit', { count: record.supplier.avgDeliveryDays }),
+      render: (_, record) =>
+        t('inquiry.detail.deliveryDaysUnit', { count: record.supplier.avgDeliveryDays }),
     },
     {
       title: t('inquiry.detail.quotationStatus'),
@@ -457,6 +529,56 @@ export default function InquiryDetailPage() {
               </Text>
             )}
           </Space>
+        );
+      },
+    },
+  ];
+
+  // ===== P1-8 Task 12：交付状态列 =====
+  const deliveryColumns: ColumnsType<DeliveryRecord> = [
+    {
+      title: t('inquiry.detail.deliverySupplier'),
+      key: 'supplierName',
+      width: 200,
+      render: (_, record) => <Text strong>{record.supplierName}</Text>,
+    },
+    {
+      title: t('inquiry.detail.deliveryStatusColumn'),
+      key: 'deliveryStatus',
+      width: 140,
+      render: (_, record) => (
+        <Tag color={deliveryStatusColor(record.deliveryStatus)}>
+          {t(`inquiry.detail.deliveryStatusValue.${record.deliveryStatus}`, {
+            defaultValue: record.deliveryStatus,
+          })}
+        </Tag>
+      ),
+    },
+    {
+      title: t('inquiry.detail.deliverySentAt'),
+      key: 'sentAt',
+      width: 160,
+      render: (_, record) => (record.sentAt ? formatDateTime(record.sentAt) : '-'),
+    },
+    {
+      title: t('inquiry.detail.deliveryError'),
+      key: 'deliveryError',
+      width: 200,
+      ellipsis: true,
+      render: (_, record) => record.deliveryError || '-',
+    },
+    {
+      title: t('common.actions'),
+      key: 'action',
+      width: 100,
+      render: (_, record) => {
+        if (record.deliveryStatus !== 'failed' && record.deliveryStatus !== 'pending') {
+          return null;
+        }
+        return (
+          <Button type="link" size="small" onClick={() => handleResendDelivery(record.supplierId)}>
+            {t('inquiry.detail.resendDelivery')}
+          </Button>
         );
       },
     },
@@ -520,7 +642,12 @@ export default function InquiryDetailPage() {
       width: 110,
       render: (type: LogType) => <Tag>{t(`enum.logType.${type}`)}</Tag>,
     },
-    { title: t('inquiry.detail.operationContent'), dataIndex: 'content', key: 'content', ellipsis: true },
+    {
+      title: t('inquiry.detail.operationContent'),
+      dataIndex: 'content',
+      key: 'content',
+      ellipsis: true,
+    },
     {
       title: t('inquiry.detail.operationResult'),
       dataIndex: 'result',
@@ -529,6 +656,28 @@ export default function InquiryDetailPage() {
       render: (result?: string) => result || '-',
     },
   ];
+
+  /** 交付状态颜色映射 */
+  function deliveryStatusColor(status: string): string {
+    switch (status) {
+      case 'pending':
+        return 'default';
+      case 'sent':
+        return 'processing';
+      case 'delivered':
+        return 'processing';
+      case 'opened':
+        return 'blue';
+      case 'submitted':
+        return 'success';
+      case 'failed':
+        return 'error';
+      case 'bounced':
+        return 'error';
+      default:
+        return 'default';
+    }
+  }
 
   return (
     <Spin spinning={exporting} tip={i18n.t('inquiry.detail.exporting')}>
@@ -546,11 +695,7 @@ export default function InquiryDetailPage() {
               </Button>
             )}
             {canSend && inquiry.status === InquiryStatus.PENDING_SEND && (
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                onClick={handleResend}
-              >
+              <Button type="primary" icon={<SendOutlined />} onClick={handleResend}>
                 {t('inquiry.detail.sendInquiry')}
               </Button>
             )}
@@ -563,10 +708,7 @@ export default function InquiryDetailPage() {
               </Button>
             )}
             {canApprove && inquiry.status === InquiryStatus.PENDING_CONFIRM && (
-              <Button
-                icon={<AuditOutlined />}
-                onClick={handleSubmitApproval}
-              >
+              <Button icon={<AuditOutlined />} onClick={handleSubmitApproval}>
                 {t('inquiry.detail.submitApproval')}
               </Button>
             )}
@@ -579,11 +721,7 @@ export default function InquiryDetailPage() {
                 >
                   {t('inquiry.detail.approve')}
                 </Button>
-                <Button
-                  danger
-                  icon={<CloseOutlined />}
-                  onClick={() => openApprovalModal('reject')}
-                >
+                <Button danger icon={<CloseOutlined />} onClick={() => openApprovalModal('reject')}>
                   {t('inquiry.detail.reject')}
                 </Button>
               </>
@@ -597,7 +735,11 @@ export default function InquiryDetailPage() {
             <Dropdown
               menu={{
                 items: [
-                  { key: 'excel', label: t('inquiry.detail.exportExcel'), icon: <ExportOutlined /> },
+                  {
+                    key: 'excel',
+                    label: t('inquiry.detail.exportExcel'),
+                    icon: <ExportOutlined />,
+                  },
                   { key: 'pdf', label: t('inquiry.detail.exportPDF'), icon: <FilePdfOutlined /> },
                 ],
                 onClick: ({ key }) => {
@@ -616,287 +758,359 @@ export default function InquiryDetailPage() {
 
       {/* PDF 导出区域（B5）：detailRef 标记可被 html2canvas 截取的内容范围 */}
       <div ref={detailRef}>
-      {/* 1. 基本信息 */}
-      <Card title={t('inquiry.detail.basicInfo')} style={cardStyle}>
-        <Descriptions column={3} bordered size="small">
-          <Descriptions.Item label={t('inquiry.detail.inquiryCodeLabel')}>{inquiry.code}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.subject')}>{inquiry.subject}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.organization')}>{inquiry.organization}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.owner')}>{inquiry.ownerName}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.currency')}>{t(`enum.currency.${inquiry.currency}`)}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.currentStatus')}>
-            <InquiryStatusTag status={inquiry.status} />
-          </Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.quotationDeadline')}>
-            <Space size={4}>
-              <Text>{formatDateTime(inquiry.deadline)}</Text>
-              {remaining.expired ? (
-                <Tag color="error">{t('inquiry.detail.expired')}</Tag>
-              ) : remaining.urgent ? (
-                <Tag color="warning">{remaining.text}</Tag>
-              ) : (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {remaining.text}
-                </Text>
-              )}
-            </Space>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.expectedDeliveryDate')}>
-            {formatDate(inquiry.expectedDeliveryDate)}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.createdBy')}>{inquiry.createdByName}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.deliveryAddressLabel')} span={2}>
-            {inquiry.deliveryAddress}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.createdAt')}>
-            {formatDateTime(inquiry.createdAt)}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.contact')}>{inquiry.contact}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.paymentTerms')}>{inquiry.paymentTerms}</Descriptions.Item>
-          <Descriptions.Item label={t('inquiry.detail.invoiceRequirement')}>
-            {inquiry.invoiceRequirement || '-'}
-          </Descriptions.Item>
-          {inquiry.description && (
-            <Descriptions.Item label={t('inquiry.detail.requirementDesc')} span={3}>
-              {inquiry.description}
+        {/* 1. 基本信息 */}
+        <Card title={t('inquiry.detail.basicInfo')} style={cardStyle}>
+          <Descriptions column={3} bordered size="small">
+            <Descriptions.Item label={t('inquiry.detail.inquiryCodeLabel')}>
+              {inquiry.code}
             </Descriptions.Item>
-          )}
-        </Descriptions>
-      </Card>
-
-      {/* 2. 物料清单 */}
-      <Card title={t('inquiry.detail.materialListTitle', { count: inquiry.items.length })} style={cardStyle}>
-        <Table<InquiryItem>
-          rowKey="id"
-          columns={itemColumns}
-          dataSource={inquiry.items}
-          pagination={false}
-          scroll={{ x: 1200 }}
-          size="small"
-        />
-      </Card>
-
-      {/* 3. 供应商邀请名单 */}
-      <Card title={t('inquiry.detail.supplierListTitle', { count: invitedCount })} style={cardStyle}>
-        {invitedCount === 0 ? (
-          <Empty description={t('inquiry.detail.noInvitedSupplier')} />
-        ) : (
-          <Table
-            rowKey={(record) => record.supplier.id}
-            columns={supplierColumns}
-            dataSource={supplierRows}
-            pagination={false}
-            scroll={{ x: 1000 }}
-            size="small"
-          />
-        )}
-      </Card>
-
-      {/* 4. 报价回收进度 */}
-      <Card title={t('inquiry.detail.quotationProgress')} style={cardStyle}>
-        <Space size={32} wrap align="center">
-          <div style={{ width: 240 }}>
-            <Progress
-              percent={progressPercent}
-              status={
-                remaining.expired && submittedCount < invitedCount ? 'exception' : 'active'
-              }
-              format={() => `${submittedCount} / ${invitedCount}`}
-            />
-          </div>
-          <Space size={24} wrap>
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('inquiry.detail.submitted')}
-              </Text>
-              <div>
-                <Text strong style={{ color: 'var(--color-success)', fontSize: 20 }}>
-                  {submittedCount}
-                </Text>
-                <Text type="secondary">{t('inquiry.detail.supplierUnit')}</Text>
-              </div>
-            </div>
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('inquiry.detail.notSubmitted')}
-              </Text>
-              <div>
-                <Text strong style={{ fontSize: 20 }}>
-                  {Math.max(invitedCount - submittedCount, 0)}
-                </Text>
-                <Text type="secondary">{t('inquiry.detail.supplierUnit')}</Text>
-              </div>
-            </div>
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('inquiry.detail.invitedTotal')}
-              </Text>
-              <div>
-                <Text strong style={{ fontSize: 20 }}>
-                  {invitedCount}
-                </Text>
-                <Text type="secondary">{t('inquiry.detail.supplierUnit')}</Text>
-              </div>
-            </div>
-          </Space>
-        </Space>
-      </Card>
-
-      {/* 5. 报价对比结果摘要 */}
-      <Card
-        title={t('inquiry.detail.quotationSummary')}
-        style={cardStyle}
-        extra={
-          submittedQuotations.length > 0 && (
-            <Button
-              type="link"
-              icon={<SwapOutlined />}
-              onClick={() => navigate(`/quotation/compare/${inquiry.id}`)}
-            >
-              {t('inquiry.detail.viewFullCompare')}
-            </Button>
-          )
-        }
-      >
-        {submittedQuotations.length === 0 ? (
-          <Empty description={t('inquiry.detail.noSubmittedQuotation')} />
-        ) : (
-          <Table<Quotation>
-            rowKey="id"
-            columns={summaryColumns}
-            dataSource={submittedQuotations}
-            pagination={false}
-            size="small"
-          />
-        )}
-      </Card>
-
-      {/* 6. 附件列表 */}
-      <Card title={t('inquiry.detail.attachmentListTitle', { count: inquiry.attachments.length })} style={cardStyle}>
-        {inquiry.attachments.length === 0 ? (
-          <Empty description={t('inquiry.detail.noAttachment')} />
-        ) : (
-          <List
-            itemLayout="horizontal"
-            dataSource={inquiry.attachments}
-            renderItem={(item) => (
-              <List.Item>
-                <List.Item.Meta
-                  avatar={<PaperClipOutlined style={{ fontSize: 20, color: 'var(--color-primary)' }} />}
-                  title={
-                    <a href={item.url} target="_blank" rel="noreferrer">
-                      {item.name}
-                    </a>
-                  }
-                  description={t('inquiry.detail.attachmentDesc', { size: formatFileSize(item.size), time: formatDateTime(item.uploadTime) })}
-                />
-              </List.Item>
+            <Descriptions.Item label={t('inquiry.detail.subject')}>
+              {inquiry.subject}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.organization')}>
+              {inquiry.organization}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.owner')}>
+              {inquiry.ownerName}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.currency')}>
+              {t(`enum.currency.${inquiry.currency}`)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.currentStatus')}>
+              <InquiryStatusTag status={inquiry.status} />
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.quotationDeadline')}>
+              <Space size={4}>
+                <Text>{formatDateTime(inquiry.deadline)}</Text>
+                {remaining.expired ? (
+                  <Tag color="error">{t('inquiry.detail.expired')}</Tag>
+                ) : remaining.urgent ? (
+                  <Tag color="warning">{remaining.text}</Tag>
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {remaining.text}
+                  </Text>
+                )}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.expectedDeliveryDate')}>
+              {formatDate(inquiry.expectedDeliveryDate)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.createdBy')}>
+              {inquiry.createdByName}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.deliveryAddressLabel')} span={2}>
+              {inquiry.deliveryAddress}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.createdAt')}>
+              {formatDateTime(inquiry.createdAt)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.contact')}>
+              {inquiry.contact}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.paymentTerms')}>
+              {inquiry.paymentTerms}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('inquiry.detail.invoiceRequirement')}>
+              {inquiry.invoiceRequirement || '-'}
+            </Descriptions.Item>
+            {inquiry.description && (
+              <Descriptions.Item label={t('inquiry.detail.requirementDesc')} span={3}>
+                {inquiry.description}
+              </Descriptions.Item>
             )}
-          />
-        )}
-      </Card>
+          </Descriptions>
+        </Card>
 
-      {/* 7. 操作记录 */}
-      <Card title={t('inquiry.detail.logListTitle', { count: sortedLogs.length })} style={cardStyle}>
-        {sortedLogs.length === 0 ? (
-          <Empty description={t('inquiry.detail.noLogRecord')} />
-        ) : (
-          <Table<InquiryLog>
+        {/* 2. 物料清单 */}
+        <Card
+          title={t('inquiry.detail.materialListTitle', { count: inquiry.items.length })}
+          style={cardStyle}
+        >
+          <Table<InquiryItem>
             rowKey="id"
-            columns={logColumns}
-            dataSource={sortedLogs}
+            columns={itemColumns}
+            dataSource={inquiry.items}
             pagination={false}
-            scroll={{ x: 900 }}
+            scroll={{ x: 1200 }}
             size="small"
-          />
-        )}
-      </Card>
-
-      {/* 8. 流程时间轴 */}
-      <Card title={t('inquiry.detail.timelineTitle')} style={cardStyle}>
-        {sortedLogs.length === 0 ? (
-          <Empty description={t('inquiry.detail.noTimelineRecord')} />
-        ) : (
-          <Timeline
-            mode="left"
-            items={sortedLogs.map((log) => ({
-              color: getTimelineColor(log.type),
-              label: (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {formatDateTime(log.time)}
-                </Text>
-              ),
-              children: (
-                <div>
-                  <Space size={6} wrap>
-                    <Tag color={getTimelineColor(log.type)}>{t(`enum.logType.${log.type}`)}</Tag>
-                    <Text strong>{log.operator}</Text>
-                    {log.operatorRole && (
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {t('inquiry.detail.operatorRoleWrap', { role: log.operatorRole })}
-                      </Text>
-                    )}
-                  </Space>
-                  <Paragraph style={{ margin: '4px 0 0' }}>{log.content}</Paragraph>
-                  {log.result && (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {t('inquiry.detail.resultPrefix', { result: log.result })}
-                    </Text>
-                  )}
-                </div>
-              ),
-            }))}
-          />
-        )}
-      </Card>
-
-      {/* 9. 审批流程（W5） */}
-      {inquiry.approvalNodes.length > 0 && (
-        <Card title={t('inquiry.detail.approvalProcess')} style={cardStyle}>
-          <Timeline
-            items={inquiry.approvalNodes.map((node) => ({
-              color:
-                node.status === ApprovalNodeStatus.APPROVED
-                  ? 'green'
-                  : node.status === ApprovalNodeStatus.REJECTED
-                    ? 'red'
-                    : 'blue',
-              children: (
-                <div>
-                  <Space size={8} wrap>
-                    <Text strong>{node.approverName}</Text>
-                    <Tag color={APPROVAL_NODE_STATUS_COLOR[node.status]}>
-                      {t(`enum.approvalNodeStatus.${node.status}`)}
-                    </Tag>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {node.approverRole}
-                    </Text>
-                  </Space>
-                  {node.time && (
-                    <div>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {formatDateTime(node.time)}
-                      </Text>
-                    </div>
-                  )}
-                  {node.comment && (
-                    <Paragraph style={{ margin: '4px 0 0' }}>{node.comment}</Paragraph>
-                  )}
-                </div>
-              ),
-            }))}
           />
         </Card>
-      )}
+
+        {/* 3. 供应商邀请名单 */}
+        <Card
+          title={t('inquiry.detail.supplierListTitle', { count: invitedCount })}
+          style={cardStyle}
+        >
+          {invitedCount === 0 ? (
+            <Empty description={t('inquiry.detail.noInvitedSupplier')} />
+          ) : (
+            <Table
+              rowKey={(record) => record.supplier.id}
+              columns={supplierColumns}
+              dataSource={supplierRows}
+              pagination={false}
+              scroll={{ x: 1000 }}
+              size="small"
+            />
+          )}
+        </Card>
+
+        {/* P1-8 Task 12：交付状态（真实投递结果，避免谎报"已全部发送成功"） */}
+        {deliverySummary && (
+          <Card title={t('inquiry.detail.deliveryStatus')} style={cardStyle}>
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Progress
+                percent={Math.round((deliverySummary.sent / deliverySummary.total) * 100)}
+                status={
+                  deliverySummary.failed > 0
+                    ? 'exception'
+                    : deliverySummary.pending > 0
+                      ? 'active'
+                      : 'success'
+                }
+                format={(percent) =>
+                  t('inquiry.detail.deliveryProgress', {
+                    percent,
+                    sent: deliverySummary.sent,
+                    total: deliverySummary.total,
+                    failed: deliverySummary.failed,
+                  })
+                }
+              />
+              <Table
+                columns={deliveryColumns}
+                dataSource={deliveries}
+                rowKey="supplierId"
+                pagination={false}
+                size="small"
+              />
+            </Space>
+          </Card>
+        )}
+
+        {/* 4. 报价回收进度 */}
+        <Card title={t('inquiry.detail.quotationProgress')} style={cardStyle}>
+          <Space size={32} wrap align="center">
+            <div style={{ width: 240 }}>
+              <Progress
+                percent={progressPercent}
+                status={remaining.expired && submittedCount < invitedCount ? 'exception' : 'active'}
+                format={() => `${submittedCount} / ${invitedCount}`}
+              />
+            </div>
+            <Space size={24} wrap>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('inquiry.detail.submitted')}
+                </Text>
+                <div>
+                  <Text strong style={{ color: 'var(--color-success)', fontSize: 20 }}>
+                    {submittedCount}
+                  </Text>
+                  <Text type="secondary">{t('inquiry.detail.supplierUnit')}</Text>
+                </div>
+              </div>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('inquiry.detail.notSubmitted')}
+                </Text>
+                <div>
+                  <Text strong style={{ fontSize: 20 }}>
+                    {Math.max(invitedCount - submittedCount, 0)}
+                  </Text>
+                  <Text type="secondary">{t('inquiry.detail.supplierUnit')}</Text>
+                </div>
+              </div>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('inquiry.detail.invitedTotal')}
+                </Text>
+                <div>
+                  <Text strong style={{ fontSize: 20 }}>
+                    {invitedCount}
+                  </Text>
+                  <Text type="secondary">{t('inquiry.detail.supplierUnit')}</Text>
+                </div>
+              </div>
+            </Space>
+          </Space>
+        </Card>
+
+        {/* 5. 报价对比结果摘要 */}
+        <Card
+          title={t('inquiry.detail.quotationSummary')}
+          style={cardStyle}
+          extra={
+            submittedQuotations.length > 0 && (
+              <Button
+                type="link"
+                icon={<SwapOutlined />}
+                onClick={() => navigate(`/quotation/compare/${inquiry.id}`)}
+              >
+                {t('inquiry.detail.viewFullCompare')}
+              </Button>
+            )
+          }
+        >
+          {submittedQuotations.length === 0 ? (
+            <Empty description={t('inquiry.detail.noSubmittedQuotation')} />
+          ) : (
+            <Table<Quotation>
+              rowKey="id"
+              columns={summaryColumns}
+              dataSource={submittedQuotations}
+              pagination={false}
+              size="small"
+            />
+          )}
+        </Card>
+
+        {/* 6. 附件列表 */}
+        <Card
+          title={t('inquiry.detail.attachmentListTitle', { count: inquiry.attachments.length })}
+          style={cardStyle}
+        >
+          {inquiry.attachments.length === 0 ? (
+            <Empty description={t('inquiry.detail.noAttachment')} />
+          ) : (
+            <List
+              itemLayout="horizontal"
+              dataSource={inquiry.attachments}
+              renderItem={(item) => (
+                <List.Item>
+                  <List.Item.Meta
+                    avatar={
+                      <PaperClipOutlined style={{ fontSize: 20, color: 'var(--color-primary)' }} />
+                    }
+                    title={
+                      <a href={item.url} target="_blank" rel="noreferrer">
+                        {item.name}
+                      </a>
+                    }
+                    description={t('inquiry.detail.attachmentDesc', {
+                      size: formatFileSize(item.size),
+                      time: formatDateTime(item.uploadTime),
+                    })}
+                  />
+                </List.Item>
+              )}
+            />
+          )}
+        </Card>
+
+        {/* 7. 操作记录 */}
+        <Card
+          title={t('inquiry.detail.logListTitle', { count: sortedLogs.length })}
+          style={cardStyle}
+        >
+          {sortedLogs.length === 0 ? (
+            <Empty description={t('inquiry.detail.noLogRecord')} />
+          ) : (
+            <Table<InquiryLog>
+              rowKey="id"
+              columns={logColumns}
+              dataSource={sortedLogs}
+              pagination={false}
+              scroll={{ x: 900 }}
+              size="small"
+            />
+          )}
+        </Card>
+
+        {/* 8. 流程时间轴 */}
+        <Card title={t('inquiry.detail.timelineTitle')} style={cardStyle}>
+          {sortedLogs.length === 0 ? (
+            <Empty description={t('inquiry.detail.noTimelineRecord')} />
+          ) : (
+            <Timeline
+              mode="left"
+              items={sortedLogs.map((log) => ({
+                color: getTimelineColor(log.type),
+                label: (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {formatDateTime(log.time)}
+                  </Text>
+                ),
+                children: (
+                  <div>
+                    <Space size={6} wrap>
+                      <Tag color={getTimelineColor(log.type)}>{t(`enum.logType.${log.type}`)}</Tag>
+                      <Text strong>{log.operator}</Text>
+                      {log.operatorRole && (
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {t('inquiry.detail.operatorRoleWrap', { role: log.operatorRole })}
+                        </Text>
+                      )}
+                    </Space>
+                    <Paragraph style={{ margin: '4px 0 0' }}>{log.content}</Paragraph>
+                    {log.result && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {t('inquiry.detail.resultPrefix', { result: log.result })}
+                      </Text>
+                    )}
+                  </div>
+                ),
+              }))}
+            />
+          )}
+        </Card>
+
+        {/* 9. 审批流程（W5） */}
+        {inquiry.approvalNodes.length > 0 && (
+          <Card title={t('inquiry.detail.approvalProcess')} style={cardStyle}>
+            <Timeline
+              items={inquiry.approvalNodes.map((node) => ({
+                color:
+                  node.status === ApprovalNodeStatus.APPROVED
+                    ? 'green'
+                    : node.status === ApprovalNodeStatus.REJECTED
+                      ? 'red'
+                      : 'blue',
+                children: (
+                  <div>
+                    <Space size={8} wrap>
+                      <Text strong>{node.approverName}</Text>
+                      <Tag color={APPROVAL_NODE_STATUS_COLOR[node.status]}>
+                        {t(`enum.approvalNodeStatus.${node.status}`)}
+                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {node.approverRole}
+                      </Text>
+                    </Space>
+                    {node.time && (
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {formatDateTime(node.time)}
+                        </Text>
+                      </div>
+                    )}
+                    {node.comment && (
+                      <Paragraph style={{ margin: '4px 0 0' }}>{node.comment}</Paragraph>
+                    )}
+                  </div>
+                ),
+              }))}
+            />
+          </Card>
+        )}
       </div>
 
       {/* 审批意见 Modal */}
       <Modal
-        title={approvalModal.type === 'approve' ? t('inquiry.detail.approve') : t('inquiry.detail.reject')}
+        title={
+          approvalModal.type === 'approve'
+            ? t('inquiry.detail.approve')
+            : t('inquiry.detail.reject')
+        }
         open={approvalModal.open}
         onCancel={() => setApprovalModal({ ...approvalModal, open: false })}
         onOk={handleConfirmApproval}
-        okText={approvalModal.type === 'approve' ? t('inquiry.detail.approveOk') : t('inquiry.detail.rejectOk')}
+        okText={
+          approvalModal.type === 'approve'
+            ? t('inquiry.detail.approveOk')
+            : t('inquiry.detail.rejectOk')
+        }
         cancelText={t('common.cancel')}
         okButtonProps={{ danger: approvalModal.type === 'reject' }}
         destroyOnClose
@@ -909,9 +1123,7 @@ export default function InquiryDetailPage() {
               : t('inquiry.detail.rejectReasonRequired')
           }
           value={approvalModal.comment}
-          onChange={(e) =>
-            setApprovalModal({ ...approvalModal, comment: e.target.value })
-          }
+          onChange={(e) => setApprovalModal({ ...approvalModal, comment: e.target.value })}
           maxLength={200}
           showCount
         />

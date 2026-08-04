@@ -48,7 +48,7 @@ import { formatDate, formatPercent } from '@/utils/format';
 import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import { exportAOA } from '@/utils/excel';
 import { useIsMobile } from '@/utils/useIsMobile';
-import { MATERIAL_CATEGORY_OPTIONS } from '@/constants/materialCategories';
+import { getMaterialCategoryOptions } from '@/constants/materialCategories';
 import TableSettings from '@/components/table/TableSettings';
 import {
   DENSITY_TO_SIZE,
@@ -105,10 +105,7 @@ export default function SupplierPage() {
     return suppliers.filter((s) => {
       if (applied.keyword) {
         const kw = applied.keyword.toLowerCase();
-        if (
-          !s.name.toLowerCase().includes(kw) &&
-          !s.code.toLowerCase().includes(kw)
-        ) {
+        if (!s.name.toLowerCase().includes(kw) && !s.code.toLowerCase().includes(kw)) {
           return false;
         }
       }
@@ -251,7 +248,9 @@ export default function SupplierPage() {
     const tags: React.ReactNode[] = [];
     if (applied.keyword) {
       tags.push(
-        <Tag key="keyword">{t('supplier.list.nameNumberLabel')}: {applied.keyword}</Tag>,
+        <Tag key="keyword">
+          {t('supplier.list.nameNumberLabel')}: {applied.keyword}
+        </Tag>,
       );
     }
     if (applied.category) {
@@ -271,7 +270,8 @@ export default function SupplierPage() {
     if (applied.status) {
       tags.push(
         <Tag key="status" color="processing">
-          {t('supplier.list.cooperationStatus')}: {i18n.t(`enum.cooperationStatus.${applied.status}`)}
+          {t('supplier.list.cooperationStatus')}:{' '}
+          {i18n.t(`enum.cooperationStatus.${applied.status}`)}
         </Tag>,
       );
     }
@@ -313,9 +313,7 @@ export default function SupplierPage() {
   /** 空状态引导：无数据或筛选无结果时提供「清空筛选」入口 */
   const renderEmpty = () => (
     <Empty
-      description={
-        suppliers.length === 0 ? t('supplier.list.empty') : t('supplier.list.noMatch')
-      }
+      description={suppliers.length === 0 ? t('supplier.list.empty') : t('supplier.list.noMatch')}
     >
       <Button onClick={clearFilters}>{t('table.clearFilters')}</Button>
     </Empty>
@@ -324,18 +322,55 @@ export default function SupplierPage() {
   // ===== 表格列偏好（Task 7）：可见性 / 顺序 / 固定 / 密度，本地持久化 =====
   const defaultColumnPrefs: TableColumnPref[] = useMemo(
     () => [
-      { key: 'code', title: t('supplier.list.supplierNumber'), visible: true, fixed: 'left', order: 0 },
+      {
+        key: 'code',
+        title: t('supplier.list.supplierNumber'),
+        visible: true,
+        fixed: 'left',
+        order: 0,
+      },
       { key: 'name', title: t('supplier.list.name'), visible: true, order: 1 },
       { key: 'region', title: t('supplier.list.belongRegion'), visible: true, order: 2 },
       { key: 'contact', title: t('supplier.list.contactPhone'), visible: true, order: 3 },
       { key: 'mainCategories', title: t('supplier.list.mainCategory'), visible: true, order: 4 },
       { key: 'level', title: t('supplier.list.level'), visible: true, order: 5 },
-      { key: 'cooperationStatus', title: t('supplier.list.cooperationStatus'), visible: true, order: 6 },
-      { key: 'historyResponseRate', title: t('supplier.list.historyResponseRate'), visible: true, order: 7 },
-      { key: 'historyFulfillmentRate', title: t('supplier.list.historyFulfillmentRate'), visible: true, order: 8 },
-      { key: 'avgDeliveryDays', title: t('supplier.list.avgDeliveryDays'), visible: true, order: 9 },
-      { key: 'lastCooperateTime', title: t('supplier.list.lastCooperateTime'), visible: true, order: 10 },
-      { key: 'action', title: t('supplier.list.actions'), visible: true, fixed: 'right', order: 11 },
+      {
+        key: 'cooperationStatus',
+        title: t('supplier.list.cooperationStatus'),
+        visible: true,
+        order: 6,
+      },
+      {
+        key: 'historyResponseRate',
+        title: t('supplier.list.historyResponseRate'),
+        visible: true,
+        order: 7,
+      },
+      {
+        key: 'historyFulfillmentRate',
+        title: t('supplier.list.historyFulfillmentRate'),
+        visible: true,
+        order: 8,
+      },
+      {
+        key: 'avgDeliveryDays',
+        title: t('supplier.list.avgDeliveryDays'),
+        visible: true,
+        order: 9,
+      },
+      {
+        key: 'lastCooperateTime',
+        title: t('supplier.list.lastCooperateTime'),
+        visible: true,
+        order: 10,
+      },
+      {
+        key: 'action',
+        title: t('supplier.list.actions'),
+        visible: true,
+        fixed: 'right',
+        order: 11,
+      },
     ],
     [t],
   );
@@ -417,9 +452,7 @@ export default function SupplierPage() {
       key: 'cooperationStatus',
       width: 100,
       align: 'center',
-      render: (status: Supplier['cooperationStatus']) => (
-        <CooperationStatusTag status={status} />
-      ),
+      render: (status: Supplier['cooperationStatus']) => <CooperationStatusTag status={status} />,
     },
     {
       title: t('supplier.list.historyResponseRate'),
@@ -525,13 +558,15 @@ export default function SupplierPage() {
           placeholder={t('common.selectPlaceholder')}
           value={filterCategory}
           onChange={(val) => setFilterCategory(val)}
-          options={MATERIAL_CATEGORY_OPTIONS}
+          options={getMaterialCategoryOptions()}
           style={{ width: '100%' }}
           allowClear
         />
       </Col>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('supplier.list.level')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('supplier.list.level')}
+        </div>
         <Select
           placeholder={t('common.selectPlaceholder')}
           value={filterLevel}
@@ -554,13 +589,7 @@ export default function SupplierPage() {
           allowClear
         />
       </Col>
-      <Col
-        xs={24}
-        sm={12}
-        md={8}
-        lg={6}
-        style={{ display: 'flex', alignItems: 'flex-end' }}
-      >
+      <Col xs={24} sm={12} md={8} lg={6} style={{ display: 'flex', alignItems: 'flex-end' }}>
         <Space>
           <Button type="primary" icon={<SearchOutlined />} onClick={handleQuery}>
             {t('common.query')}
@@ -657,11 +686,13 @@ export default function SupplierPage() {
             {canDisable && (
               <Button
                 danger
-                disabled={!selectedRowKeys.some(
-                  (key) =>
-                    suppliers.find((s) => s.id === String(key))?.cooperationStatus !==
-                    CooperationStatus.DISABLED,
-                )}
+                disabled={
+                  !selectedRowKeys.some(
+                    (key) =>
+                      suppliers.find((s) => s.id === String(key))?.cooperationStatus !==
+                      CooperationStatus.DISABLED,
+                  )
+                }
                 onClick={handleBatchDisable}
               >
                 {t('supplier.list.batchDisable')}
@@ -669,11 +700,13 @@ export default function SupplierPage() {
             )}
             {canDisable && (
               <Button
-                disabled={!selectedRowKeys.some(
-                  (key) =>
-                    suppliers.find((s) => s.id === String(key))?.cooperationStatus ===
-                    CooperationStatus.DISABLED,
-                )}
+                disabled={
+                  !selectedRowKeys.some(
+                    (key) =>
+                      suppliers.find((s) => s.id === String(key))?.cooperationStatus ===
+                      CooperationStatus.DISABLED,
+                  )
+                }
                 onClick={handleBatchEnable}
               >
                 {t('supplier.list.batchEnable')}
@@ -701,24 +734,57 @@ export default function SupplierPage() {
             renderItem={(record) => {
               const isDisabled = record.cooperationStatus === CooperationStatus.DISABLED;
               return (
-                <List.Item style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <List.Item
+                  style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                    }}
+                  >
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                      <div
+                        style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}
+                      >
                         <Text strong>{record.code}</Text>
                         <SupplierLevelTag level={record.level} />
                         <CooperationStatusTag status={record.cooperationStatus} />
                       </div>
-                      <Text ellipsis style={{ display: 'block', color: 'var(--color-text-secondary)' }}>
+                      <Text
+                        ellipsis
+                        style={{ display: 'block', color: 'var(--color-text-secondary)' }}
+                      >
                         {record.name}
                       </Text>
                     </div>
                   </div>
-                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-tertiary)', display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
-                    <span>{t('supplier.list.belongRegion')}: {record.region}</span>
-                    <span>{t('supplier.list.contactPhone')}: {record.contact} {record.phone}</span>
-                    <span>{t('supplier.list.historyResponseRate')}: {formatPercent(record.historyResponseRate)}</span>
-                    <span>{t('supplier.list.avgDeliveryDays')}: {record.avgDeliveryDays}{t('common.days')}</span>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: 'var(--color-text-tertiary)',
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '4px 12px',
+                    }}
+                  >
+                    <span>
+                      {t('supplier.list.belongRegion')}: {record.region}
+                    </span>
+                    <span>
+                      {t('supplier.list.contactPhone')}: {record.contact} {record.phone}
+                    </span>
+                    <span>
+                      {t('supplier.list.historyResponseRate')}:{' '}
+                      {formatPercent(record.historyResponseRate)}
+                    </span>
+                    <span>
+                      {t('supplier.list.avgDeliveryDays')}: {record.avgDeliveryDays}
+                      {t('common.days')}
+                    </span>
                   </div>
                   {record.mainCategories?.length > 0 && (
                     <div style={{ marginTop: 6 }}>
@@ -730,7 +796,12 @@ export default function SupplierPage() {
                     </div>
                   )}
                   <Space size={0} wrap style={{ marginTop: 8, alignItems: 'center' }}>
-                    <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/supplier/${record.id}`)}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => navigate(`/supplier/${record.id}`)}
+                    >
                       {t('supplier.list.viewDetail')}
                     </Button>
                     {canDisable && (
@@ -739,7 +810,9 @@ export default function SupplierPage() {
                           items: [
                             {
                               key: 'toggle',
-                              label: isDisabled ? t('supplier.list.enable') : t('supplier.list.disable'),
+                              label: isDisabled
+                                ? t('supplier.list.enable')
+                                : t('supplier.list.disable'),
                               icon: isDisabled ? <CheckCircleOutlined /> : <StopOutlined />,
                               danger: !isDisabled,
                             },
@@ -760,26 +833,26 @@ export default function SupplierPage() {
             }}
           />
         ) : (
-        <Table<Supplier>
-          rowKey="id"
-          rowSelection={{
-            selectedRowKeys,
-            onChange: setSelectedRowKeys,
-          }}
-          columns={columns}
-          dataSource={filteredSuppliers}
-          loading={loading}
-          size={tableSize}
-          scroll={{ x: 1600 }}
-          pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
-            showTotal: (total) => t('supplier.list.total', { count: total }),
-          }}
-          locale={{
-            emptyText: renderEmpty(),
-          }}
-        />
+          <Table<Supplier>
+            rowKey="id"
+            rowSelection={{
+              selectedRowKeys,
+              onChange: setSelectedRowKeys,
+            }}
+            columns={columns}
+            dataSource={filteredSuppliers}
+            loading={loading}
+            size={tableSize}
+            scroll={{ x: 1600 }}
+            pagination={{
+              pageSize: 10,
+              showSizeChanger: true,
+              showTotal: (total) => t('supplier.list.total', { count: total }),
+            }}
+            locale={{
+              emptyText: renderEmpty(),
+            }}
+          />
         )}
       </Card>
     </div>

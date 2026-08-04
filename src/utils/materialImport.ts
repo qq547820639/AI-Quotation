@@ -8,6 +8,7 @@
  */
 import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
+import i18n from '@/i18n';
 import type { InquiryItem, Material } from '@/types';
 import { normalizeCategory } from '@/pages/inquiry/create/shared';
 
@@ -26,7 +27,7 @@ async function readRows(file: File): Promise<Record<string, unknown>[]> {
   const wb = XLSX.read(data, { type: 'array', raw: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
-  if (!rows.length) throw new Error('未解析到任何数据行');
+  if (!rows.length) throw new Error(i18n.t('material.import.noRows'));
   return rows;
 }
 
@@ -45,7 +46,7 @@ export async function parseMaterialFile(file: File): Promise<Partial<Material>[]
       stockQty: Number(pick(row, ['库存', 'stockQty'])) || undefined,
     }))
     .filter((m) => m.name);
-  if (!items.length) throw new Error('未解析到有效物料行（需包含"物料名称"列）');
+  if (!items.length) throw new Error(i18n.t('material.import.noValidRows'));
   return items;
 }
 
@@ -69,10 +70,7 @@ export function buildMaterials(parsed: Partial<Material>[]): Material[] {
  * 解析 Excel/CSV → InquiryItem[]（供 MaterialStep 复用，1:1 还原原内联逻辑）
  * 与 MaterialStep 原 handleImport 行为完全一致。
  */
-export async function parseInquiryItems(
-  file: File,
-  inquiryId: string,
-): Promise<InquiryItem[]> {
+export async function parseInquiryItems(file: File, inquiryId: string): Promise<InquiryItem[]> {
   const rows = await readRows(file);
   const now = Date.now();
   const items = rows
@@ -98,6 +96,6 @@ export async function parseInquiryItems(
       };
     })
     .filter((it) => it.name);
-  if (!items.length) throw new Error('未解析到有效物料行（需包含"物料名称"列）');
+  if (!items.length) throw new Error(i18n.t('material.import.noValidRows'));
   return items;
 }

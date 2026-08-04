@@ -21,6 +21,9 @@ import { inquiryApi } from '@/api';
 import { useNotificationStore } from './useNotificationStore';
 import { useAuthStore } from './useAuthStore';
 import { useSettingsStore } from './useSettingsStore';
+import { useConnectivityStore } from './useConnectivityStore';
+import { MOCK_FALLBACK_ENABLED } from '@/config';
+import { queryClient, QUERY_KEYS } from '@/lib/queryClient';
 import { isCancelable } from '@/utils/inquiryStatus';
 import i18n from '@/i18n';
 import {
@@ -42,10 +45,10 @@ const pendingOps: Record<string, boolean> = {};
 function applyServerInquiry(server: Inquiry) {
   if (!server || !server.id) return;
   useInquiryStore.setState((state) => {
-    const inquiries = state.inquiries.map((i) =>
-      i.id === server.id ? { ...i, ...server } : i,
-    );
+    const inquiries = state.inquiries.map((i) => (i.id === server.id ? { ...i, ...server } : i));
     saveJSON(STORAGE_KEY, inquiries);
+    // P1-10 Task 15：同步 React Query 服务端缓存为服务端返回对象
+    queryClient.setQueryData(QUERY_KEYS.inquiries, inquiries);
     return { inquiries };
   });
 }
@@ -125,11 +128,7 @@ interface InquiryState {
   batchCancelInquiries: (ids: string[]) => Promise<BatchResult>;
   /** 批量发送询价（向全部受邀供应商发送）：更新状态为询价中并记录日志 */
   sendInquiry: (id: string) => Promise<WriteResult>;
-  selectSupplier: (
-    inquiryId: string,
-    itemId: string,
-    supplierId: string,
-  ) => Promise<WriteResult>;
+  selectSupplier: (inquiryId: string, itemId: string, supplierId: string) => Promise<WriteResult>;
   confirmInquiry: (inquiryId: string) => Promise<WriteResult>;
   /** W5：提交审批（选定供应商后，总金额超阈值时触发） */
   submitForApproval: (inquiryId: string) => Promise<WriteResult>;
@@ -137,38 +136,43 @@ interface InquiryState {
   approveInquiry: (inquiryId: string, comment: string) => Promise<WriteResult>;
   /** W5：审批驳回 */
   rejectInquiry: (inquiryId: string, comment: string) => Promise<WriteResult>;
-  addLog: (
-    inquiryId: string,
-    type: LogType,
-    content: string,
-    result?: string,
-  ) => void;
+  addLog: (inquiryId: string, type: LogType, content: string, result?: string) => void;
 }
 
 export const useInquiryStore = create<InquiryState>((set, get) => ({
-  inquiries: mergeInquiries(),
+  // P1-10 Task 15：生产模式不预置 mock 数据，仅演示模式允许（真实数据与 mock 隔离）
+  inquiries: MOCK_FALLBACK_ENABLED ? mergeInquiries() : [],
   loaded: true,
   loading: false,
 
   loadInquiries: () => set({ inquiries: mergeInquiries(), loaded: true }),
 
-  // W7.4：从 API 加载，失败时降级到 localStorage
+  // W7.4 + P1-10 Task 15：从 API 加载；生产模式失败不静默回退 mock，标记离线/缓存过期
   loadFromApi: async () => {
     set({ loading: true });
     try {
       const data = await inquiryApi.list();
       set({ inquiries: data, loaded: true, loading: false });
       saveJSON(STORAGE_KEY, data);
+      queryClient.setQueryData(QUERY_KEYS.inquiries, data);
+      useConnectivityStore.getState().markSynced();
     } catch {
-      // API 不可用时降级到 localStorage/mock
-      set({ inquiries: mergeInquiries(), loaded: true, loading: false });
+      // 仅演示模式允许降级到 mock/localStorage；生产模式禁止无提示回退
+      if (MOCK_FALLBACK_ENABLED) {
+        set({ inquiries: mergeInquiries(), loaded: true, loading: false });
+      } else {
+        set({ loading: false });
+        useConnectivityStore.getState().markOffline();
+      }
     }
   },
 
   getInquiryById: (id) => get().inquiries.find((i) => i.id === id),
 
   getVisibleInquiries: (organization) =>
-    get().inquiries.filter((i) => (organization === '__ALL__' ? true : i.organization === organization)),
+    get().inquiries.filter((i) =>
+      organization === '__ALL__' ? true : i.organization === organization,
+    ),
 
   addInquiry: async (inquiry) => {
     if (pendingOps[`add:${inquiry.id}`]) return pending();
@@ -204,9 +208,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
     try {
       set((state) => {
         const inquiries = state.inquiries.map((i) =>
-          i.id === id
-            ? { ...i, ...patch, updatedAt: dayjs().format('YYYY-MM-DD HH:mm:ss') }
-            : i,
+          i.id === id ? { ...i, ...patch, updatedAt: dayjs().format('YYYY-MM-DD HH:mm:ss') } : i,
         );
         saveJSON(STORAGE_KEY, inquiries);
         return { inquiries };
@@ -305,10 +307,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
             ...i,
             status: InquiryStatus.CANCELLED,
             updatedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            logs: [
-              ...i.logs,
-              createLog(id, LogType.CANCEL, '取消询价单', '已取消'),
-            ],
+            logs: [...i.logs, createLog(id, LogType.CANCEL, '取消询价单', '已取消')],
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
@@ -420,7 +419,11 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
             updatedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
             logs: [
               ...i.logs,
-              createLog(inquiryId, LogType.SELECT_SUPPLIER, `为明细 ${itemId} 选择供应商 ${supplierId}`),
+              createLog(
+                inquiryId,
+                LogType.SELECT_SUPPLIER,
+                `为明细 ${itemId} 选择供应商 ${supplierId}`,
+              ),
             ],
           };
         });
@@ -568,7 +571,12 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
             updatedAt: nowStr,
             logs: [
               ...i.logs,
-              createLog(inquiryId, LogType.APPROVE, `审批通过${comment ? `：${comment}` : ''}`, '已通过'),
+              createLog(
+                inquiryId,
+                LogType.APPROVE,
+                `审批通过${comment ? `：${comment}` : ''}`,
+                '已通过',
+              ),
             ],
           };
         });
@@ -616,7 +624,12 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
             updatedAt: nowStr,
             logs: [
               ...i.logs,
-              createLog(inquiryId, LogType.REJECT, `审批驳回${comment ? `：${comment}` : ''}`, '已驳回'),
+              createLog(
+                inquiryId,
+                LogType.REJECT,
+                `审批驳回${comment ? `：${comment}` : ''}`,
+                '已驳回',
+              ),
             ],
           };
         });

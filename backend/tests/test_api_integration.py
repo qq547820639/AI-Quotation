@@ -34,11 +34,17 @@ def test_inquiries_list_returns_seed_data(client, buyer_headers):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
-    assert len(data) >= 8
-    inq1 = next(i for i in data if i["id"] == "inq-1")
-    assert inq1["code"] == "INQ20260801001"
-    assert inq1["status"] == "DRAFT"
-    assert inq1["ownerId"] == "u-3"
+    ids = {i["id"] for i in data}
+    # u-1（李明辉，总部采购中心）仅可见同组织/本人创建的询价（资源级授权过滤）
+    assert len(data) == 5
+    assert "inq-2" in ids and "inq-7" in ids
+    # 跨组织询价（华东分部 inq-1 / 华南分部 inq-6）不可见
+    assert "inq-1" not in ids
+    assert "inq-6" not in ids
+    inq2 = next(i for i in data if i["id"] == "inq-2")
+    assert inq2["code"] == "INQ20260801002"
+    assert inq2["status"] == "PENDING_SEND"
+    assert inq2["ownerId"] == "u-1"
 
 
 def test_create_inquiry_returns_created(client, buyer_headers):

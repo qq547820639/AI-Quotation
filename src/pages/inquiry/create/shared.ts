@@ -2,6 +2,7 @@
  * 创建询价单：共享常量、类型与辅助函数
  */
 import dayjs, { type Dayjs } from 'dayjs';
+import i18n from '@/i18n';
 import {
   CooperationStatus,
   Currency,
@@ -34,18 +35,36 @@ export const MATERIAL_CATEGORY_OPTIONS: CategoryOption[] = [
   { label: '化工', value: '化工', aliases: ['化工'] },
 ];
 
-export const PAYMENT_TERM_OPTIONS = [
-  '款到发货',
-  '月结30天',
-  '月结60天',
-  '预付30%货到付清',
-].map((v) => ({ label: v, value: v }));
+/** 品类值 → i18n 键后缀映射 */
+const CATEGORY_KEY_MAP: Record<string, string> = {
+  工业电子: 'industrialElectronics',
+  五金件: 'hardware',
+  自动化: 'automation',
+  办公设备: 'officeEquipment',
+  包材: 'packaging',
+  劳保: 'protectiveEquipment',
+  传动件: 'transmission',
+  化工: 'chemical',
+};
 
-export const INVOICE_OPTIONS = [
-  '增值税专用发票13%',
-  '增值税普通发票',
-  '增值税专用发票6%',
-].map((v) => ({ label: v, value: v }));
+/**
+ * 返回国际化的品类选项（value 保持数据值不变，label 随语言切换）
+ * 供创建询价单物料步骤的 Select 展示。
+ */
+export function getCategoryOptions(): { label: string; value: string }[] {
+  return MATERIAL_CATEGORY_OPTIONS.map((o) => ({
+    value: o.value,
+    label: i18n.t(`materialCategories.${CATEGORY_KEY_MAP[o.value] ?? o.value}`),
+  }));
+}
+
+export const PAYMENT_TERM_OPTIONS = ['款到发货', '月结30天', '月结60天', '预付30%货到付清'].map(
+  (v) => ({ label: v, value: v }),
+);
+
+export const INVOICE_OPTIONS = ['增值税专用发票13%', '增值税普通发票', '增值税专用发票6%'].map(
+  (v) => ({ label: v, value: v }),
+);
 
 /* ==================== 类型 ==================== */
 
@@ -66,7 +85,10 @@ export interface BasicInfoForm {
 }
 
 /** 可序列化的基本信息（日期为字符串，用于 localStorage） */
-export interface SerializedBasicInfo extends Omit<BasicInfoForm, 'deadline' | 'expectedDeliveryDate'> {
+export interface SerializedBasicInfo extends Omit<
+  BasicInfoForm,
+  'deadline' | 'expectedDeliveryDate'
+> {
   deadline: string | null;
   expectedDeliveryDate: string | null;
 }
@@ -86,17 +108,12 @@ export interface DraftSnapshot {
 /** 把物料库的原始品类归一化为本页面选项中的品类 */
 export function normalizeCategory(raw: string): string {
   if (!raw) return '';
-  const found = MATERIAL_CATEGORY_OPTIONS.find(
-    (o) => o.value === raw || o.aliases.includes(raw),
-  );
+  const found = MATERIAL_CATEGORY_OPTIONS.find((o) => o.value === raw || o.aliases.includes(raw));
   return found?.value ?? raw;
 }
 
 /** 品类命中：物料品类（任一别名）出现在供应商主营品类中 */
-export function categoryMatch(
-  materialCategory: string,
-  supplierMainCategories: string[],
-): boolean {
+export function categoryMatch(materialCategory: string, supplierMainCategories: string[]): boolean {
   if (!materialCategory) return false;
   const opt = MATERIAL_CATEGORY_OPTIONS.find((o) => o.value === materialCategory);
   const aliases = opt?.aliases ?? [materialCategory];
@@ -177,9 +194,7 @@ export function computeSupplierMatches(
         disabledReason = '供应商不合格（黑名单）';
       }
 
-      const matchedCats = uniqueCats.filter((c) =>
-        categoryMatch(c, supplier.mainCategories),
-      );
+      const matchedCats = uniqueCats.filter((c) => categoryMatch(c, supplier.mainCategories));
       const categoryHit = matchedCats.length > 0;
 
       let score = 0;
@@ -242,9 +257,7 @@ export function inquiryToBasicInfo(inquiry: Inquiry): BasicInfoForm {
     ownerName: inquiry.ownerName,
     currency: inquiry.currency,
     deadline: dayjs(inquiry.deadline),
-    expectedDeliveryDate: inquiry.expectedDeliveryDate
-      ? dayjs(inquiry.expectedDeliveryDate)
-      : null,
+    expectedDeliveryDate: inquiry.expectedDeliveryDate ? dayjs(inquiry.expectedDeliveryDate) : null,
     deliveryAddress: inquiry.deliveryAddress,
     contact: inquiry.contact,
     paymentTerms: inquiry.paymentTerms,

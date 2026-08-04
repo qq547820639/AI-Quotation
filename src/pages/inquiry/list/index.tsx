@@ -3,7 +3,7 @@
  * 支持多维度筛选、状态可视化、截止时间警示、复制/取消/导出等操作
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import {
@@ -47,18 +47,23 @@ import { useInquiryStore } from '@/store/useInquiryStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
 import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/useAuthStore';
+import { useQuery } from '@tanstack/react-query';
+import { inquiryApi } from '@/api';
+import { QUERY_KEYS } from '@/lib/queryClient';
+import { IS_DEMO_MODE } from '@/config';
 import {
   INQUIRY_STATUS_OPTIONS,
   InquiryStatus,
   QuotationStatus,
   type Inquiry,
+  type PaginatedInquiries,
 } from '@/types';
 import { formatDateTime, formatDate, getRemainingTime } from '@/utils/format';
 import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import { exportAOA } from '@/utils/excel';
 import { isCancelable, isEditable } from '@/utils/inquiryStatus';
 import { useIsMobile } from '@/utils/useIsMobile';
-import { MATERIAL_CATEGORY_OPTIONS } from '@/constants/materialCategories';
+import { getMaterialCategoryOptions } from '@/constants/materialCategories';
 import TableSettings from '@/components/table/TableSettings';
 import {
   DENSITY_TO_SIZE,
@@ -148,6 +153,77 @@ export default function InquiryListPage() {
     sessionStorage.setItem('inquiryFilter', JSON.stringify(applied));
   }, [applied]);
 
+  // ===== P2-12 Task 17：URL 同步筛选/排序/分页状态 =====
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 服务端分页状态（page/sort 来自 URL，向后兼容：无 page 参数时走客户端全量筛选）
+  const serverPage = Number(searchParams.get('page') ?? '1');
+  const serverSort = searchParams.get('sort') ?? 'createdAt:desc';
+
+  // 挂载时从 URL 恢复筛选条件（keyword/status/dateFrom/dateTo），与 sessionStorage 取并集
+  useEffect(() => {
+    const urlKeyword = searchParams.get('keyword');
+    const urlStatus = searchParams.get('status');
+    const urlFrom = searchParams.get('dateFrom');
+    const urlTo = searchParams.get('dateTo');
+    setApplied((prev) => ({
+      ...prev,
+      code: urlKeyword ?? prev.code,
+      subject: urlKeyword ?? prev.subject,
+      status: urlStatus ? (urlStatus.split(',') as InquiryStatus[]) : prev.status,
+      createdAt:
+        urlFrom || urlTo
+          ? [urlFrom ? dayjs(urlFrom) : null, urlTo ? dayjs(urlTo) : null]
+          : prev.createdAt,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 查询后同步 URL（keyword=code|subject、status、dateFrom/dateTo、sort、page）
+  const syncUrl = (next: typeof applied, page = 1, sort = serverSort) => {
+    const params = new URLSearchParams();
+    const keyword = next.code || next.subject;
+    if (keyword) params.set('keyword', keyword);
+    if (next.status.length > 0) params.set('status', next.status.join(','));
+    if (next.createdAt?.[0]) params.set('dateFrom', next.createdAt[0].format('YYYY-MM-DD'));
+    if (next.createdAt?.[1]) params.set('dateTo', next.createdAt[1].format('YYYY-MM-DD'));
+    if (page > 1) params.set('page', String(page));
+    if (sort !== 'createdAt:desc') params.set('sort', sort);
+    setSearchParams(params, { replace: true });
+  };
+
+  // P2-12 Task 17：服务端分页查询（生产模式启用；演示模式回退客户端全量筛选）
+  const serverEnabled = !IS_DEMO_MODE && searchParams.get('page') !== null;
+  const keyword = serverEnabled ? applied.code || applied.subject : undefined;
+  const statusStr =
+    serverEnabled && applied.status.length > 0 ? applied.status.join(',') : undefined;
+  const dateFrom =
+    serverEnabled && applied.createdAt?.[0] ? applied.createdAt[0].format('YYYY-MM-DD') : undefined;
+  const dateTo =
+    serverEnabled && applied.createdAt?.[1] ? applied.createdAt[1].format('YYYY-MM-DD') : undefined;
+  const { data: serverData, isLoading: serverLoading } = useQuery<PaginatedInquiries>({
+    queryKey: [
+      QUERY_KEYS.inquiries,
+      'page',
+      serverPage,
+      serverSort,
+      keyword,
+      statusStr,
+      dateFrom,
+      dateTo,
+    ],
+    queryFn: () =>
+      inquiryApi.listPage({
+        page: serverPage,
+        pageSize: 10,
+        keyword,
+        status: statusStr,
+        dateFrom,
+        dateTo,
+        sort: serverSort,
+      }),
+    enabled: serverEnabled,
+  });
+
   // 已提交报价数量映射：inquiryId -> count
   const submittedCountMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -162,10 +238,7 @@ export default function InquiryListPage() {
   // 过滤后的询价单（基于 applied，非输入态）
   const filteredInquiries = useMemo(() => {
     return inquiries.filter((inquiry) => {
-      if (
-        applied.code &&
-        !inquiry.code.toLowerCase().includes(applied.code.toLowerCase())
-      ) {
+      if (applied.code && !inquiry.code.toLowerCase().includes(applied.code.toLowerCase())) {
         return false;
       }
       if (
@@ -199,17 +272,22 @@ export default function InquiryListPage() {
         }
       }
       if (applied.category) {
-        const matched = inquiry.items.some((item) =>
-          item.category.includes(applied.category!),
-        );
+        const matched = inquiry.items.some((item) => item.category.includes(applied.category!));
         if (!matched) return false;
       }
       return true;
     });
   }, [inquiries, applied]);
 
+  // P2-12 Task 17：服务端分页时用服务端数据，否则用客户端全量筛选结果
+  const displayInquiries = serverEnabled ? (serverData?.items ?? []) : filteredInquiries;
+  const displayTotal = serverEnabled
+    ? (serverData?.total ?? filteredInquiries.length)
+    : filteredInquiries.length;
+  const displayLoading = serverEnabled ? serverLoading : loading;
+
   const handleQuery = () => {
-    setApplied({
+    const next = {
       code: filterCode,
       subject: filterSubject,
       creator: filterCreator,
@@ -217,7 +295,9 @@ export default function InquiryListPage() {
       createdAt: filterCreatedAt,
       deadline: filterDeadline,
       category: filterCategory,
-    });
+    };
+    setApplied(next);
+    syncUrl(next, 1);
   };
 
   const handleReset = () => {
@@ -228,7 +308,7 @@ export default function InquiryListPage() {
     setFilterCreatedAt(null);
     setFilterDeadline(null);
     setFilterCategory(undefined);
-    setApplied({
+    const empty = {
       code: '',
       subject: '',
       creator: '',
@@ -236,7 +316,9 @@ export default function InquiryListPage() {
       createdAt: null,
       deadline: null,
       category: undefined,
-    });
+    };
+    setApplied(empty);
+    syncUrl(empty, 1);
   };
 
   const handleCopy = (inquiry: Inquiry) => {
@@ -346,7 +428,7 @@ export default function InquiryListPage() {
     ];
     setFilterStatus(statuses);
     setFilterCreator(currentUser.name);
-    setApplied({
+    const next = {
       code: filterCode,
       subject: filterSubject,
       creator: currentUser.name,
@@ -354,7 +436,9 @@ export default function InquiryListPage() {
       createdAt: filterCreatedAt,
       deadline: filterDeadline,
       category: filterCategory,
-    });
+    };
+    setApplied(next);
+    syncUrl(next, 1);
   };
 
   const resetDefaultView = () => {
@@ -370,7 +454,7 @@ export default function InquiryListPage() {
     setFilterCreatedAt(null);
     setFilterDeadline(null);
     setFilterCategory(undefined);
-    setApplied({
+    const empty = {
       code: '',
       subject: '',
       creator: '',
@@ -378,20 +462,34 @@ export default function InquiryListPage() {
       createdAt: null,
       deadline: null,
       category: undefined,
-    });
+    };
+    setApplied(empty);
+    syncUrl(empty, 1);
   };
 
   /** 当前生效筛选条件 Tag 列表 */
   const activeFilterTags = useMemo(() => {
     const tags: React.ReactNode[] = [];
     if (applied.code) {
-      tags.push(<Tag key="code">{t('inquiry.list.inquiryCode')}: {applied.code}</Tag>);
+      tags.push(
+        <Tag key="code">
+          {t('inquiry.list.inquiryCode')}: {applied.code}
+        </Tag>,
+      );
     }
     if (applied.subject) {
-      tags.push(<Tag key="subject">{t('inquiry.list.subject')}: {applied.subject}</Tag>);
+      tags.push(
+        <Tag key="subject">
+          {t('inquiry.list.subject')}: {applied.subject}
+        </Tag>,
+      );
     }
     if (applied.creator) {
-      tags.push(<Tag key="creator">{t('inquiry.list.creator')}: {applied.creator}</Tag>);
+      tags.push(
+        <Tag key="creator">
+          {t('inquiry.list.creator')}: {applied.creator}
+        </Tag>,
+      );
     }
     applied.status.forEach((s) => {
       tags.push(
@@ -454,6 +552,16 @@ export default function InquiryListPage() {
     notifySuccess(t('table.exportCurrentSuccess'));
   };
 
+  /** P2-12 Task 17：服务端生成 PDF/Excel 导出（基于报价数据，不依赖浏览器状态） */
+  const exportServer = async (inquiry: Inquiry, format: 'pdf' | 'xlsx') => {
+    try {
+      await inquiryApi.export(inquiry.id, { format, scope: 'compare' });
+      notifySuccess(i18n.t('inquiry.export.success'));
+    } catch {
+      notifyError(i18n.t('common.operateFailed'));
+    }
+  };
+
   // 截止时间单元格：超时红色、即将超时橙色
   const renderDeadline = (deadline: string) => {
     const remaining = getRemainingTime(deadline);
@@ -488,7 +596,13 @@ export default function InquiryListPage() {
       { key: 'invitedCount', title: t('inquiry.list.invitedCount'), visible: true, order: 3 },
       { key: 'submittedCount', title: t('inquiry.list.submittedCount'), visible: true, order: 4 },
       { key: 'deadline', title: t('inquiry.list.deadlineLabel'), visible: true, order: 5 },
-      { key: 'status', title: t('inquiry.list.currentStatus'), visible: true, fixed: 'left', order: 6 },
+      {
+        key: 'status',
+        title: t('inquiry.list.currentStatus'),
+        visible: true,
+        fixed: 'left',
+        order: 6,
+      },
       { key: 'createdByName', title: t('inquiry.list.creator'), visible: true, order: 7 },
       { key: 'createdAt', title: t('inquiry.list.createdAt'), visible: true, order: 8 },
       { key: 'action', title: t('inquiry.list.actions'), visible: true, fixed: 'right', order: 9 },
@@ -502,10 +616,14 @@ export default function InquiryListPage() {
     setColumnFixed,
     setDensity,
     reset: resetTablePrefs,
-  } = useTablePreferences('inquiryList', {
-    columns: defaultColumnPrefs,
-    density: 'default',
-  });
+  } = useTablePreferences(
+    'inquiryList',
+    {
+      columns: defaultColumnPrefs,
+      density: 'default',
+    },
+    !IS_DEMO_MODE,
+  );
 
   const columnDefs: ColumnsType<Inquiry> = [
     {
@@ -549,13 +667,17 @@ export default function InquiryListPage() {
         const total = record.invitedSupplierIds.length;
         const allDone = total > 0 && count === total;
         return (
-          <Text style={{ color: allDone ? 'var(--color-success)' : undefined, fontWeight: allDone ? 600 : 400 }}>
+          <Text
+            style={{
+              color: allDone ? 'var(--color-success)' : undefined,
+              fontWeight: allDone ? 600 : 400,
+            }}
+          >
             {count}
           </Text>
         );
       },
-      sorter: (a, b) =>
-        (submittedCountMap.get(a.id) ?? 0) - (submittedCountMap.get(b.id) ?? 0),
+      sorter: (a, b) => (submittedCountMap.get(a.id) ?? 0) - (submittedCountMap.get(b.id) ?? 0),
     },
     {
       title: t('inquiry.list.deadlineLabel'),
@@ -662,9 +784,7 @@ export default function InquiryListPage() {
   /** 空状态引导：无数据或筛选无结果时提供「清空筛选」入口 */
   const renderEmpty = () => (
     <Empty
-      description={
-        inquiries.length === 0 ? t('inquiry.list.empty') : t('inquiry.list.noMatch')
-      }
+      description={inquiries.length === 0 ? t('inquiry.list.empty') : t('inquiry.list.noMatch')}
     >
       <Button onClick={clearFilters}>{t('table.clearFilters')}</Button>
     </Empty>
@@ -674,7 +794,9 @@ export default function InquiryListPage() {
   const filterForm = (
     <Row gutter={[16, 16]}>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.inquiryCode')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('inquiry.list.inquiryCode')}
+        </div>
         <Input
           placeholder={t('common.inputPlaceholder')}
           value={filterCode}
@@ -683,7 +805,9 @@ export default function InquiryListPage() {
         />
       </Col>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.subject')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('inquiry.list.subject')}
+        </div>
         <Input
           placeholder={t('common.inputPlaceholder')}
           value={filterSubject}
@@ -692,7 +816,9 @@ export default function InquiryListPage() {
         />
       </Col>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.creator')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('inquiry.list.creator')}
+        </div>
         <Input
           placeholder={t('common.inputPlaceholder')}
           value={filterCreator}
@@ -701,7 +827,9 @@ export default function InquiryListPage() {
         />
       </Col>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.status')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('inquiry.list.status')}
+        </div>
         <Select
           mode="multiple"
           placeholder={t('common.selectPlaceholder')}
@@ -714,43 +842,39 @@ export default function InquiryListPage() {
         />
       </Col>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.createdAt')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('inquiry.list.createdAt')}
+        </div>
         <RangePicker
           value={filterCreatedAt as [Dayjs, Dayjs] | null}
-          onChange={(val) =>
-            setFilterCreatedAt(val as [Dayjs | null, Dayjs | null] | null)
-          }
+          onChange={(val) => setFilterCreatedAt(val as [Dayjs | null, Dayjs | null] | null)}
           style={{ width: '100%' }}
         />
       </Col>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.deadline')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('inquiry.list.deadline')}
+        </div>
         <RangePicker
           value={filterDeadline as [Dayjs, Dayjs] | null}
-          onChange={(val) =>
-            setFilterDeadline(val as [Dayjs | null, Dayjs | null] | null)
-          }
+          onChange={(val) => setFilterDeadline(val as [Dayjs | null, Dayjs | null] | null)}
           style={{ width: '100%' }}
         />
       </Col>
       <Col xs={24} sm={12} md={8} lg={6}>
-        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('inquiry.list.materialCategory')}</div>
+        <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+          {t('inquiry.list.materialCategory')}
+        </div>
         <Select
           placeholder={t('common.selectPlaceholder')}
           value={filterCategory}
           onChange={(val) => setFilterCategory(val)}
-          options={MATERIAL_CATEGORY_OPTIONS}
+          options={getMaterialCategoryOptions()}
           style={{ width: '100%' }}
           allowClear
         />
       </Col>
-      <Col
-        xs={24}
-        sm={12}
-        md={8}
-        lg={6}
-        style={{ display: 'flex', alignItems: 'flex-end' }}
-      >
+      <Col xs={24} sm={12} md={8} lg={6} style={{ display: 'flex', alignItems: 'flex-end' }}>
         <Space>
           <Button type="primary" icon={<SearchOutlined />} onClick={handleQuery}>
             {t('inquiry.list.query')}
@@ -807,11 +931,13 @@ export default function InquiryListPage() {
       ) : (
         <Card size="small" style={{ marginBottom: 16 }}>
           <Collapse
-            items={[{
-              key: 'filter',
-              label: t('common.filter'),
-              children: filterForm,
-            }]}
+            items={[
+              {
+                key: 'filter',
+                label: t('common.filter'),
+                children: filterForm,
+              },
+            ]}
             defaultActiveKey={['filter']}
           />
         </Card>
@@ -876,10 +1002,12 @@ export default function InquiryListPage() {
             {canCancel && (
               <Button
                 danger
-                disabled={!selectedRowKeys.some((key) => {
-                const status = inquiries.find((i) => i.id === String(key))?.status;
-                return status !== undefined && isCancelable(status);
-              })}
+                disabled={
+                  !selectedRowKeys.some((key) => {
+                    const status = inquiries.find((i) => i.id === String(key))?.status;
+                    return status !== undefined && isCancelable(status);
+                  })
+                }
                 onClick={handleBatchCancel}
               >
                 {t('inquiry.list.batchCancel')}
@@ -895,62 +1023,139 @@ export default function InquiryListPage() {
       <Card styles={{ body: { padding: 0 } }}>
         {isMobile ? (
           <List
-            dataSource={filteredInquiries}
+            dataSource={displayInquiries}
             locale={{
-            emptyText: renderEmpty(),
-          }}
+              emptyText: renderEmpty(),
+            }}
             pagination={{
               pageSize: 10,
               simple: true,
+              total: displayTotal,
+              onChange: (page) => {
+                if (serverEnabled) {
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.set('page', String(page));
+                  setSearchParams(params, { replace: true });
+                }
+              },
               showTotal: (total) => t('inquiry.list.total', { count: total }),
             }}
             renderItem={(record) => {
               const submittedCount = submittedCountMap.get(record.id) ?? 0;
               const remaining = getRemainingTime(record.deadline);
               return (
-                <List.Item style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <List.Item
+                  style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                    }}
+                  >
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                      <div
+                        style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}
+                      >
                         <Text strong>{record.code}</Text>
                         <InquiryStatusTag status={record.status} />
                       </div>
-                      <Text ellipsis style={{ display: 'block', color: 'var(--color-text-secondary)' }}>
+                      <Text
+                        ellipsis
+                        style={{ display: 'block', color: 'var(--color-text-secondary)' }}
+                      >
                         {record.subject}
                       </Text>
                     </div>
                   </div>
-                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-tertiary)', display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
-                    <span>{t('inquiry.list.itemCount')}: {record.items.length}</span>
-                    <span>{t('inquiry.list.invitedCount')}: {record.invitedSupplierIds.length}</span>
-                    <span>{t('inquiry.list.submittedCount')}: {submittedCount}</span>
-                    <span>{t('inquiry.list.creator')}: {record.createdByName}</span>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: 'var(--color-text-tertiary)',
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '4px 12px',
+                    }}
+                  >
+                    <span>
+                      {t('inquiry.list.itemCount')}: {record.items.length}
+                    </span>
+                    <span>
+                      {t('inquiry.list.invitedCount')}: {record.invitedSupplierIds.length}
+                    </span>
+                    <span>
+                      {t('inquiry.list.submittedCount')}: {submittedCount}
+                    </span>
+                    <span>
+                      {t('inquiry.list.creator')}: {record.createdByName}
+                    </span>
                   </div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: remaining.expired ? 'var(--color-error)' : remaining.urgent ? 'var(--color-warning)' : 'var(--color-text-tertiary)' }}>
+                  <div
+                    style={{
+                      marginTop: 4,
+                      fontSize: 12,
+                      color: remaining.expired
+                        ? 'var(--color-error)'
+                        : remaining.urgent
+                          ? 'var(--color-warning)'
+                          : 'var(--color-text-tertiary)',
+                    }}
+                  >
                     {t('inquiry.list.deadline')}: {formatDateTime(record.deadline)}
-                    {remaining.expired ? ` · ${t('inquiry.list.expired')}` : remaining.urgent ? ` · ${remaining.text}` : ''}
+                    {remaining.expired
+                      ? ` · ${t('inquiry.list.expired')}`
+                      : remaining.urgent
+                        ? ` · ${remaining.text}`
+                        : ''}
                   </div>
                   <Space size={0} wrap style={{ marginTop: 8, alignItems: 'center' }}>
-                    <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/inquiry/detail/${record.id}`)}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => navigate(`/inquiry/detail/${record.id}`)}
+                    >
                       {t('common.detail')}
                     </Button>
                     <Dropdown
                       menu={{
                         items: [
                           ...(canEdit && isEditable(record.status)
-                            ? [{ key: 'edit', label: t('inquiry.list.edit'), icon: <EditOutlined /> }]
+                            ? [
+                                {
+                                  key: 'edit',
+                                  label: t('inquiry.list.edit'),
+                                  icon: <EditOutlined />,
+                                },
+                              ]
                             : []),
                           { key: 'copy', label: t('common.copy'), icon: <CopyOutlined /> },
                           ...(canCancel && isCancelable(record.status)
-                            ? [{ key: 'cancel', label: t('common.cancel'), icon: <StopOutlined />, danger: true }]
+                            ? [
+                                {
+                                  key: 'cancel',
+                                  label: t('common.cancel'),
+                                  icon: <StopOutlined />,
+                                  danger: true,
+                                },
+                              ]
                             : []),
                           { key: 'export', label: t('common.export'), icon: <ExportOutlined /> },
+                          {
+                            key: 'exportPdf',
+                            label: t('inquiry.list.exportPdf'),
+                            icon: <ExportOutlined />,
+                          },
                         ],
                         onClick: ({ key }) => {
                           if (key === 'edit') navigate(`/inquiry/edit/${record.id}`);
                           else if (key === 'copy') handleCopy(record);
                           else if (key === 'cancel') handleCancel(record);
                           else if (key === 'export') handleExport(record);
+                          else if (key === 'exportPdf') void exportServer(record, 'pdf');
                         },
                       }}
                     >
@@ -964,26 +1169,35 @@ export default function InquiryListPage() {
             }}
           />
         ) : (
-        <Table<Inquiry>
-          rowKey="id"
-          rowSelection={{
-            selectedRowKeys,
-            onChange: setSelectedRowKeys,
-          }}
-          columns={columns}
-          dataSource={filteredInquiries}
-          loading={loading}
-          size={tableSize}
-          scroll={{ x: 1500 }}
-          pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
-            showTotal: (total) => t('inquiry.list.total', { count: total }),
-          }}
-          locale={{
-            emptyText: renderEmpty(),
-          }}
-        />
+          <Table<Inquiry>
+            rowKey="id"
+            rowSelection={{
+              selectedRowKeys,
+              onChange: setSelectedRowKeys,
+            }}
+            columns={columns}
+            dataSource={displayInquiries}
+            loading={displayLoading}
+            size={tableSize}
+            scroll={{ x: 1500 }}
+            pagination={{
+              pageSize: 10,
+              current: serverEnabled ? serverPage : undefined,
+              total: displayTotal,
+              showSizeChanger: true,
+              onChange: (page) => {
+                if (serverEnabled) {
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.set('page', String(page));
+                  setSearchParams(params, { replace: true });
+                }
+              },
+              showTotal: (total) => t('inquiry.list.total', { count: total }),
+            }}
+            locale={{
+              emptyText: renderEmpty(),
+            }}
+          />
         )}
       </Card>
     </div>

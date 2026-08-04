@@ -52,6 +52,8 @@ playwright-report/
 playwright/.cache/
 coverage/
 .nyc_output/
+.coverage
+*.coverage
 
 # 构建缓存
 .vite/

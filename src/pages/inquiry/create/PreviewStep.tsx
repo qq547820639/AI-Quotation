@@ -90,13 +90,23 @@ export default function PreviewStep({
         />
       )}
 
-      <Title level={5} style={{ marginTop: 0 }}>{t('inquiry.create.preview.basicInfo')}</Title>
+      <Title level={5} style={{ marginTop: 0 }}>
+        {t('inquiry.create.preview.basicInfo')}
+      </Title>
       <Descriptions bordered size="small" column={{ xs: 1, sm: 2 }} style={{ marginBottom: 20 }}>
-        <Descriptions.Item label={t('inquiry.create.basic.subject')}>{basicInfo.subject || '-'}</Descriptions.Item>
-        <Descriptions.Item label={t('inquiry.create.basic.organization')}>{basicInfo.organization || '-'}</Descriptions.Item>
-        <Descriptions.Item label={t('inquiry.create.basic.ownerName')}>{basicInfo.ownerName || '-'}</Descriptions.Item>
+        <Descriptions.Item label={t('inquiry.create.basic.subject')}>
+          {basicInfo.subject || '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('inquiry.create.basic.organization')}>
+          {basicInfo.organization || '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('inquiry.create.basic.ownerName')}>
+          {basicInfo.ownerName || '-'}
+        </Descriptions.Item>
         <Descriptions.Item label={t('inquiry.create.basic.currency')}>
-          {basicInfo.currency ? `${t('enum.currency.' + basicInfo.currency)}（${basicInfo.currency}）` : '-'}
+          {basicInfo.currency
+            ? `${t(`enum.currency.${basicInfo.currency}`)}（${basicInfo.currency}）`
+            : '-'}
         </Descriptions.Item>
         <Descriptions.Item label={t('inquiry.create.basic.deadline')}>
           {basicInfo.deadline ? basicInfo.deadline.format('YYYY-MM-DD HH:mm') : '-'}
@@ -109,8 +119,12 @@ export default function PreviewStep({
         <Descriptions.Item label={t('inquiry.create.basic.deliveryAddress')} span={2}>
           {basicInfo.deliveryAddress || '-'}
         </Descriptions.Item>
-        <Descriptions.Item label={t('inquiry.create.basic.contact')}>{basicInfo.contact || '-'}</Descriptions.Item>
-        <Descriptions.Item label={t('inquiry.create.basic.paymentTerms')}>{basicInfo.paymentTerms || '-'}</Descriptions.Item>
+        <Descriptions.Item label={t('inquiry.create.basic.contact')}>
+          {basicInfo.contact || '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('inquiry.create.basic.paymentTerms')}>
+          {basicInfo.paymentTerms || '-'}
+        </Descriptions.Item>
         <Descriptions.Item label={t('inquiry.create.basic.invoiceRequirement')}>
           {basicInfo.invoiceRequirement || '-'}
         </Descriptions.Item>
@@ -130,7 +144,9 @@ export default function PreviewStep({
         )}
       </Descriptions>
 
-      <Title level={5}>{t('inquiry.create.preview.materialListSummary', { count: items.length, total: totalQty })}</Title>
+      <Title level={5}>
+        {t('inquiry.create.preview.materialListSummary', { count: items.length, total: totalQty })}
+      </Title>
       {items.length === 0 ? (
         <Empty description={t('inquiry.create.preview.noMaterial')} style={{ marginBottom: 20 }} />
       ) : (
@@ -147,15 +163,22 @@ export default function PreviewStep({
           />
           <div style={{ textAlign: 'right', marginBottom: 20 }}>
             <Text strong>
-              {t('inquiry.create.preview.targetTotal', { amount: formatCurrency(totalTarget, basicInfo.currency) })}
+              {t('inquiry.create.preview.targetTotal', {
+                amount: formatCurrency(totalTarget, basicInfo.currency),
+              })}
             </Text>
           </div>
         </>
       )}
 
-      <Title level={5}>{t('inquiry.create.preview.selectedSupplierSummary', { count: selectedSuppliers.length })}</Title>
+      <Title level={5}>
+        {t('inquiry.create.preview.selectedSupplierSummary', { count: selectedSuppliers.length })}
+      </Title>
       {selectedSuppliers.length === 0 ? (
-        <Empty description={t('inquiry.create.preview.noSupplierSelected')} style={{ marginBottom: 20 }} />
+        <Empty
+          description={t('inquiry.create.preview.noSupplierSelected')}
+          style={{ marginBottom: 20 }}
+        />
       ) : (
         <Table<Supplier>
           rowKey="id"

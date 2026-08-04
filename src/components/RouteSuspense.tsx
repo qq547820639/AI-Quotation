@@ -3,8 +3,10 @@
  * 在懒加载页面加载完成前，展示全屏居中的 Spin
  */
 import { Spin } from 'antd';
+import { useTranslation } from 'react-i18next';
 
 export default function RouteSuspense() {
+  const { t } = useTranslation();
   return (
     <div
       style={{
@@ -15,7 +17,7 @@ export default function RouteSuspense() {
         justifyContent: 'center',
       }}
     >
-      <Spin size="large" tip="加载中..." />
+      <Spin size="large" tip={t('common.loading')} />
     </div>
   );
 }

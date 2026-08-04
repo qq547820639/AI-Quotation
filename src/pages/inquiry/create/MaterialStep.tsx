@@ -37,12 +37,7 @@ import { useMaterialStore } from '@/store/useMaterialStore';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
 import { parseInquiryItems } from '@/utils/materialImport';
-import {
-  MATERIAL_CATEGORY_OPTIONS,
-  cloneItem,
-  fileToAttachment,
-  normalizeCategory,
-} from './shared';
+import { getCategoryOptions, cloneItem, fileToAttachment, normalizeCategory } from './shared';
 
 interface MaterialStepProps {
   items: InquiryItem[];
@@ -73,12 +68,7 @@ function createEmptyItem(inquiryId: string): InquiryItem {
   };
 }
 
-export default function MaterialStep({
-  items,
-  onChange,
-  editingId,
-  disabled,
-}: MaterialStepProps) {
+export default function MaterialStep({ items, onChange, editingId, disabled }: MaterialStepProps) {
   const { t } = useTranslation();
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [materialModalOpen, setMaterialModalOpen] = useState(false);
@@ -155,8 +145,7 @@ export default function MaterialStep({
       onChange([...items, ...newItems]);
       notifySuccess(t('inquiry.create.material.importedItems', { count: newItems.length }));
     } catch (e) {
-      const msg =
-        (e as Error).message || t('inquiry.create.material.parseFailed');
+      const msg = (e as Error).message || t('inquiry.create.material.parseFailed');
       // 区分"无有效行"（warning）与"解析失败"（error）
       if (msg.includes('未解析到')) notifyWarning(msg);
       else notifyError(msg);
@@ -222,9 +211,7 @@ export default function MaterialStep({
       notifyWarning(t('inquiry.create.material.historyEmpty'));
       return;
     }
-    const copies = pickedHistory.items.map((it, i) =>
-      cloneItem({ ...it }, editingId ?? '', i + 1),
-    );
+    const copies = pickedHistory.items.map((it, i) => cloneItem({ ...it }, editingId ?? '', i + 1));
     onChange([...items, ...copies]);
     notifySuccess(
       t('inquiry.create.material.copiedFromHistory', {
@@ -293,7 +280,7 @@ export default function MaterialStep({
           style={{ width: '100%' }}
           value={r.category || undefined}
           onChange={(v) => updateItem(r.id, { category: v })}
-          options={MATERIAL_CATEGORY_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
+          options={getCategoryOptions()}
           allowClear
         />
       ),
@@ -455,13 +442,7 @@ export default function MaterialStep({
             onConfirm={() => handleDelete(r.id)}
             disabled={disabled}
           >
-            <Button
-              size="small"
-              type="text"
-              danger
-              icon={<DeleteOutlined />}
-              disabled={disabled}
-            />
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} disabled={disabled} />
           </Popconfirm>
         </Space>
       ),
@@ -470,10 +451,7 @@ export default function MaterialStep({
 
   return (
     <div>
-      <Space
-        style={{ marginBottom: 12, flexWrap: 'wrap' }}
-        size={8}
-      >
+      <Space style={{ marginBottom: 12, flexWrap: 'wrap' }} size={8}>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd} disabled={disabled}>
           {t('inquiry.create.material.addRow')}
         </Button>
@@ -488,7 +466,11 @@ export default function MaterialStep({
             {t('inquiry.create.material.batchImport')}
           </Button>
         </Upload>
-        <Button icon={<SearchOutlined />} onClick={() => setMaterialModalOpen(true)} disabled={disabled}>
+        <Button
+          icon={<SearchOutlined />}
+          onClick={() => setMaterialModalOpen(true)}
+          disabled={disabled}
+        >
           {t('inquiry.create.material.selectFromLibrary')}
         </Button>
         <Button onClick={() => setHistoryModalOpen(true)} disabled={disabled}>
@@ -557,7 +539,7 @@ export default function MaterialStep({
               title: t('material.list.stockQty'),
               dataIndex: 'stockQty',
               width: 80,
-              render: (v: number | undefined) => (v ?? 0),
+              render: (v: number | undefined) => v ?? 0,
             },
           ]}
         />
@@ -586,7 +568,12 @@ export default function MaterialStep({
           columns={[
             { title: t('inquiry.create.material.historyCode'), dataIndex: 'code', width: 150 },
             { title: t('inquiry.create.material.historySubject'), dataIndex: 'subject' },
-            { title: t('inquiry.create.material.itemCount'), dataIndex: 'items', width: 80, render: (v: InquiryItem[]) => v?.length ?? 0 },
+            {
+              title: t('inquiry.create.material.itemCount'),
+              dataIndex: 'items',
+              width: 80,
+              render: (v: InquiryItem[]) => v?.length ?? 0,
+            },
             {
               title: t('common.status'),
               dataIndex: 'status',

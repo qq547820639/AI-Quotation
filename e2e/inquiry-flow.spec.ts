@@ -14,7 +14,7 @@ test.describe('询价全流程', () => {
     await page.goto('/login');
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill('admin123');
+    await page.locator('input[type="password"]').fill('123456');
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
   });
@@ -31,7 +31,10 @@ test.describe('询价全流程', () => {
     await page.goto('/inquiry/list');
     await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
     // 点击第一行的查看/详情按钮
-    const actionBtn = page.locator('.ant-table-row').first().getByRole('button', { name: /查看|详情|View/ });
+    const actionBtn = page
+      .locator('.ant-table-row')
+      .first()
+      .getByRole('button', { name: /查看|详情|View/ });
     if (await actionBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await actionBtn.click();
     } else {
@@ -55,7 +58,9 @@ test.describe('询价全流程', () => {
     // 验证步骤条可见
     await expect(page.locator('.ant-steps')).toBeVisible({ timeout: 10000 });
     // 验证"保存草稿"按钮存在
-    await expect(page.getByRole('button', { name: /草稿|Draft|保存/ })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: /草稿|Draft|保存/ })).toBeVisible({
+      timeout: 5000,
+    });
     // 验证"下一步"或"发送"按钮存在
     const nextBtn = page.getByRole('button', { name: /下一步|Next|发送|Send/ });
     await expect(nextBtn.first()).toBeVisible({ timeout: 5000 });

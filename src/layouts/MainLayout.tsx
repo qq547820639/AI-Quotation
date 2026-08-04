@@ -52,6 +52,7 @@ import { InquiryStatus, type Permission } from '@/types';
 import { formatDateTime } from '@/utils/format';
 import { changeLanguage } from '@/i18n';
 import { useThemeStore } from '@/store/useThemeStore';
+import { useConnectivityStore } from '@/store/useConnectivityStore';
 import GlobalSearch from '@/components/GlobalSearch';
 import { useIsMobile } from '@/utils/useIsMobile';
 import { IS_DEMO_MODE } from '@/config';
@@ -71,9 +72,7 @@ function buildMenuItems(
   ];
   // 询价管理组
   if (hasPermission('INQUIRY_CREATE') || hasPermission('INQUIRY_EDIT')) {
-    const children: MenuItem[] = [
-      { key: '/inquiry/list', label: t('menu.inquiryList') },
-    ];
+    const children: MenuItem[] = [{ key: '/inquiry/list', label: t('menu.inquiryList') }];
     if (hasPermission('INQUIRY_CREATE')) {
       children.push({ key: '/inquiry/create', label: t('menu.createInquiry') });
     }
@@ -135,11 +134,48 @@ function useMenuState(pathname: string) {
   const defaultOpenKeys = useMemo<string[]>(() => {
     const keys: string[] = [];
     if (pathname.startsWith('/inquiry')) keys.push('inquiry-group');
-    if (pathname.startsWith('/quotation') || pathname.startsWith('/approval')) keys.push('quotation-group');
+    if (pathname.startsWith('/quotation') || pathname.startsWith('/approval'))
+      keys.push('quotation-group');
     return keys;
   }, [pathname]);
 
   return { selectedKey, defaultOpenKeys };
+}
+
+/** 连接状态指示器（P1-10 Task 15）：后端不可用时显示离线状态 + 最后同步时间 + 缓存过期标识 */
+function ConnectivityIndicator() {
+  const { t } = useTranslation();
+  const isOnline = useConnectivityStore((s) => s.isOnline);
+  const lastSyncAt = useConnectivityStore((s) => s.lastSyncAt);
+  const stale = useConnectivityStore((s) => s.stale);
+
+  if (!isOnline) {
+    return (
+      <Tag color="red" style={{ marginRight: 0 }}>
+        {t('common.offline')}
+        {lastSyncAt && (
+          <span style={{ marginLeft: 6 }}>
+            {t('common.lastSync', { time: formatDateTime(lastSyncAt) })}
+          </span>
+        )}
+      </Tag>
+    );
+  }
+  if (stale) {
+    return (
+      <Tag color="orange" style={{ marginRight: 0 }} icon={<ToolOutlined />}>
+        {t('common.dataStale')}
+      </Tag>
+    );
+  }
+  if (lastSyncAt) {
+    return (
+      <Tag color="green" style={{ marginRight: 0 }}>
+        {t('common.lastSync', { time: formatDateTime(lastSyncAt) })}
+      </Tag>
+    );
+  }
+  return null;
 }
 
 export default function MainLayout() {
@@ -217,7 +253,12 @@ export default function MainLayout() {
       },
       { type: 'divider' },
       { key: 'profile', icon: <UserOutlined />, label: t('common.user') },
-      { key: 'settings', icon: <SettingOutlined />, label: t('menu.settings'), onClick: () => navigate('/settings') },
+      {
+        key: 'settings',
+        icon: <SettingOutlined />,
+        label: t('menu.settings'),
+        onClick: () => navigate('/settings'),
+      },
       { type: 'divider' },
     ];
     // 切换用户子菜单（仅演示模式可用）
@@ -284,7 +325,9 @@ export default function MainLayout() {
         size="small"
         dataSource={notifications.slice(0, 10)}
         locale={{
-          emptyText: <Empty description={t('notification.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />,
+          emptyText: (
+            <Empty description={t('notification.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ),
         }}
         renderItem={(n) => (
           <List.Item
@@ -399,7 +442,19 @@ export default function MainLayout() {
           <Space size="middle">
             <Button
               type="text"
-              icon={isMobile ? (drawerOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />) : (collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />)}
+              icon={
+                isMobile ? (
+                  drawerOpen ? (
+                    <MenuFoldOutlined />
+                  ) : (
+                    <MenuUnfoldOutlined />
+                  )
+                ) : collapsed ? (
+                  <MenuUnfoldOutlined />
+                ) : (
+                  <MenuFoldOutlined />
+                )
+              }
               onClick={() => {
                 if (isMobile) setDrawerOpen(!drawerOpen);
                 else toggleCollapsed();
@@ -418,6 +473,7 @@ export default function MainLayout() {
                   : organizations.map((o) => ({ label: o, value: o }))
               }
             />
+            <ConnectivityIndicator />
           </Space>
 
           <Input.Search
@@ -438,18 +494,22 @@ export default function MainLayout() {
             </Dropdown>
             <Button
               type="text"
-              icon={themeMode === 'dark' ? <SunOutlined style={{ fontSize: 16 }} /> : <MoonOutlined style={{ fontSize: 16 }} />}
+              icon={
+                themeMode === 'dark' ? (
+                  <SunOutlined style={{ fontSize: 16 }} />
+                ) : (
+                  <MoonOutlined style={{ fontSize: 16 }} />
+                )
+              }
               onClick={toggleTheme}
-              aria-label={themeMode === 'dark' ? t('common.switchToLight') : t('common.switchToDark')}
+              aria-label={
+                themeMode === 'dark' ? t('common.switchToLight') : t('common.switchToDark')
+              }
             />
             <Badge count={messageCount} size="small" overflowCount={99}>
               <MessageOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
             </Badge>
-            <Popover
-              content={notificationContent}
-              trigger="click"
-              placement="bottomRight"
-            >
+            <Popover content={notificationContent} trigger="click" placement="bottomRight">
               <Badge count={unreadCount} size="small" overflowCount={99}>
                 <BellOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
               </Badge>

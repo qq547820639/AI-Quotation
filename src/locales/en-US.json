@@ -120,7 +120,13 @@
     "seconds": "seconds",
     "query": "Query",
     "times": "time(s)",
-    "attachments": "Attachments"
+    "attachments": "Attachments",
+    "offline": "Offline",
+    "online": "Online",
+    "dataStale": "Data may be stale",
+    "lastSync": "Last synced {{time}}",
+    "neverSynced": "Not synced yet",
+    "dataFresh": "Data synced"
   },
   "menu": {
     "dashboard": "Dashboard",
@@ -138,6 +144,16 @@
     "log": "Operation Log",
     "settings": "Settings",
     "supplierPortal": "Supplier Portal"
+  },
+  "materialCategories": {
+    "industrialElectronics": "Industrial Electronics",
+    "hardware": "Hardware",
+    "automation": "Automation",
+    "officeEquipment": "Office Equipment",
+    "packaging": "Packaging",
+    "protectiveEquipment": "PPE",
+    "transmission": "Transmission Parts",
+    "chemical": "Chemicals"
   },
   "enum": {
     "inquiryStatus": {
@@ -329,6 +345,7 @@
       "batchCancelSummary": "{{total}} selected, {{executable}} to cancel, {{skipped}} skipped",
       "batchCancelSkippedReason": "Status not cancellable",
       "batchCancelSuccess": "Cancelled {{count}} inquiry(ies)",
+      "exportPdf": "Export PDF (server)",
       "batchCancelFailed": "Failed to cancel {{count}} inquiry(ies)",
       "clearSelection": "Clear Selection"
     },
@@ -669,7 +686,27 @@
       "approveOk": "Confirm Approve",
       "rejectOk": "Confirm Reject",
       "approveSuccessMsg": "Approved",
-      "rejectWarning": "Please fill in the approval comment for rejection"
+      "rejectWarning": "Please fill in the approval comment for rejection",
+      "sendPartial": "Sent {{sent}}, {{pending}} pending, {{failed}} failed to deliver",
+      "sendPending": "Sent {{sent}}, {{pending}} pending",
+      "deliveryStatus": "Inquiry Delivery Status",
+      "deliveryProgress": "Delivered {{sent}} / {{total}} ({{percent}}%)",
+      "deliverySupplier": "Supplier",
+      "deliveryStatusColumn": "Delivery Status",
+      "deliveryStatusValue": {
+        "pending": "Pending",
+        "sent": "Sent",
+        "delivered": "Delivered",
+        "failed": "Failed",
+        "bounced": "Bounced",
+        "opened": "Opened",
+        "submitted": "Submitted"
+      },
+      "deliverySentAt": "Sent At",
+      "deliveryError": "Delivery Error",
+      "resendDelivery": "Resend",
+      "resendSuccess": "Inquiry resent",
+      "resendFailed": "Resend failed, please retry"
     },
     "export": {
       "filename": "Inquiry_{{code}}",
@@ -907,7 +944,9 @@
       "importFailedCount": "{{count}} import(s) failed: {{message}}",
       "selectExcel": "Select Excel/CSV file",
       "supportedColumns": "Supported columns: Material Code, Material Name, Material Category, Brand, Specification Model, Technical Params, Unit, Stock. Must include the \"Material Name\" column.",
-      "previewCount": "Preview (first 10 rows, {{count}} total)"
+      "previewCount": "Preview (first 10 rows, {{count}} total)",
+      "noRows": "No data rows could be parsed",
+      "noValidRows": "No valid material rows (must include a \"Material Name\" column)"
     }
   },
   "quotation": {
@@ -1017,7 +1056,11 @@
       "sortDeliveryAsc": "Delivery Asc",
       "sortScoreDesc": "Score Desc",
       "hideUnquoted": "Hide unquoted suppliers",
-      "aiResult": "AI Analysis Result ({{count}} item(s))",
+      "riskTitle": "Quotation Collection Risk Alert",
+      "riskUnquoted": "{{count}} supplier(s) have not yet submitted a quotation (out of {{total}} invited).",
+      "riskUnquotedHint": "Consider reminding unquoted suppliers to submit before the deadline.",
+      "riskAnomalyHint": "Anomalous quotations detected. Please verify carefully before confirming.",
+      "aiResult": "AI Anomaly Analysis Result ({{count}} items)",
       "aiResultNoAnomaly": "AI Analysis Result",
       "aiGenerated": "AI Generated",
       "purchaserCommentTitle": "Purchaser Comments",
@@ -1212,6 +1255,8 @@
     "allTypes": "All Types",
     "clickToViewDetail": " · Click to view inquiry detail",
     "openDetail": "View notification \"{{title}}\" detail",
+    "deadlineTitle": "Inquiry {{code}} is approaching deadline",
+    "deadlineContent": "{{subject}} ({{hours}} hours left)",
     "type": {
       "INQUIRY_SENT": "Inquiry Sent",
       "QUOTATION_SUBMITTED": "Quotation Submitted",
@@ -1225,7 +1270,20 @@
       "SYSTEM": "System"
     },
     "total": "Total {{count}}",
-    "unreadCount": "{{count}} unread"
+    "unreadCount": "{{count}} unread",
+    "pref": {
+      "title": "Notification Preferences",
+      "inquirySent": "Inquiry Sent",
+      "inquirySentDesc": "Notify when inquiry is sent to suppliers",
+      "quotationSubmitted": "Quotation Submitted",
+      "quotationSubmittedDesc": "Notify when a supplier submits a quotation",
+      "deadlineReminder": "Deadline Reminder",
+      "deadlineReminderDesc": "Remind purchaser before quotation deadline",
+      "approvalResult": "Approval Result",
+      "approvalResultDesc": "Notify when approval is approved/rejected",
+      "deadlineReminderHours": "Reminder Hours Before",
+      "deadlineReminderHoursDesc": "How many hours before deadline to trigger reminder"
+    }
   },
   "settings": {
     "title": "System Settings",
@@ -1571,7 +1629,68 @@
     "totalAmountLabel": "Total Amount: ",
     "remarkLabel": "Remark: ",
     "remarkPlaceholder": "Supplementary notes (e.g. overall discount, delivery arrangement)",
-    "submitBtn": "Submit"
+    "submitBtn": "Submit",
+    "revokedTitle": "Invitation Revoked",
+    "revokedSubTitle": "This quotation invitation has been revoked. You can no longer quote. Please contact the purchaser if you have any questions.",
+    "expiredTitle": "Invitation Expired",
+    "expiredSubTitle": "This quotation invitation has expired or the inquiry is closed. You can no longer quote.",
+    "terminalTitle": "Inquiry Closed",
+    "terminalSubTitle": "This inquiry has ended or been cancelled. The quotation channel is closed.",
+    "loadFailedTitle": "Load Failed",
+    "loadFailedSubTitle": "Unable to load quotation information. Please try again later or contact the purchaser.",
+    "receiptTitle": "Quotation Submitted",
+    "receiptCodeLabel": "Receipt Code: ",
+    "receiptSubmittedAtLabel": "Submitted At: ",
+    "receiptTotalLabel": "Total Amount: ",
+    "reviseBtn": "Re-quote",
+    "reviseConfirmTitle": "Re-quote?",
+    "reviseConfirmContent": "After re-quoting, you can modify the quotation and submit again.",
+    "reviseSuccess": "Quotation reopened, you can modify and resubmit",
+    "reviseFailed": "This inquiry does not allow re-quoting",
+    "closeBtn": "Close",
+    "loadFailed": "Load failed, please try again later",
+    "uploadTooLarge": "File too large, please upload a file under 10MB",
+    "uploadTypeInvalid": "Unsupported file type, please upload PDF, Office document or image",
+    "uploadRetry": "Retry upload",
+    "step": {
+      "read": "Read Inquiry",
+      "fill": "Fill Quotation",
+      "upload": "Upload Attachments",
+      "review": "Review & Submit",
+      "submitted": "Submitted"
+    },
+    "autoSaveSaving": "Saving...",
+    "autoSaveSaved": "Saved {{time}}",
+    "autoSaveFailed": "Save failed",
+    "errorSummaryTitle": "Please fix the following {{count}} error(s) before submitting",
+    "errorField": {
+      "unitPrice": "Unit Price",
+      "deliveryDays": "Delivery Days"
+    },
+    "batchToolbar": "Batch Apply",
+    "selectedCount": "{{count}} selected",
+    "batchApplyAllHint": "Applies to all materials when none selected",
+    "batchTaxRate": "Batch Tax Rate",
+    "batchDeliveryDays": "Batch Delivery Days",
+    "batchPaymentTerms": "Batch Payment Terms",
+    "leavePageTitle": "Leave this page?",
+    "leavePageContent": "You have unsaved changes. Leaving now will lose them.",
+    "leave": "Leave",
+    "continueEdit": "Continue Editing",
+    "templateFilename": "quotation-template",
+    "exportTemplateSuccess": "Quotation template exported",
+    "exportTemplate": "Export Template",
+    "importExcel": "Import Excel",
+    "importParseFailed": "Failed to parse import file. Please use the exported template.",
+    "importSuccess": "Imported {{count}} quotation(s)",
+    "importNoMatch": "No materials matched. Please check the template.",
+    "copyPrevious": "Copy Previous Round",
+    "copyPreviousEmpty": "No previous round quotation to copy",
+    "copyPreviousSuccess": "Previous round quotation copied",
+    "receiptDownloadTitle": "Quotation Receipt",
+    "receiptFilename": "quotation-receipt",
+    "receiptDownloadSuccess": "Receipt downloaded",
+    "downloadReceipt": "Download Receipt"
   },
   "globalSearch": {
     "title": "Global Search",

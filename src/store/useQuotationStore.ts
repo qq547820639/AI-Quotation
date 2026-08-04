@@ -11,12 +11,20 @@ import { loadJSON, saveJSON } from '@/utils/storage';
 import { quotationApi } from '@/api';
 import { useInquiryStore } from './useInquiryStore';
 import { useNotificationStore } from './useNotificationStore';
+import { useConnectivityStore } from './useConnectivityStore';
+import { MOCK_FALLBACK_ENABLED } from '@/config';
+import { queryClient, QUERY_KEYS } from '@/lib/queryClient';
 import { ok, fail, pending, notFound, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'quotations';
 
 /** 进行中的写操作（key: op:id），用于防重复提交 */
 const pendingOps: Record<string, boolean> = {};
+
+/** 写操作成功后同步 React Query 服务端缓存（P1-10 Task 15） */
+function syncCache(quotations: Quotation[]) {
+  queryClient.setQueryData(QUERY_KEYS.quotations, quotations);
+}
 
 /** 合并 mock 与 localStorage */
 function mergeQuotations(): Quotation[] {
@@ -42,21 +50,27 @@ interface QuotationState {
 }
 
 export const useQuotationStore = create<QuotationState>((set, get) => ({
-  quotations: mergeQuotations(),
+  // P1-10 Task 15：生产模式不预置 mock 数据
+  quotations: MOCK_FALLBACK_ENABLED ? mergeQuotations() : [],
 
-  // W7.4：从 API 加载，失败时降级到 localStorage/mock
+  // W7.4 + P1-10 Task 15：从 API 加载；生产模式失败不静默回退 mock
   loadFromApi: async () => {
     try {
       const data = await quotationApi.list();
       set({ quotations: data });
       saveJSON(STORAGE_KEY, data);
+      queryClient.setQueryData(QUERY_KEYS.quotations, data);
+      useConnectivityStore.getState().markSynced();
     } catch {
-      set({ quotations: mergeQuotations() });
+      if (MOCK_FALLBACK_ENABLED) {
+        set({ quotations: mergeQuotations() });
+      } else {
+        useConnectivityStore.getState().markOffline();
+      }
     }
   },
 
-  getQuotationsByInquiry: (inquiryId) =>
-    get().quotations.filter((q) => q.inquiryId === inquiryId),
+  getQuotationsByInquiry: (inquiryId) => get().quotations.filter((q) => q.inquiryId === inquiryId),
 
   getQuotationById: (id) => get().quotations.find((q) => q.id === id),
 
@@ -83,8 +97,13 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
       // 同步记录暂存日志
       useInquiryStore
         .getState()
-        .addLog(quotation.inquiryId, LogType.SAVE_QUOTATION_DRAFT, `${quotation.supplierName} 暂存报价`);
+        .addLog(
+          quotation.inquiryId,
+          LogType.SAVE_QUOTATION_DRAFT,
+          `${quotation.supplierName} 暂存报价`,
+        );
       await quotationApi.saveDraft(quotation.id, next);
+      syncCache(get().quotations);
       return ok();
     } catch (e) {
       set({ quotations: snapshot });
@@ -129,6 +148,7 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
         });
         await quotationApi.submit(quotationId);
       }
+      syncCache(get().quotations);
       return ok();
     } catch (e) {
       set({ quotations: snapshot });
@@ -157,6 +177,7 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
       } else {
         await quotationApi.create(quotation);
       }
+      syncCache(get().quotations);
       return ok();
     } catch (e) {
       set({ quotations: snapshot });

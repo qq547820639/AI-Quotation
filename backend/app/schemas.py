@@ -11,6 +11,8 @@ class AttachmentSchema(BaseModel):
     url: str
     size: int
     uploadTime: str
+    scanStatus: Optional[str] = "pending"
+    scanResult: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -216,6 +218,44 @@ class NotificationSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ============ 通知偏好 / 交付状态（P1-8 Task 12） ============
+
+class UserNotificationPreferencesSchema(BaseModel):
+    deadlineReminder: bool = True
+    deadlineReminderHours: int = 24
+    quotationSubmitted: bool = True
+    approvalResult: bool = True
+    inquirySent: bool = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UnreadCountSchema(BaseModel):
+    count: int
+
+
+class DeliveryRecordSchema(BaseModel):
+    """逐供应商交付状态（采购端查看）"""
+    supplierId: str
+    supplierName: str
+    deliveryStatus: str  # pending/sent/delivered/failed/bounced/opened/submitted
+    invitationStatus: str
+    sentAt: Optional[str] = None
+    openedAt: Optional[str] = None
+    submittedAt: Optional[str] = None
+    deliveryError: Optional[str] = None
+
+
+class DeliverySummarySchema(BaseModel):
+    """询价发送结果汇总（用于前端展示，避免谎报"已全部发送成功"）"""
+    total: int
+    pending: int
+    sent: int
+    delivered: int
+    failed: int
+    submitted: int
+    allDelivered: bool
+
+
 # ============ 请求 schema ============
 
 class InquiryCreate(BaseModel):
@@ -297,3 +337,54 @@ class LoginResult(BaseModel):
 
 class SuccessResult(BaseModel):
     success: bool = True
+
+
+class RefreshResult(BaseModel):
+    """刷新接口返回：新的 access token + 用户信息（refresh token 走 HttpOnly Cookie）"""
+    user: UserSchema
+    token: str
+
+
+class SessionInfo(BaseModel):
+    """会话列表项"""
+    id: str
+    device: Optional[str] = None
+    createdAt: str
+    expiresAt: str
+    revokedAt: Optional[str] = None
+    lastRefreshAt: Optional[str] = None
+    current: bool = False
+
+
+# ============ P2-12 Task 17：分页 / 表格偏好 / 报价快照 / 导出 ============
+
+class PaginatedInquiriesSchema(BaseModel):
+    """询价列表服务端分页响应（P2-12 Task 17）"""
+    items: List[InquirySchema]
+    total: int
+    page: int
+    pageSize: int
+
+
+class TablePreferencesSchema(BaseModel):
+    """用户级表格偏好（JSON 透传，与前端 useTablePreferences 结构对齐）"""
+    pageKey: str
+    data: Dict[str, Any] = {}
+
+
+class QuotationSnapshotSchema(BaseModel):
+    """报价不可变快照概要"""
+    id: str
+    inquiryId: str
+    inquiryCode: str
+    createdAt: str
+    createdBy: Optional[str] = None
+    createdByName: Optional[str] = None
+    # snapshot 本体（含冻结的报价与询价摘要），透传
+    snapshot: Dict[str, Any] = {}
+
+
+class ExportRequest(BaseModel):
+    """服务端导出请求体（P2-12 Task 17）"""
+    format: str = "xlsx"  # pdf | xlsx
+    scope: str = "compare"  # inquiry | compare

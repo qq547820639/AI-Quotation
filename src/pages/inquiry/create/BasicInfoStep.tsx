@@ -82,7 +82,11 @@ export default function BasicInfoStep({
             label={t('inquiry.create.basic.subject')}
             rules={[{ required: true, message: t('inquiry.create.basic.subjectRequired') }]}
           >
-            <Input placeholder={t('inquiry.create.basic.subjectPlaceholder')} maxLength={100} showCount />
+            <Input
+              placeholder={t('inquiry.create.basic.subjectPlaceholder')}
+              maxLength={100}
+              showCount
+            />
           </Form.Item>
         </Col>
         <Col xs={24} md={12}>
@@ -108,11 +112,15 @@ export default function BasicInfoStep({
           </Form.Item>
         </Col>
         <Col xs={24} md={12}>
-          <Form.Item name="currency" label={t('inquiry.create.basic.currency')} rules={[{ required: true }]}>
+          <Form.Item
+            name="currency"
+            label={t('inquiry.create.basic.currency')}
+            rules={[{ required: true }]}
+          >
             <Select
               placeholder={t('inquiry.create.basic.currencyPlaceholder')}
               options={CURRENCY_OPTIONS.map((o) => ({
-                label: `${t('enum.currency.' + o.value)}（${o.value}）`,
+                label: `${t(`enum.currency.${o.value}`)}（${o.value}）`,
                 value: o.value as Currency,
               }))}
             />
@@ -146,8 +154,15 @@ export default function BasicInfoStep({
           </Form.Item>
         </Col>
         <Col xs={24} md={12}>
-          <Form.Item name="expectedDeliveryDate" label={t('inquiry.create.basic.expectedDeliveryDate')}>
-            <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" placeholder={t('inquiry.create.basic.expectedDeliveryDatePlaceholder')} />
+          <Form.Item
+            name="expectedDeliveryDate"
+            label={t('inquiry.create.basic.expectedDeliveryDate')}
+          >
+            <DatePicker
+              style={{ width: '100%' }}
+              format="YYYY-MM-DD"
+              placeholder={t('inquiry.create.basic.expectedDeliveryDatePlaceholder')}
+            />
           </Form.Item>
         </Col>
 
@@ -176,12 +191,19 @@ export default function BasicInfoStep({
             label={t('inquiry.create.basic.paymentTerms')}
             rules={[{ required: true, message: t('inquiry.create.basic.paymentTermsRequired') }]}
           >
-            <Select placeholder={t('inquiry.create.basic.paymentTermsPlaceholder')} options={PAYMENT_TERM_OPTIONS} />
+            <Select
+              placeholder={t('inquiry.create.basic.paymentTermsPlaceholder')}
+              options={PAYMENT_TERM_OPTIONS}
+            />
           </Form.Item>
         </Col>
         <Col xs={24} md={12}>
           <Form.Item name="invoiceRequirement" label={t('inquiry.create.basic.invoiceRequirement')}>
-            <Select placeholder={t('inquiry.create.basic.invoiceRequirementPlaceholder')} options={INVOICE_OPTIONS} allowClear />
+            <Select
+              placeholder={t('inquiry.create.basic.invoiceRequirementPlaceholder')}
+              options={INVOICE_OPTIONS}
+              allowClear
+            />
           </Form.Item>
         </Col>
 
@@ -245,13 +267,18 @@ export default function BasicInfoStep({
                 <InboxOutlined />
               </p>
               <p className="ant-upload-text">{t('inquiry.create.basic.uploadDragText')}</p>
-              <p className="ant-upload-hint">
-                {t('inquiry.create.basic.uploadDragHint')}
-              </p>
+              <p className="ant-upload-hint">{t('inquiry.create.basic.uploadDragHint')}</p>
             </Dragger>
           </Form.Item>
           {attachments.length > 0 && (
-            <div style={{ marginTop: -8, marginBottom: 8, color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+            <div
+              style={{
+                marginTop: -8,
+                marginBottom: 8,
+                color: 'var(--color-text-tertiary)',
+                fontSize: 12,
+              }}
+            >
               {t('inquiry.create.basic.attachmentSummary', {
                 count: attachments.length,
                 size: formatBytes(attachments.reduce((s, a) => s + (a.size || 0), 0)),

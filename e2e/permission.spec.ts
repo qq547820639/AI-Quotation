@@ -19,7 +19,7 @@ test.describe('RBAC 权限', () => {
     await page.goto('/login');
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '李明辉' }).click();
-    await page.locator('input[type="password"]').fill('test123');
+    await page.locator('input[type="password"]').fill('123456');
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
@@ -36,7 +36,9 @@ test.describe('RBAC 权限', () => {
       expect(redirectedToForbidden || redirectedAway).toBeTruthy();
     } else {
       // 仍在 /settings，验证保存按钮不可见（权限组件拦截）
-      await expect(page.getByRole('button', { name: /保存|Save/ })).not.toBeVisible({ timeout: 5000 });
+      await expect(page.getByRole('button', { name: /保存|Save/ })).not.toBeVisible({
+        timeout: 5000,
+      });
     }
   });
 
@@ -45,7 +47,7 @@ test.describe('RBAC 权限', () => {
     await page.goto('/login');
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill('admin123');
+    await page.locator('input[type="password"]').fill('123456');
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
@@ -53,8 +55,12 @@ test.describe('RBAC 权限', () => {
     await page.goto('/settings');
 
     // 验证设置页正常加载（表单元素可见）
-    await expect(page.locator('.ant-form-item, .ant-switch, .ant-input-number').first()).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.locator('.ant-form-item, .ant-switch, .ant-input-number').first(),
+    ).toBeVisible({ timeout: 10000 });
     // 验证保存按钮可见
-    await expect(page.getByRole('button', { name: /保存|Save/ }).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: /保存|Save/ }).first()).toBeVisible({
+      timeout: 5000,
+    });
   });
 });
