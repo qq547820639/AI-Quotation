@@ -10,6 +10,8 @@ import tempfile
 # 必须在导入 app 前设置 DB_PATH，指向临时数据库
 _tmpdir = tempfile.mkdtemp(prefix="procurement-test-")
 os.environ["DB_PATH"] = os.path.join(_tmpdir, "test.db")
+# 通用测试以演示模式运行（快捷登录），生产鉴权路径由 test_auth_security.py 单独覆盖
+os.environ.setdefault("APP_DEMO_MODE", "true")
 
 import pytest
 from fastapi.testclient import TestClient

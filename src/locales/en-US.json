@@ -1390,11 +1390,12 @@
     "shortTitle": "Inquiry System",
     "platformDesc": "Enterprise Procurement Inquiry Platform",
     "password": "Password",
-    "passwordPlaceholder": "Any password works (demo)",
+    "passwordPlaceholder": "Enter your password",
     "selectUserRequired": "Please select a user",
     "passwordRequired": "Please enter password",
-    "loginFailed": "Login failed, user not found",
-    "demoTip": "Demo environment, any password works"
+    "loginFailed": "Incorrect username or password",
+    "demoTip": "Demo environment, any password works",
+    "prodTip": "Enter your account and password to log in"
   },
   "format": {
     "expired": "Expired",

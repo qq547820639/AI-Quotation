@@ -60,23 +60,39 @@ client.interceptors.request.use(
   (error) => Promise.reject(error),
 );
 
+// 401 处理：避免并发 401 重复弹错/重复跳转
+let handling401 = false;
+
+async function handleUnauthorized() {
+  if (handling401) return;
+  handling401 = true;
+  try {
+    // 清除 token + 用户/权限状态（resetSession 会清 token 与 localStorage）
+    const { useAuthStore } = await import('@/store/useAuthStore');
+    useAuthStore.getState().resetSession();
+    // 保存安全返回地址（不在登录页时）
+    const currentPath = window.location.pathname + window.location.search;
+    if (!currentPath.startsWith('/login')) {
+      localStorage.setItem('redirect_after_login', currentPath);
+    }
+    // 跳转登录页
+    if (!window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login';
+    }
+  } finally {
+    handling401 = false;
+  }
+}
+
 // 响应拦截器：统一错误处理
 client.interceptors.response.use(
   (response) => response,
   (error) => {
     const apiError = parseApiError(error);
 
-    // 401：清理会话、记录回跳地址、跳转登录
+    // 401：完整退出并跳转登录页
     if (apiError.code === ERROR_CODES.UNAUTHORIZED) {
-      localStorage.removeItem('procurement_token');
-      const currentPath = window.location.pathname + window.location.search;
-      // 不在登录页时记录回跳地址
-      if (!currentPath.startsWith('/login')) {
-        localStorage.setItem('redirect_after_login', currentPath);
-      }
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login';
-      }
+      void handleUnauthorized();
       return Promise.reject(apiError);
     }
 

@@ -1390,11 +1390,12 @@
     "shortTitle": "采购询价系统",
     "platformDesc": "企业采购自动询价平台",
     "password": "密码",
-    "passwordPlaceholder": "任意密码即可登录（演示）",
+    "passwordPlaceholder": "请输入密码",
     "selectUserRequired": "请选择用户",
     "passwordRequired": "请输入密码",
-    "loginFailed": "登录失败，用户不存在",
-    "demoTip": "演示环境，密码任意输入即可"
+    "loginFailed": "用户名或密码错误",
+    "demoTip": "演示环境，密码任意输入即可",
+    "prodTip": "请输入账号密码登录"
   },
   "format": {
     "expired": "已截止",

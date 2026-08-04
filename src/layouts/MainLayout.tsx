@@ -54,6 +54,7 @@ import { changeLanguage } from '@/i18n';
 import { useThemeStore } from '@/store/useThemeStore';
 import GlobalSearch from '@/components/GlobalSearch';
 import { useIsMobile } from '@/utils/useIsMobile';
+import { IS_DEMO_MODE } from '@/config';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -219,23 +220,25 @@ export default function MainLayout() {
       { key: 'settings', icon: <SettingOutlined />, label: t('menu.settings'), onClick: () => navigate('/settings') },
       { type: 'divider' },
     ];
-    // 切换用户子菜单（演示用）
-    const switchChildren: MenuProps['items'] = users
-      .filter((u) => u.id !== currentUser.id)
-      .map((u) => ({
-        key: `switch-${u.id}`,
-        label: `${u.name}（${t(`enum.role.${u.role}`)}）`,
-        onClick: () => {
-          switchUser(u.id);
-          navigate('/dashboard');
-        },
-      }));
-    items.push({
-      key: 'switch-user',
-      icon: <SwapOutlined />,
-      label: t('common.more'),
-      children: switchChildren,
-    });
+    // 切换用户子菜单（仅演示模式可用）
+    if (IS_DEMO_MODE) {
+      const switchChildren: MenuProps['items'] = users
+        .filter((u) => u.id !== currentUser.id)
+        .map((u) => ({
+          key: `switch-${u.id}`,
+          label: `${u.name}（${t(`enum.role.${u.role}`)}）`,
+          onClick: () => {
+            switchUser(u.id);
+            navigate('/dashboard');
+          },
+        }));
+      items.push({
+        key: 'switch-user',
+        icon: <SwapOutlined />,
+        label: t('common.more'),
+        children: switchChildren,
+      });
+    }
     items.push({ type: 'divider' });
     items.push({
       key: 'logout',

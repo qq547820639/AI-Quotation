@@ -271,6 +271,7 @@ class AppSettingsSchema(BaseModel):
 
 class LoginParams(BaseModel):
     userId: str
+    password: Optional[str] = None  # 生产模式必填；演示模式可省略
 
 
 class LoginResult(BaseModel):

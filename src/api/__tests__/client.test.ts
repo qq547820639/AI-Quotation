@@ -192,7 +192,10 @@ describe('client 响应拦截器', () => {
     setLocation('/inquiry/list');
     client.defaults.adapter = errorAdapter(401, { message: '未授权' });
     await expect(client.get('/secure')).rejects.toThrow();
-    expect(localStorage.getItem('procurement_token')).toBeNull();
+    // 401 清理为异步（动态 import store），等待其完成后再断言
+    await vi.waitFor(() => {
+      expect(localStorage.getItem('procurement_token')).toBeNull();
+    });
     expect(localStorage.getItem('redirect_after_login')).toBe('/inquiry/list');
   });
 
@@ -200,7 +203,9 @@ describe('client 响应拦截器', () => {
     setLocation('/login');
     client.defaults.adapter = errorAdapter(401, { message: '未授权' });
     await expect(client.get('/secure')).rejects.toThrow();
-    expect(localStorage.getItem('redirect_after_login')).toBeNull();
+    await vi.waitFor(() => {
+      expect(localStorage.getItem('redirect_after_login')).toBeNull();
+    });
   });
 
   it('403 响应：提示权限不足（国际化文案）', async () => {

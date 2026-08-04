@@ -44,3 +44,42 @@ def test_all_permissions_are_valid_strings():
         for p in perms:
             assert isinstance(p, str) and p
             assert p  # 非空
+
+
+# ============ 端到端权限执行（Task 3：不依赖前端隐藏按钮） ============
+
+def test_unauthenticated_request_returns_401(client):
+    """无 token 访问受保护端点 → 401"""
+    resp = client.get("/api/settings")
+    assert resp.status_code == 401
+
+
+def test_settings_update_requires_admin(client, buyer_headers, admin_headers):
+    """settings 写操作：采购人员无权限（403），管理员有权限（200）"""
+    payload = {
+        "approval": {"enabled": True, "amountThreshold": 50000, "approverId": "u-2"},
+        "notification": {
+            "deadlineReminder": True, "deadlineReminderHours": 24,
+            "quotationSubmitted": True, "approvalResult": True,
+        },
+    }
+    # 采购人员 u-1：无 SETTINGS_MANAGE → 403
+    resp = client.put("/api/settings", json=payload, headers=buyer_headers)
+    assert resp.status_code == 403
+    # 管理员 u-6：有 SETTINGS_MANAGE → 200
+    resp = client.put("/api/settings", json=payload, headers=admin_headers)
+    assert resp.status_code == 200
+
+
+def test_supplier_manage_requires_admin(client, buyer_headers, admin_headers):
+    """供应商启停：采购人员无 SUPPLIER_DISABLE → 403，管理员有 → 200"""
+    resp = client.post(
+        "/api/suppliers/sup-6/toggle-status",
+        headers=buyer_headers,
+    )
+    assert resp.status_code == 403
+    resp = client.post(
+        "/api/suppliers/sup-6/toggle-status",
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200

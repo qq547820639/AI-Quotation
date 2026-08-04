@@ -10,6 +10,8 @@ from .models import (
     User, Material, Supplier, Inquiry, InquiryItem, InquiryLog, ApprovalNode,
     Quotation, QuotationItem, AppSettings,
 )
+from .auth import hash_password
+from .config import DEMO_USER_PASSWORD
 
 
 # ============ 日期辅助（对齐 mock 的 dayjs offset 语义） ============
@@ -410,6 +412,9 @@ QUOTATIONS = [
 def init_db(db: Session):
     """首启注入种子数据：若 users 表为空则注入"""
     if db.query(User).count() > 0:
+        # 兼容旧库：为缺失 password_hash 的用户回填默认演示密码哈希
+        for u in db.query(User).filter(User.password_hash.is_(None)).all():
+            u.password_hash = hash_password(DEMO_USER_PASSWORD)
         # 即便用户已存在，也确保 AppSettings 单行存在（防止旧 DB 缺失）
         if db.query(AppSettings).filter(AppSettings.id == 1).first() is None:
             db.add(AppSettings(
@@ -418,12 +423,12 @@ def init_db(db: Session):
                 notification_deadline_reminder_hours=24, notification_quotation_submitted=True,
                 notification_approval_result=True,
             ))
-            db.commit()
+        db.commit()
         return
 
-    # 用户
+    # 用户（写入 bcrypt 密码哈希，供生产模式校验）
     for u in USERS:
-        db.add(User(**u))
+        db.add(User(**u, password_hash=hash_password(DEMO_USER_PASSWORD)))
 
     # 物料
     for m in MATERIALS:

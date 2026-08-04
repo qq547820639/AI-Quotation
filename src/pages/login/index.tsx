@@ -10,6 +10,7 @@ import { LockOutlined, ToolOutlined, UserOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/store/useAuthStore';
 import { notifyError } from '@/utils/confirm';
 import { useTranslation } from 'react-i18next';
+import { IS_DEMO_MODE } from '@/config';
 
 const { Title, Text } = Typography;
 
@@ -22,6 +23,7 @@ export default function LoginPage() {
   const users = useAuthStore((s) => s.users);
   const [userId, setUserId] = useState<string>(users[0]?.id ?? '');
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   // 已登录自动跳转
   // 优先取 401 回跳地址（redirect_after_login），其次路由 state.from，最后默认工作台
@@ -35,22 +37,27 @@ export default function LoginPage() {
     return null;
   }
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!userId) {
       notifyError(t('login.selectUserRequired'));
       return;
     }
-    if (!password) {
+    if (!password && !IS_DEMO_MODE) {
       notifyError(t('login.passwordRequired'));
       return;
     }
-    const ok = login(userId);
-    if (ok) {
-      const target = localStorage.getItem('redirect_after_login') ?? from;
-      localStorage.removeItem('redirect_after_login');
-      navigate(target, { replace: true });
-    } else {
-      notifyError(t('login.loginFailed'));
+    setSubmitting(true);
+    try {
+      const ok = await login(userId, password);
+      if (ok) {
+        const target = localStorage.getItem('redirect_after_login') ?? from;
+        localStorage.removeItem('redirect_after_login');
+        navigate(target, { replace: true });
+      } else {
+        notifyError(t('login.loginFailed'));
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -96,12 +103,12 @@ export default function LoginPage() {
                 onPressEnter={handleLogin}
               />
             </Form.Item>
-            <Button type="primary" block size="large" onClick={handleLogin}>
+            <Button type="primary" block size="large" onClick={handleLogin} loading={submitting}>
               {t('login.login')}
             </Button>
           </Form>
           <Text type="secondary" style={{ fontSize: 12, textAlign: 'center', display: 'block' }}>
-            {t('login.demoTip')}
+            {IS_DEMO_MODE ? t('login.demoTip') : t('login.prodTip')}
           </Text>
         </Space>
       </Card>

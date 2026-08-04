@@ -26,6 +26,7 @@ class User(Base):
     department = Column(String, nullable=False)
     organization = Column(String, nullable=False)
     permissions = Column(JSON, nullable=True)  # List[str]，空则走角色默认
+    password_hash = Column(String, nullable=True)  # bcrypt 哈希；兼容旧库可空，seed 时写入
 
 
 class Material(Base):
@@ -219,8 +220,9 @@ class AppSettings(Base):
 
 
 class Token(Base):
-    """简单 token 表：登录写入，登出删除"""
+    """登录 token：登录写入，登出撤销，过期清理"""
     __tablename__ = "tokens"
     token = Column(String, primary_key=True)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)  # 明确过期时间

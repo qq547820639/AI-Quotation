@@ -7,6 +7,7 @@ import type { User } from '@/types';
 
 export interface LoginParams {
   userId: string;
+  password?: string;
 }
 
 export interface LoginResult {
