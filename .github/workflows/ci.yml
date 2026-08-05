@@ -197,6 +197,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Install npm dependencies (incl. @playwright/test)
+        run: npm ci --no-audit --no-fund
       - name: Install Playwright browser binaries (chromium + firefox + webkit)
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Cache ClamAV signature database
