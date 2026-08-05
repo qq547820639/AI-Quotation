@@ -54,9 +54,12 @@ DANGEROUS_MIME_TYPES = {
     "application/x-httpd-php", "text/x-perl", "application/x-ruby",
 }
 
-# EICAR 标准测试串：ClamAV 会稳定识别为 Eicar-Test-Signature。
+# EICAR 标准测试串（官方完整 68 字节）：ClamAV 会稳定识别为 Eicar-Test-Signature。
 # 用于探活（prove 病毒库已加载 + INSTREAM 扫描链路可用）与单元测试。
-EICAR_STRING = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}"
+# 注意：必须用完整字符串。仅取前缀 b"X5O!P%@AP[4\\PZX54(P^)7CC)7}" 不会被 ClamAV
+# 匹配（Eicar-Test-Signature 为整串模式），导致探活返回 clean（非 infected）而误判
+# 扫描器不可用（/api/ready 报 clamav: disconnected，fail-closed）。
+EICAR_STRING = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
 
 @dataclass

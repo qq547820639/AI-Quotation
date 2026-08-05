@@ -117,7 +117,11 @@ services:
     healthcheck:
       # 首次启动需下载病毒库，可能耗时较长；用足 start_period 覆盖下载期，
       # 避免健康检查在 clamd 就绪前反复失败导致后端（depends_on service_healthy）启动被阻塞。
-      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 3310), timeout=10).close()"]
+      # 注意：clamav/clamav 官方镜像基于 Alpine，不含 python3，不能用 python 探测 TCP；
+      # 改用纯 shell 检查 clamd 的 unix socket（/tmp/clamd.sock 或 /run/clamav/clamd.sock）
+      # 是否已创建，作为容器 liveness 判据。真实功能就绪（TCP 3310 可扫描）以后端
+      # /api/ready 的 EICAR 探活为准，不依赖本 healthcheck。
+      test: ["CMD-SHELL", "if [ -S /tmp/clamd.sock ] || [ -S /run/clamav/clamd.sock ]; then exit 0; else exit 1; fi"]
       interval: 15s
       timeout: 10s
       retries: 60

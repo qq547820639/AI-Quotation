@@ -234,7 +234,17 @@ jobs:
           done
           if [ "$ok" != "1" ]; then
             echo "Backend never became ready; last body: $(cat /tmp/ready.json 2>/dev/null)"
-            docker compose ps; docker compose logs --tail=200 backend; exit 1
+            docker compose ps
+            docker compose logs --tail=200 backend
+            # 诊断 ClamAV：确认 clamd 是否在 TCP 3310 监听、unix socket 是否存在，
+            # 以及后端容器能否真实连上 clamav:3310（区分"连接失败"与"EICAR 未命中"两类根因）。
+            echo "=== DIAG: clamad config ==="
+            docker exec "$(docker compose ps -q clamav)" sh -c 'grep -E "TCPSocket|TCPAddr|LocalSocket" /etc/clamav/clamd.conf' 2>&1 || true
+            echo "=== DIAG: clamd sockets ==="
+            docker exec "$(docker compose ps -q clamav)" sh -c 'ls -la /tmp/clamd.sock /run/clamav/ 2>/dev/null; ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null' 2>&1 || true
+            echo "=== DIAG: backend -> clamav:3310 TCP ==="
+            docker exec "$(docker compose ps -q backend)" python -c "import socket; s=socket.create_connection(('clamav',3310),timeout=5); print('TCP_CONNECT_OK'); s.close()" 2>&1 || echo "TCP_CONNECT_FAIL"
+            exit 1
           fi
           curl -sf http://localhost:8080/api/ready
       - name: Wait for frontend (nginx)
