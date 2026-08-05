@@ -9,7 +9,7 @@
  *
  * normalizeCategory 复用自 inquiry/create/shared，保证与 MaterialStep 行为 1:1 一致。
  */
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import dayjs from 'dayjs';
 import i18n from '@/i18n';
 import type { InquiryItem, Material } from '@/types';
@@ -62,13 +62,126 @@ function pick(row: Record<string, unknown>, keys: string[]): string {
   return '';
 }
 
+/** 判断文件是否为 CSV（按扩展名或 MIME 类型） */
+function isCsvFile(file: File): boolean {
+  const name = (file.name || '').toLowerCase();
+  return name.endsWith('.csv') || file.type === 'text/csv';
+}
+
+/** 解析 CSV 文本为标准二维数组（支持引号转义与 \r\n） */
+function parseCsvRows(text: string): string[][] {
+  const out: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      field += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    if (ch === ',') {
+      row.push(field);
+      field = '';
+      i += 1;
+      continue;
+    }
+    if (ch === '\n') {
+      row.push(field);
+      field = '';
+      out.push(row);
+      row = [];
+      i += 1;
+      continue;
+    }
+    if (ch === '\r') {
+      row.push(field);
+      field = '';
+      out.push(row);
+      row = [];
+      i += 1;
+      if (text[i] === '\n') i += 1;
+      continue;
+    }
+    field += ch;
+    i += 1;
+  }
+  if (field !== '' || row.length > 0) {
+    row.push(field);
+    out.push(row);
+  }
+  return out;
+}
+
+/** 将二维数组（首行为表头，空单元格按 defval:'' 语义取空字符串）转为行对象数组 */
+function aoaToRowObjects(cells: string[][]): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  const [headerRow, ...dataRows] = cells;
+  if (!headerRow || !headerRow.length) return rows;
+  const header = headerRow.map((h) => String(h ?? ''));
+  for (const dataRow of dataRows) {
+    if (!dataRow.length) continue;
+    const obj: Record<string, unknown> = {};
+    header.forEach((h, idx) => {
+      obj[h] = dataRow[idx] ?? '';
+    });
+    rows.push(obj);
+  }
+  return rows;
+}
+
+/** 读取 CSV 文件为行对象数组 */
+function readCsvRows(file: File): Promise<Record<string, unknown>[]> {
+  return file.arrayBuffer().then((ab) => {
+    // TextDecoder 默认去除 UTF-8 BOM（Excel 导出的 CSV 常带 BOM）
+    const text = new TextDecoder('utf-8').decode(ab);
+    return aoaToRowObjects(parseCsvRows(text));
+  });
+}
+
 /** 读取首个工作表为行数组 */
 async function readRows(file: File): Promise<Record<string, unknown>[]> {
-  const data = await file.arrayBuffer();
-  // raw: true 防止 CSV 自动检测日期/数字类型（Excel 二进制格式不受影响）
-  const wb = XLSX.read(data, { type: 'array', raw: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+  if (isCsvFile(file)) {
+    const rows = await readCsvRows(file);
+    if (!rows.length) throw new Error(i18n.t('material.import.noRows'));
+    return rows;
+  }
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await file.arrayBuffer());
+  const ws = wb.worksheets[0];
+  if (!ws) throw new Error(i18n.t('material.import.parseFailed'));
+  const rows: Record<string, unknown>[] = [];
+  let header: string[] = [];
+  ws.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+    const values = (row.values as unknown[]).slice(1); // exceljs 索引 0 为空占位
+    if (rowNumber === 1) {
+      header = values.map((v) => String(v ?? ''));
+      return;
+    }
+    const obj: Record<string, unknown> = {};
+    header.forEach((h, idx) => {
+      obj[h] = values[idx] ?? '';
+    });
+    rows.push(obj);
+  });
   if (!rows.length) throw new Error(i18n.t('material.import.noRows'));
   return rows;
 }
