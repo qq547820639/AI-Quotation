@@ -54,6 +54,10 @@ DANGEROUS_MIME_TYPES = {
     "application/x-httpd-php", "text/x-perl", "application/x-ruby",
 }
 
+# EICAR 标准测试串：ClamAV 会稳定识别为 Eicar-Test-Signature。
+# 用于探活（prove 病毒库已加载 + INSTREAM 扫描链路可用）与单元测试。
+EICAR_STRING = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}"
+
 
 @dataclass
 class ScanResult:
@@ -165,6 +169,15 @@ class ClamAVScanner(FileScanner):
         # 未知/异常响应 → fail closed
         return ScanResult.error(result=f"ClamAV 异常响应: {text or '(空响应)'}", matched=text)
 
+    def probe(self) -> bool:
+        """ClamAV 探活：用 EICAR 标准测试串走真实 INSTREAM 扫描。
+
+        仅当返回 infected（识别出 Eicar-Test-Signature）才视为可用——
+        证明病毒库已加载、clamd 在线、扫描链路可用。clean/error/不可用一律返回 False（fail-closed）。
+        """
+        result = self.scan(EICAR_STRING, "eicar-probe.txt", "text/plain")
+        return result.status == ScanStatus.INFECTED
+
 
 # ============ 占位扫描器（仅开发/测试） ============
 
@@ -190,6 +203,18 @@ _MAGIC_BY_EXT = {
     ".webp": b"WEBP",  # RIFF....WEBP，检查 WEBP 标记
     ".xlsx": b"PK\x03\x04",  # zip
     ".docx": b"PK\x03\x04",  # zip
+}
+
+# 扩展名 → 期望的声明 MIME。用于检测声明 MIME 与扩展名不一致（MIME 欺骗）。
+_MIME_BY_EXT = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
 # 压缩炸弹防护：最大条目数 / 单文件解压大小上限 / 解压比上限
@@ -258,6 +283,13 @@ class SanitizingScanner(FileScanner):
         if not self._ext_allowed(ext):
             return ScanResult.infected(result=f"不允许的扩展名: {ext or '(无扩展名)'}", matched=ext)
 
+        # 2.5) 声明 MIME 与扩展名一致性（MIME 欺骗）。仅对非空声明 MIME 生效；
+        #      空声明（未提供）无法校验，交由魔数/content 校验兜底。
+        expected_mime = _MIME_BY_EXT.get(ext)
+        if expected_mime and mime_type and mime_type.strip().lower() != expected_mime:
+            return ScanResult.infected(
+                result=f"声明 MIME 与扩展名不一致（MIME 欺骗）: {filename} ({mime_type})", matched=mime_type)
+
         # 3) 大小上限
         if len(data) > config.MAX_UPLOAD_SIZE:
             return ScanResult.error(
@@ -324,6 +356,29 @@ def get_scanner() -> FileScanner:
 def scan_bytes(data: bytes, filename: str, mime_type: str) -> ScanResult:
     """便捷入口：使用当前配置的扫描器扫描一段字节内容。"""
     return get_scanner().scan(data, filename, mime_type)
+
+
+def check_scanner_available() -> bool:
+    """返回当前配置扫描器是否可用（readiness 探活）。
+
+    - ClamAV：真实 EICAR 探活（仅当识别出 Eicar 才算可用，fail-closed）。
+    - sanitizing（纯静态校验，dev/test）与 noop：视为可用。
+    - 生产未配置 clamav（get_scanner 抛错）→ False。
+    """
+    try:
+        scanner = get_scanner()
+    except Exception:  # noqa: BLE001 - 配置不合格/未知 provider → 不可用
+        return False
+    if isinstance(scanner, SanitizingScanner):
+        inner = scanner.inner
+        if isinstance(inner, ClamAVScanner):
+            return inner.probe()
+        return True  # sanitizing+noop：仅静态校验，dev/test 视为可用
+    if isinstance(scanner, ClamAVScanner):
+        return scanner.probe()
+    if isinstance(scanner, NoopScanner):
+        return True
+    return False
 
 
 def run_scan(record) -> str:

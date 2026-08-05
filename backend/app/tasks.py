@@ -14,7 +14,8 @@ from celery import Celery
 
 from . import config
 from .database import SessionLocal
-from .models import TaskRecord
+from .models import TaskRecord, SupplierInvitation, Inquiry
+from .notifier import NotifierError
 from .serializers import gen_id
 
 logger = logging.getLogger("procurement.tasks")
@@ -44,6 +45,30 @@ celery_app.conf.update(
 )
 
 
+def _resolve_attribution(db, payload: dict | None) -> tuple[str | None, str | None]:
+    """从任务载荷解析归属（user_id / organization），用于横向越权与跨组织隔离（P0-7）。
+
+    优先取载荷显式字段；否则若载荷携带 inquiry_id，则回查该询价的
+    organization 与 owner_id 作为归属。解析失败不阻断任务（返回 None）。
+    """
+    if not payload:
+        return None, None
+    user_id = payload.get("user_id")
+    organization = payload.get("organization")
+    inquiry_id = payload.get("inquiry_id")
+    if inquiry_id and (not organization or not user_id):
+        try:
+            inq = db.query(Inquiry).filter(Inquiry.id == inquiry_id).first()
+            if inq is not None:
+                if not organization:
+                    organization = inq.organization
+                if not user_id:
+                    user_id = inq.owner_id
+        except Exception:  # noqa: BLE001 - 归属解析失败不阻断任务
+            logger.warning("task_attribution_resolve_failed", extra={"extra_fields": {"inquiry_id": inquiry_id}})
+    return user_id, organization
+
+
 def _mark_task(
     task_name: str,
     idempotency_key: str | None,
@@ -57,11 +82,13 @@ def _mark_task(
 
     供任务体（running）与基类 on_success/on_failure（succeeded/permanent_failure）调用。
     独立 session，后台任务失败不影响主流程。
+    P0-7：写入时解析并填充 user_id / organization 归属，供任务列表做可见性隔离。
     """
     if not idempotency_key:
         return
     db = SessionLocal()
     try:
+        user_id, organization = _resolve_attribution(db, payload)
         rec = db.query(TaskRecord).filter(TaskRecord.idempotency_key == idempotency_key).first()
         if rec is None:
             rec = TaskRecord(
@@ -71,6 +98,8 @@ def _mark_task(
                 status=status,
                 payload=payload or {},
                 business_event_id=business_event_id,
+                user_id=user_id,
+                organization=organization,
             )
             db.add(rec)
         rec.task_name = task_name
@@ -78,6 +107,10 @@ def _mark_task(
         rec.attempts = attempts
         rec.last_error = last_error
         rec.payload = payload or rec.payload
+        if user_id is not None:
+            rec.user_id = user_id
+        if organization is not None:
+            rec.organization = organization
         if business_event_id:
             rec.business_event_id = business_event_id
         if status == "running":
@@ -134,7 +167,11 @@ class TrackingTask(celery_app.Task):
 
 @celery_app.task(base=TrackingTask, bind=True, name="tasks.send_email_task")
 def send_email_task(self, idempotency_key=None, business_event_id=None, **payload):
-    """邮件发送：投递某询价下所有待发送/失败的邀请（幂等，delivery_status 判断）。"""
+    """邮件发送：投递某询价下所有待发送/失败的邀请（幂等，delivery_status 判断）。
+
+    P0-6：若仍有邀请未成功投递（SMTP 瞬态失败被 Provider 抛 NotifierError），
+    抛 NotifierError 使任务进入 Celery retry / dead-letter，而非谎报 ok:true。
+    """
     _mark_task(self.name, idempotency_key, "running", payload, attempts=self.request.retries + 1,
                business_event_id=business_event_id)
     from .delivery import deliver_pending_inquiry
@@ -142,6 +179,17 @@ def send_email_task(self, idempotency_key=None, business_event_id=None, **payloa
     if not inquiry_id:
         raise ValueError("send_email_task 缺少 inquiry_id")
     deliver_pending_inquiry(inquiry_id)
+    # 可重试校验：仍有 pending/failed 邀请说明投递未完成，抛可重试异常进入 retry
+    db = SessionLocal()
+    try:
+        remaining = db.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == inquiry_id,
+            SupplierInvitation.delivery_status.in_(("pending", "failed")),
+        ).count()
+    finally:
+        db.close()
+    if remaining:
+        raise NotifierError(f"询价 {inquiry_id} 仍有 {remaining} 封邮件未投递，可重试")
     return {"ok": True, "inquiry_id": inquiry_id}
 
 
@@ -161,24 +209,38 @@ def send_inquiry_reminder_task(self, idempotency_key=None, business_event_id=Non
 
 @celery_app.task(base=TrackingTask, bind=True, name="tasks.batch_notify_task")
 def batch_notify_task(self, idempotency_key=None, business_event_id=None, **payload):
-    """批量通知：逐条经 notifier 发送（LogNotifier 模拟 / EmailNotifier 真实发送）。"""
+    """批量通知：逐条经 notifier 发送，返回逐项结果。
+
+    P0-6：
+    - 返回项级结果（results），ok 反映整体是否全部成功，部分失败不返回无条件 ok:true。
+    - 未配置渠道（notifier is None）的项记为失败，不假装已发送。
+    - 任一投递抛 NotifierError（可重试瞬态失败）→ 整体抛 NotifierError，使 Celery 进入 retry。
+    """
     _mark_task(self.name, idempotency_key, "running", payload, attempts=self.request.retries + 1,
                business_event_id=business_event_id)
-    from .notifier import get_notifier
+    from .notifier import get_notifier, NotifierError
     notifier = get_notifier()
+    results: list[dict] = []
     sent = 0
+    failed = 0
     for item in payload.get("items") or []:
+        to = item.get("to", "")
         if notifier is None:
+            results.append({"to": to, "ok": False, "error": "未配置通知渠道"})
+            failed += 1
             continue
-        result = notifier.send(
-            item.get("to", ""),
-            item.get("subject", ""),
-            item.get("body", ""),
-            item.get("variables"),
-        )
+        try:
+            result = notifier.send(to, item.get("subject", ""), item.get("body", ""), item.get("variables"))
+        except NotifierError as exc:
+            # 可重试瞬态失败：收集已处理项后整体重试，避免谎报成功
+            logger.warning("batch_notify_retryable_failure", extra={"extra_fields": {"to": to, "error": str(exc)}})
+            raise NotifierError(f"批量通知失败（可重试）: {exc}") from exc
+        results.append({"to": to, "ok": result.success, "error": result.error or None})
         if result.success:
             sent += 1
-    return {"ok": True, "sent": sent}
+        else:
+            failed += 1
+    return {"ok": failed == 0, "sent": sent, "failed": failed, "results": results}
 
 
 @celery_app.task(base=TrackingTask, bind=True, name="tasks.export_task")
@@ -204,14 +266,28 @@ def export_task(self, idempotency_key=None, business_event_id=None, **payload):
 
 @celery_app.task(base=TrackingTask, bind=True, name="tasks.ai_slow_task")
 def ai_slow_task(self, idempotency_key=None, business_event_id=None, **payload):
-    """慢 AI 请求：本地/远程 AI 执行迁出请求线程（失败将由 autoretry 重试）。"""
+    """慢 AI 请求：本地/远程 AI 执行迁出请求线程（失败将由 autoretry 重试）。
+
+    使用配置的 AI provider 工厂（get_provider）而非硬编码 LocalRuleProvider；
+    仅在工厂不可用时才显式回退本地规则并记录原因。
+    """
     _mark_task(self.name, idempotency_key, "running", payload, attempts=self.request.retries + 1,
                business_event_id=business_event_id)
     import asyncio
-    from .ai import execute
+    from .ai import execute, get_provider
     from .ai.local import LocalRuleProvider
     action = payload.get("action", "inquiry-description")
     args = payload.get("args") or {}
-    provider = LocalRuleProvider()
+    provider = None
+    try:
+        provider = get_provider()
+        if provider is None:
+            logger.warning("ai_provider_factory_fallback",
+                           extra={"extra_fields": {"reason": "get_provider() 返回 None", "action": action}})
+            provider = LocalRuleProvider()
+    except Exception as exc:  # noqa: BLE001 - 工厂异常时回退本地规则
+        logger.warning("ai_provider_factory_fallback",
+                       extra={"extra_fields": {"reason": f"{type(exc).__name__}: {exc}", "action": action}})
+        provider = LocalRuleProvider()
     result = asyncio.run(execute(action, args, payload.get("user_id", "system"), provider))
     return {"ok": True, "action": action, "source": result.source}

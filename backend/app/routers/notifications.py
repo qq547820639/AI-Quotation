@@ -7,8 +7,12 @@ P1-8 Task 12：
 - 新增 GET/PUT /notifications/preferences 读写用户级通知偏好（user_notification_preferences 表）
 - create 默认归属当前用户
 """
+from __future__ import annotations
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from ..database import get_db
 from ..models import User, Notification, UserNotificationPreference
@@ -23,6 +27,13 @@ from ..events import publish
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 NOTIFICATION_LIMIT = 100
+
+
+class WebhookEventBody(BaseModel):
+    """邮件 Provider 异步状态事件（P0-6）：delivered / opened / bounced。"""
+    event: str  # delivered / opened / bounced
+    ref: str    # provider_message_id
+    payload: Optional[dict] = None
 
 
 @router.get("", response_model=list[NotificationSchema])
@@ -162,3 +173,23 @@ def update_preferences(
         approvalResult=pref.approval_result,
         inquirySent=pref.inquiry_sent,
     )
+
+
+# ============ 邮件 Provider 状态 Webhook（P0-6） ============
+
+@router.post("/webhooks/{provider}", status_code=200)
+def status_webhook(provider: str, body: WebhookEventBody):
+    """邮件投递异步状态回调（delivered/opened/bounced）。
+
+    由外部邮件 Provider / Mailpit UI 调用，经标准 Provider.handle_status_hook()
+    回填 email_delivery_records 对应投递记录。无需认证（外部服务回调）。
+    """
+    from ..notifier import get_notifier, ProviderNotifier
+    notifier = get_notifier()
+    prov = notifier.provider if isinstance(notifier, ProviderNotifier) else None
+    if prov is None or prov.name != provider:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"未知投递 provider: {provider}")
+    consumed = prov.handle_status_hook(body.event, body.ref, body.payload)
+    if not consumed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到匹配的投递记录")
+    return {"ok": True, "provider": provider, "event": body.event}

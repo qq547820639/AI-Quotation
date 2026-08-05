@@ -25,6 +25,9 @@ def _set_prod(monkeypatch, **kwargs):
         "CELERY_BROKER_URL": "redis://localhost:6379/0",
         "CELERY_RESULT_BACKEND": "redis://localhost:6379/0",
         "CELERY_TASK_ALWAYS_EAGER": False,
+        "NOTIFY_CHANNEL": "email",
+        "SMTP_HOST": "smtp.example.com",
+        "SMTP_FROM": "no-reply@example.com",
     }
     defaults.update(kwargs)
     for k, v in defaults.items():
@@ -111,9 +114,69 @@ def test_prod_s3_configured_and_available(monkeypatch):
     )
     monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
     from app.storage import S3Storage
-    s3 = S3Storage(endpoint="http://minio:9000", bucket="b", access_key="a", secret_key="s")
+    # 注入探活通过的 fake client（真实驱动 probe 往返，避免依赖真实 MinIO）
+    s3 = S3Storage(
+        endpoint="http://minio:9000", bucket="b", access_key="a", secret_key="s",
+        client=_FakeS3Client(),
+    )
     monkeypatch.setattr(config_validation, "get_storage", lambda: s3)
     assert config_validation.validate_production_config() == []
+
+
+def test_prod_s3_required_but_not_configured(monkeypatch):
+    """生产强制 S3（S3_REQUIRED=true）但 S3_* 缺失 → 拒绝，禁止回退本地磁盘。"""
+    _set_prod(monkeypatch)  # 默认 S3_* 为空
+    monkeypatch.setattr(config, "S3_REQUIRED", True)
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    errors = config_validation.validate_production_config()
+    assert any("S3" in e and "S3_REQUIRED" in e for e in errors)
+
+
+def test_prod_s3_probe_fails(monkeypatch):
+    """生产 S3 配置齐全但真实探活失败 → 拒绝（禁止回退本地存储）。"""
+    _set_prod(
+        monkeypatch,
+        S3_ENDPOINT="http://minio:9000",
+        S3_BUCKET="b",
+        S3_ACCESS_KEY="a",
+        S3_SECRET_KEY="s",
+    )
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    from app.storage import S3Storage
+
+    class _FailClient:
+        def head_bucket(self, **kw):
+            pass
+        def put_object(self, **kw):
+            raise RuntimeError("put failed")
+
+    s3 = S3Storage(endpoint="http://x", bucket="b", access_key="a", secret_key="s", client=_FailClient())
+    monkeypatch.setattr(config_validation, "get_storage", lambda: s3)
+    errors = config_validation.validate_production_config()
+    assert any("S3" in e or "MinIO" in e for e in errors)
+
+
+def _FakeS3Client():
+    """探活可通过的内存版最小 S3 客户端（head/write/read/delete 全通过）。"""
+    class _Body:
+        def __init__(self, data):
+            self._data = data
+        def read(self):
+            return self._data
+    class _Client:
+        def __init__(self):
+            self.objects = {}
+        def head_bucket(self, **kw):
+            pass
+        def create_bucket(self, **kw):
+            pass
+        def put_object(self, Bucket=None, Key=None, Body=None):
+            self.objects[Key] = Body
+        def get_object(self, Bucket=None, Key=None):
+            return {"Body": _Body(self.objects[Key])}
+        def delete_object(self, Bucket=None, Key=None):
+            self.objects.pop(Key, None)
+    return _Client()
 
 
 def test_assert_production_config_raises_on_errors(monkeypatch):
@@ -221,3 +284,86 @@ def test_errors_do_not_leak_secrets(monkeypatch):
     assert secret not in joined
     assert demo_pw not in joined
     assert errors  # 至少应因 SCANNER_PROVIDER=noop 报错
+
+
+# ============ P0-6：生产通知渠道校验 ============
+
+def test_prod_notify_log_forbidden(monkeypatch):
+    """prod + NOTIFY_CHANNEL=log → 拒绝（禁止生产用日志假成功）"""
+    _set_prod(monkeypatch, NOTIFY_CHANNEL="log")
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    errors = config_validation.validate_production_config()
+    assert any("NOTIFY_CHANNEL" in e and "log" in e for e in errors)
+
+
+def test_prod_notify_mailpit_forbidden(monkeypatch):
+    """prod + NOTIFY_CHANNEL=mailpit → 拒绝（开发/E2E 渠道）"""
+    _set_prod(monkeypatch, NOTIFY_CHANNEL="mailpit")
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    errors = config_validation.validate_production_config()
+    assert any("NOTIFY_CHANNEL" in e and "mailpit" in e for e in errors)
+
+
+def test_prod_notify_none_forbidden(monkeypatch):
+    """prod + NOTIFY_CHANNEL=none → 拒绝（不投递通知）"""
+    _set_prod(monkeypatch, NOTIFY_CHANNEL="none")
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    errors = config_validation.validate_production_config()
+    assert any("NOTIFY_CHANNEL" in e and "none" in e for e in errors)
+
+
+def test_prod_notify_email_incomplete_smtp_forbidden(monkeypatch):
+    """prod + NOTIFY_CHANNEL=email 但 SMTP_HOST/SMTP_FROM 缺失 → 拒绝（禁止回退 LogNotifier）"""
+    _set_prod(monkeypatch, SMTP_HOST="", SMTP_FROM="")
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    errors = config_validation.validate_production_config()
+    assert any("SMTP" in e and "回退" in e for e in errors)
+
+
+def test_prod_notify_email_complete_ok(monkeypatch):
+    """prod + NOTIFY_CHANNEL=email 且 SMTP 完整 → 通过"""
+    _set_prod(monkeypatch)
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    errors = config_validation.validate_production_config()
+    assert not any("NOTIFY_CHANNEL" in e or "SMTP" in e for e in errors)
+
+
+# ============ CORS_ORIGINS 解析（P0-2） ============
+
+
+def test_parse_cors_origins_default_when_empty():
+    """未设置 CORS_ORIGINS → 回退本地开发默认项"""
+    assert config.parse_cors_origins(None) == [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ]
+    assert config.parse_cors_origins("") == config.parse_cors_origins(None)
+
+
+def test_parse_cors_origins_comma_separated():
+    """逗号分隔：去除空白、丢弃空项"""
+    assert config.parse_cors_origins(
+        " https://a.com , https://b.com ,  ,https://c.com "
+    ) == ["https://a.com", "https://b.com", "https://c.com"]
+
+
+def test_parse_cors_origins_json_array():
+    """JSON 数组字符串：逐项 strip 并丢弃空项"""
+    assert config.parse_cors_origins(
+        '["https://a.com", "https://b.com", "", "https://c.com"]'
+    ) == ["https://a.com", "https://b.com", "https://c.com"]
+
+
+def test_parse_cors_origins_json_invalid_falls_back_to_comma():
+    """非法 JSON（以 [ 开头但解析失败）→ 回退逗号切分"""
+    assert config.parse_cors_origins('[https://a.com, https://b.com]') == [
+        "[https://a.com",
+        "https://b.com]",
+    ]
+
+
+def test_parse_cors_origins_json_non_list_falls_back_to_comma():
+    """JSON 解析成功但非 list（如字符串/对象）→ 回退逗号切分"""
+    assert config.parse_cors_origins('"https://a.com"') == ['"https://a.com"']

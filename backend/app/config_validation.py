@@ -7,7 +7,7 @@
 - 不安全 SECRET_KEY → 拒绝
 - 生产非 clamav 扫描器 → 拒绝
 - 生产 REDIS_REQUIRED 但无 REDIS_URL，或配置了 REDIS_URL 但连接不可用 → 拒绝
-- 生产 S3 配置齐全但客户端不可用 → 拒绝（禁止回退本地存储）
+- 生产强制 S3/MinIO（S3_REQUIRED）：配置缺失 → 拒绝；配置齐全但真实探活失败 → 拒绝（禁止回退本地存储）
 """
 from __future__ import annotations
 
@@ -95,15 +95,57 @@ def _no_in_memory_backend_ok() -> tuple[bool, str | None]:
     return True, None
 
 
+def _public_url_ok() -> tuple[bool, str | None]:
+    """生产 PUBLIC_APP_URL（若配置）必须为 HTTPS 且禁止 localhost/回环地址。
+
+    说明：PUBLIC_APP_URL 为空时不做强制（兼容未显式配置的部署，URL Builder 会回退到
+    PORTAL_BASE_URL origin 或相对路径）；一旦配置，则必须满足 HTTPS 与非 localhost 硬性
+    要求，防止生产发出 http://localhost 邀请链接。末尾路径重复（以 / 结尾）已在
+    config.normalize_public_app_url 加载时去除。
+    """
+    url = config.normalize_public_app_url(config.PUBLIC_APP_URL)
+    if not url:
+        return True, None
+    if "://" not in url:
+        return False, "生产环境 PUBLIC_APP_URL 必须包含协议（如 https://）"
+    scheme = url.split("://", 1)[0].lower()
+    if scheme != "https":
+        return False, f"生产环境 PUBLIC_APP_URL 必须为 HTTPS（当前为 {scheme}）"
+    host = url.split("://", 1)[1].split("/", 1)[0]
+    hostname = host.split(":")[0].lower()
+    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+        return False, "生产环境 PUBLIC_APP_URL 禁止使用 localhost/本机回环地址"
+    return True, None
+
+
+def _notify_ok() -> tuple[bool, str | None]:
+    """生产通知渠道校验（P0-6）：禁止 log/mailpit/none 渠道，禁止 SMTP 不完整时回退 LogProvider。"""
+    channel = config.NOTIFY_CHANNEL
+    if channel in ("log", "mailpit", "mailhog", "none"):
+        return False, f"生产环境 NOTIFY_CHANNEL={channel} 为开发/测试渠道，必须配置 email"
+    if channel == "email":
+        if not (config.SMTP_HOST and config.SMTP_FROM):
+            return False, "生产环境 NOTIFY_CHANNEL=email 但 SMTP 配置不完整（SMTP_HOST/SMTP_FROM 必填），禁止回退 LogNotifier"
+        return True, None
+    return False, f"生产环境 NOTIFY_CHANNEL 非法: {channel}"
+
+
 def _storage_ok() -> tuple[bool, str | None]:
-    """若 S3 配置齐全但客户端不可用 → 拒绝（禁止静默回退本地存储）。"""
+    """生产强制 S3/MinIO，禁止静默回退本地磁盘。
+
+    - S3_* 配置缺失：若 S3_REQUIRED（生产默认 true）→ 拒绝；否则（dev/test）允许本地存储。
+    - S3_* 配置齐全：必须使用 S3Storage，且真实探活（head bucket/create/write/read/delete）通过，
+      否则拒绝启动（禁止回退本地存储）。
+    """
     if not all([config.S3_ENDPOINT, config.S3_BUCKET, config.S3_ACCESS_KEY, config.S3_SECRET_KEY]):
+        if config.S3_REQUIRED:
+            return False, "生产环境强制 S3/MinIO（S3_REQUIRED=true），但 S3_* 配置缺失，禁止回退本地磁盘"
         return True, None
     storage = get_storage()
     if not isinstance(storage, S3Storage):
         return False, "S3 配置已齐全但未使用 S3Storage"
-    if not storage.is_available():
-        return False, "S3/MinIO 客户端不可用（检查端点/密钥/boto3），禁止回退本地存储"
+    if not storage.probe():
+        return False, "S3/MinIO 探活失败（head bucket/写入/读取/删除），禁止回退本地存储"
     return True, None
 
 
@@ -138,6 +180,14 @@ def validate_production_config() -> list[str]:
     storage_ok, storage_err = _storage_ok()
     if not storage_ok:
         errors.append(storage_err or "对象存储校验失败")
+
+    public_ok, public_err = _public_url_ok()
+    if not public_ok:
+        errors.append(public_err or "PUBLIC_APP_URL 校验失败")
+
+    notify_ok, notify_err = _notify_ok()
+    if not notify_ok:
+        errors.append(notify_err or "通知渠道校验失败")
 
     return errors
 

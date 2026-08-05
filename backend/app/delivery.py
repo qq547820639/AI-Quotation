@@ -65,7 +65,8 @@ def _invitation_context(invitation: SupplierInvitation, db: Session) -> dict:
     if not raw_token:
         # 防御性处理：绝不对明文 token 已丢失的邀请发出空/失效链接
         raise ValueError("invitation raw token is missing; cannot build a valid portal link")
-    portal_url = f"{config.PORTAL_BASE_URL}?token={raw_token}"
+    # 统一 canonical 邀请链接：/supplier-portal/{urlencodedToken}，由 URL Builder 生成
+    portal_url = config.build_invitation_url(raw_token)
     return {
         "inquiryCode": inquiry.code if inquiry else "",
         "subject": inquiry.subject if inquiry else "",

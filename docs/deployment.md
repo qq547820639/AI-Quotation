@@ -5,12 +5,38 @@
 ### 一键启动
 
 ```bash
+# 生产：先基于模板生成安全的 .env（含 SECRET_KEY / 数据库密码 / S3 密钥等）
+cp .env.production.example .env
+# 生成安全密钥（任选其一）：
+#   openssl rand -hex 32
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+#   cd backend && python -m app.scripts.generate_secrets
+# 将生成的强密钥填入 .env 的 SECRET_KEY 后启动：
 docker compose up -d --build
 ```
 
 - 前端：http://localhost（nginx 静态文件 + API 反代）
 - 后端：http://localhost:8080（内部通信，不直接暴露）
 - 就绪检查：http://localhost:8080/api/ready（Docker healthcheck 探测用）
+
+> **生产 fail-fast**：`APP_ENV=prod` 时后端启动会调用 `config_validation.assert_production_config()`，
+> 对 `SECRET_KEY`（默认/过短）、`CORS_ORIGINS`（仅 localhost）、`SCANNER_PROVIDER`（非 clamav）、
+> `NOTIFY_CHANNEL`（非 email）、Redis/S3 探活等做强制校验，不满足则拒绝启动。因此生产必须通过
+> `.env` 注入真实强密钥，不能依赖 compose 中的开发默认值。
+
+### 持久化任务队列（Celery，P0-5）
+
+`docker-compose.yml` 内置以下服务（与 `backend` 同镜像、同环境变量）：
+
+| 服务                  | 职责                                                                             | 启动命令                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `celery-worker`       | 消费持久化任务队列（默认队列 `procurement`），并发/超时/重试策略可经环境变量覆盖 | `celery -A app.tasks worker --loglevel=... --concurrency=... -Q procurement --soft-time-limit=... --time-limit=...` |
+| `outbox-dispatcher`   | 持续循环扫描 pending outbox 事件投递到 Celery（不丢事件），默认每 5s 轮询        | `while true; do python -c 'from app.queue_client import dispatch_outbox; ...'; sleep 5; done`                       |
+| `celery-beat`（可选） | 周期任务调度器（如截止提醒 `send_inquiry_reminder_task`）占位                    | `celery -A app.tasks beat --loglevel=...`                                                                           |
+
+可调环境变量：`CELERY_LOG_LEVEL`、`CELERY_WORKER_CONCURRENCY`、`CELERY_QUEUE_NAME`、
+`CELERY_TASK_SOFT_TIME_LIMIT`、`CELERY_TASK_TIME_LIMIT`、`OUTBOX_POLL_INTERVAL_SECONDS`。
+需要定时任务时，在 `backend/app/tasks.py` 的 `celery_app.conf.beat_schedule` 中登记即可。
 
 ### 服务架构
 

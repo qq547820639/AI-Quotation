@@ -1,8 +1,13 @@
 """种子数据初始化
 
-首启时若 DB 为空，注入种子数据（从 src/mock/ 转写）。
-init_db(db) 由 main.py lifespan 调用。
+- seed_demo(db)：注入演示种子数据（从 src/mock/ 转写）。仅允许 dev/test 或显式 demo 模式，
+  生产（APP_ENV=prod 且未显式 APP_DEMO_MODE）拒绝，防止演示业务数据写入生产库。
+- bootstrap_admin(...)：幂等创建首个管理员（生产引导用），不注入任何演示数据。
+- ensure_app_settings(db)：确保 AppSettings 单行存在（配置数据，任何环境都允许）。
+- init_db(db)：兼容旧入口，等价 seed_demo（供 main.py 与测试 conftest 使用）。
 """
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
@@ -11,8 +16,9 @@ from .models import (
     Quotation, QuotationItem, AppSettings, SupplierInvitation,
 )
 from .auth import hash_password
-from .config import DEMO_USER_PASSWORD, INVITATION_TOKEN_TTL_HOURS
+from .config import APP_ENV, APP_DEMO_MODE, DEMO_USER_PASSWORD, INVITATION_TOKEN_TTL_HOURS
 from .invitations import hash_invitation_token
+from .serializers import gen_id
 
 
 # ============ 日期辅助（对齐 mock 的 dayjs offset 语义） ============
@@ -455,24 +461,46 @@ def _seed_invitations(db: Session):
 
 # ============ 初始化 ============
 
-def init_db(db: Session):
-    """首启注入种子数据：若 users 表为空则注入"""
-    if db.query(User).count() > 0:
-        # 兼容旧库：为缺失 password_hash 的用户回填默认演示密码哈希
-        for u in db.query(User).filter(User.password_hash.is_(None)).all():
-            u.password_hash = hash_password(DEMO_USER_PASSWORD)
-        # 即便用户已存在，也确保 AppSettings 单行存在（防止旧 DB 缺失）
-        if db.query(AppSettings).filter(AppSettings.id == 1).first() is None:
-            db.add(AppSettings(
-                id=1, approval_enabled=True, approval_amount_threshold=50000,
-                approval_approver_id="u-2", notification_deadline_reminder=True,
-                notification_deadline_reminder_hours=24, notification_quotation_submitted=True,
-                notification_approval_result=True,
-            ))
+def demo_seeding_allowed() -> bool:
+    """演示种子是否允许：仅 dev/test，或显式开启 demo 模式。
+
+    生产（APP_ENV=prod 且未显式 APP_DEMO_MODE）返回 False，防止把演示业务数据写入生产库。
+    """
+    return APP_ENV in ("dev", "test") or APP_DEMO_MODE
+
+
+def ensure_app_settings(db: Session) -> None:
+    """确保 AppSettings 单行存在（id=1）。
+
+    属配置数据（非 demo 业务数据），任何环境都应补齐；生产同样允许。
+    """
+    if db.query(AppSettings).filter(AppSettings.id == 1).first() is None:
+        db.add(AppSettings(
+            id=1, approval_enabled=True, approval_amount_threshold=50000,
+            approval_approver_id="u-2", notification_deadline_reminder=True,
+            notification_deadline_reminder_hours=24, notification_quotation_submitted=True,
+            notification_approval_result=True,
+        ))
         db.commit()
+
+
+def seed_demo(db: Session) -> None:
+    """注入演示种子数据（用户/物料/供应商/询价/报价/邀请）。
+
+    - 仅 dev/test 或显式 demo 模式允许；生产（非 demo 模式）抛 RuntimeError 拒绝。
+    - 幂等：users 表非空（已初始化）时跳过演示数据，仅确保 AppSettings。
+    - 不再以 DEMO_USER_PASSWORD 回填历史用户密码（生产禁止覆盖）。
+    """
+    if not demo_seeding_allowed():
+        raise RuntimeError(
+            "refusing to seed demo data: APP_ENV=prod 且未显式 demo 模式。"
+            "演示数据仅允许在 APP_ENV in (dev, test) 或显式 APP_DEMO_MODE=true 时注入。"
+        )
+    ensure_app_settings(db)
+    if db.query(User).count() > 0:
         return
 
-    # 用户（写入 bcrypt 密码哈希，供生产模式校验）
+    # 用户（写入 bcrypt 密码哈希，仅用于 dev/test 演示）
     for u in USERS:
         db.add(User(**u, password_hash=hash_password(DEMO_USER_PASSWORD)))
 
@@ -564,15 +592,43 @@ def init_db(db: Session):
             ))
         db.add(q)
 
-    # 设置（单行默认值）
-    db.add(AppSettings(
-        id=1, approval_enabled=True, approval_amount_threshold=50000,
-        approval_approver_id="u-2", notification_deadline_reminder=True,
-        notification_deadline_reminder_hours=24, notification_quotation_submitted=True,
-        notification_approval_result=True,
-    ))
-
     # 供应商邀请（供门户 E2E 使用）
     _seed_invitations(db)
 
     db.commit()
+
+
+def init_db(db: Session) -> None:
+    """兼容旧入口（main.py 与测试 conftest 使用）：等价于 seed_demo。"""
+    seed_demo(db)
+
+
+def bootstrap_admin(
+    db: Session,
+    *,
+    name: str,
+    password: str,
+    department: str = "信息中心",
+    organization: str = "总部",
+    role: str = "管理员",
+    admin_id: str | None = None,
+    permissions: list | None = None,
+) -> User:
+    """幂等创建首个管理员用户（生产引导用）。
+
+    - 若已存在 role=管理员 的用户，直接返回现有用户（不重复创建）。
+    - 仅创建该管理员，不注入任何 demo 用户/供应商/物料/询价/报价/邀请。
+    - password 为明文 bcrypt 输入；调用方必须保证其来自一次性 token 或 stdin，绝不写入日志。
+    """
+    existing = db.query(User).filter(User.role == role).first()
+    if existing is not None:
+        return existing
+    uid = admin_id or gen_id("u")
+    user = User(
+        id=uid, name=name, role=role, department=department,
+        organization=organization, permissions=permissions,
+        password_hash=hash_password(password),
+    )
+    db.add(user)
+    db.commit()
+    return user

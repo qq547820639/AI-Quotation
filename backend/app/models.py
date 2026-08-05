@@ -336,6 +336,34 @@ class SupplierInvitation(Base):
     supplier = relationship("Supplier")
 
 
+class EmailDeliveryRecord(Base):
+    """邮件投递记录（P0-6）
+
+    逐封邮件投递状态追踪：provider_source、provider_message_id、各阶段时间戳
+    （queued/sent/delivered/opened/bounced）、最近错误与重试次数。
+    由 Notifier/Provider 写入；异步 Webhook（delivered/opened/bounced）回填阶段时间戳。
+    """
+    __tablename__ = "email_delivery_records"
+    __table_args__ = (
+        Index("ix_email_delivery_provider_msgid", "provider", "provider_message_id"),
+    )
+    id = Column(String, primary_key=True)
+    recipient = Column(String, nullable=False, index=True)
+    subject = Column(String, nullable=True)
+    provider = Column(String, nullable=False)  # smtp / mailpit / log
+    provider_message_id = Column(String, nullable=True)
+    queued_at = Column(DateTime(timezone=True), nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    opened_at = Column(DateTime(timezone=True), nullable=True)
+    bounced_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    notification_id = Column(String, nullable=True, index=True)
+    inquiry_id = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
 class TaskRecord(Base):
     """持久化任务状态（P1 可靠性）
 
@@ -359,6 +387,10 @@ class TaskRecord(Base):
     finished_at = Column(DateTime, nullable=True)
     business_event_id = Column(String, nullable=True, index=True)  # 关联 outbox_events.id
     payload = Column(JSON, nullable=True)
+    # P0-7 安全归属：任务归属用户/组织，用于横向越权（IDOR）与跨组织可见性隔离。
+    # 由 _mark_task 从 payload / 关联询价解析填充；旧行可空。
+    user_id = Column(String, nullable=True, index=True)
+    organization = Column(String, nullable=True, index=True)
 
 
 class OutboxEvent(Base):

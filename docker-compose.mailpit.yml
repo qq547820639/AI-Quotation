@@ -1,0 +1,23 @@
+version: '3.8'
+
+# Mailpit 开发/E2E 邮件捕获服务（P0-6）
+#
+# 用法：
+#   docker compose -f docker-compose.mailpit.yml up -d
+#
+# 说明：
+#   - SMTP 端口 1025，HTTP UI/API 端口 8025。
+#   - 后端通过 NOTIFY_CHANNEL=mailpit + MAILPIT_URL=http://127.0.0.1:8025 走 MailpitProvider 投递，
+#     用于完整 E2E 验证（不真正发出邮件，UI 可查看/触发 delivered/opened/bounced 状态）。
+#   - 仅用于开发/测试；生产必须使用真实 SMTP（NOTIFY_CHANNEL=email）。
+services:
+  mailpit:
+    image: axllent/mailpit:v1.20
+    container_name: procurement-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # HTTP UI + API
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"

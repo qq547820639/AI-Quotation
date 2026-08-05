@@ -1,4 +1,5 @@
 """后端配置"""
+import json
 import os
 from pathlib import Path
 
@@ -21,13 +22,45 @@ DB_MAX_OVERFLOW = int(os.environ.get("DB_MAX_OVERFLOW", "20"))
 # 连接前置 ping，避免使用已断开的池化连接（生产建议开启）
 DB_POOL_PRE_PING = os.environ.get("DB_POOL_PRE_PING", "true").lower() in ("1", "true", "yes")
 
-# CORS 白名单：开发环境允许前端 vite dev server
-CORS_ORIGINS = [
+# CORS 白名单：开发环境允许前端 vite dev server（未设置 CORS_ORIGINS 时使用以下默认项，保证 dev/test 正常）
+_DEFAULT_CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:4173",
     "http://127.0.0.1:4173",
 ]
+
+
+def _split_cors_origins(raw: str) -> list[str]:
+    """按逗号切分 CORS 白名单：去除首尾空白、丢弃空项。"""
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def parse_cors_origins(raw: str | None) -> list[str]:
+    """解析 CORS_ORIGINS 环境变量。
+
+    支持两种格式：
+    - JSON 数组字符串：`["https://a.com","https://b.com"]`（以 `[` 开头时优先 json.loads）
+    - 逗号分隔：`https://a.com,https://b.com`
+
+    解析失败/未设置时回退到本地开发默认项（避免破坏 dev/test）。
+    """
+    if not raw:
+        return list(_DEFAULT_CORS_ORIGINS)
+    value = raw.strip()
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(o).strip() for o in parsed if str(o).strip()]
+        except (ValueError, TypeError):
+            pass
+        # json 解析失败（非法 JSON）时回退到逗号切分
+        return _split_cors_origins(value)
+    return _split_cors_origins(value)
+
+
+CORS_ORIGINS = parse_cors_origins(os.environ.get("CORS_ORIGINS"))
 
 # ============ 认证与安全配置 ============
 
@@ -66,6 +99,18 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "")
 S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "")
 S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "")
 
+# ============ 对象存储强制与探活（P0-8） ============
+# 生产默认强制 S3/MinIO（S3_REQUIRED=true），禁止静默回退本地磁盘；
+# 本地磁盘仅 dev/test 显式开启（S3_REQUIRED=false）。
+S3_REQUIRED = os.environ.get(
+    "S3_REQUIRED", "true" if APP_ENV == "prod" else "false"
+).lower() in ("1", "true", "yes")
+# S3/MinIO 探活（head bucket → 写入临时对象 → 读取 → 删除）读/写超时上限（秒）
+S3_PROBE_TIMEOUT_SECONDS = float(os.environ.get("S3_PROBE_TIMEOUT_SECONDS", "15"))
+# MinIO bucket 初始化相关（readiness 内 head/create 判断），秒
+S3_BUCKET_INIT_RETRIES = int(os.environ.get("S3_BUCKET_INIT_RETRIES", "5"))
+S3_BUCKET_INIT_BACKOFF_SECONDS = float(os.environ.get("S3_BUCKET_INIT_BACKOFF_SECONDS", "2"))
+
 # 安全响应头（CSP/HSTS 从环境变量读取，宽松默认）
 # 收紧的 CSP：限制 frame 嵌入（frame-ancestors 'none'）、禁用 object（object-src 'none'）、
 # 限制 base/form 来源。script-src 移除 'unsafe-inline'（前端构建产物无内联脚本，见 dist/index.html）。
@@ -83,6 +128,59 @@ PERMISSIONS_POLICY = os.environ.get(
     "camera=(), microphone=(), geolocation=(), payment=()",
 )
 
+# ============ 公共应用地址与供应商邀请 canonical URL（P0-4） ============
+
+# 面向供应商的公开入口地址（含协议/主机/可选反向代理子路径），用于统一 URL Builder
+# 拼接 `/supplier-portal/{urlencodedInvitationToken}` 完整邀请链接。
+# 生产必须为 HTTPS 且禁止 localhost（见 config_validation）。留空时 builder 回退到
+# PORTAL_BASE_URL 的 origin；两者皆无则回退相对路径，便于开发/测试。
+PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "").strip().rstrip("/")
+
+
+def normalize_public_app_url(url: str) -> str:
+    """规范化公开应用地址：去除首尾空白与末尾斜杠（含多个），返回无尾斜杠 URL。
+
+    正确处理反向代理子路径：保留路径部分（如 https://example.com/procurement），
+    仅统一去除末尾冗余斜杠，避免生成 `/supplier-portal//token` 之类的重复路径分隔符。
+    """
+    return (url or "").strip().rstrip("/")
+
+
+def _portal_origin() -> str:
+    """从 PORTAL_BASE_URL（兼容旧配置）推导公开源：取 scheme://host[:port]。
+
+    旧格式 PORTAL_BASE_URL 形如 `http://localhost:5173/portal`，其中 `/portal` 为已
+    废弃的查询参数路由路径，逐字保留会与 canonical `/supplier-portal/{token}` 冲突，
+    故仅取其 origin 部分用于拼接。
+    """
+    base = (PORTAL_BASE_URL or "").strip().rstrip("/")
+    if "://" not in base:
+        return ""
+    scheme, _, rest = base.partition("://")
+    host_port = rest.split("/", 1)[0]
+    return f"{scheme}://{host_port}"
+
+
+def build_invitation_url(raw_token: str) -> str:
+    """统一供应商邀请链接 URL Builder（P0-4）。
+
+    生成 canonical 地址 `/supplier-portal/{urlencodedInvitationToken}`：
+    - token 始终 URL 安全编码（quote(raw_token, safe='')），防止路径注入/特殊字符破坏路由。
+    - 优先用 PUBLIC_APP_URL 拼接完整地址（含协议/主机/可选子路径）。
+    - 未配置 PUBLIC_APP_URL 时回退到 PORTAL_BASE_URL 的 origin；两者皆无则回退相对路径
+      `/supplier-portal/{token}`（便于开发/测试，不伪造失效链接）。
+    - 不再生成旧格式 `/portal?token=...`。
+    """
+    from urllib.parse import quote
+    encoded = quote(raw_token, safe="")
+    base = normalize_public_app_url(PUBLIC_APP_URL)
+    if not base:
+        base = _portal_origin()
+    if not base:
+        return f"/supplier-portal/{encoded}"
+    return f"{base}/supplier-portal/{encoded}"
+
+
 # ============ 供应商邀请 ============
 
 # 邀请 token 有效期（小时），默认 72 小时
@@ -94,13 +192,17 @@ INVITATION_TOKEN_TTL_HOURS = int(os.environ.get("INVITATION_TOKEN_TTL_HOURS", "7
 # none 时投递记录保持 pending，不假装已发送成功。
 NOTIFY_CHANNEL = os.environ.get("NOTIFY_CHANNEL", "log").strip().lower()
 
-# SMTP 配置（仅 NOTIFY_CHANNEL=email 时生效；未配置则回退到 LogNotifier，避免测试/CI 发真实邮件）
+# SMTP 配置（仅 NOTIFY_CHANNEL=email 时生效）。生产环境 SMTP 不完整时拒绝启动，禁止回退 LogNotifier。
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", "")
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
+
+# Mailpit / MailHog 开发/E2E 渠道：Mailpit HTTP API 基地址（docker-compose.mailpit.yml 提供）
+# NOTIFY_CHANNEL=mailpit|mailhog 时使用 MailpitProvider 投递，用于完整 E2E（SMTP :1025 / HTTP :8025）。
+MAILPIT_URL = os.environ.get("MAILPIT_URL", "http://127.0.0.1:8025")
 
 # 供应商门户基础地址（用于模板中的 portalUrl 变量）
 PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "http://localhost:5173/portal")
@@ -134,6 +236,15 @@ CLAMAV_TIMEOUT_SECONDS = float(os.environ.get("CLAMAV_TIMEOUT_SECONDS", "30"))
 CLAMAV_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("CLAMAV_CONNECT_TIMEOUT_SECONDS", "5"))
 # 扫描服务不可用/超时时是否放行（fail-open）。生产默认 false（fail-closed：返回 error，禁止下载）。
 SCAN_FAIL_OPEN = os.environ.get("SCAN_FAIL_OPEN", "false").lower() in ("1", "true", "yes")
+
+# ============ ClamAV 强制与探活（P0-8） ============
+# 生产是否强制使用真实 ClamAV（CLAMAV_REQUIRED）。生产默认 true；不可用/未配置时 fail-closed，
+# 禁止生产静默回退到 noop/纯静态校验。
+CLAMAV_REQUIRED = os.environ.get(
+    "CLAMAV_REQUIRED", "true" if APP_ENV == "prod" else "false"
+).lower() in ("1", "true", "yes")
+# ClamAV 探活（EICAR 扫描）超时（秒）。探活通过 EICAR 字符串证明病毒库已加载且扫描链路可用。
+CLAMAV_PROBE_TIMEOUT_SECONDS = float(os.environ.get("CLAMAV_PROBE_TIMEOUT_SECONDS", "10"))
 
 # ============ 生产环境（P1 预留） ============
 

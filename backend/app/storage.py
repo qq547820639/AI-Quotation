@@ -11,7 +11,7 @@ import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Tuple
-from .config import UPLOAD_DIR, ALLOWED_UPLOAD_EXTENSIONS
+from .config import UPLOAD_DIR, ALLOWED_UPLOAD_EXTENSIONS, S3_REQUIRED
 
 # S3 配置：环境变量
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
@@ -82,6 +82,16 @@ class Storage(ABC):
         """获取本地文件路径（仅 LocalStorage 有意义，其他存储返回 None）。"""
         pass
 
+    @abstractmethod
+    def probe(self, timeout: Optional[float] = None) -> bool:
+        """探活：存储是否可用。
+
+        - S3Storage：head bucket →（必要时创建 bucket）→ 写入临时对象 → 读取 → 删除，
+          用有限超时往返验证读写链路，禁止仅凭客户端创建成功判断可用。
+        - LocalStorage：本地磁盘恒可用，返回 True。
+        """
+        pass
+
 
 class LocalStorage(Storage):
     """本地文件系统存储"""
@@ -138,6 +148,10 @@ class LocalStorage(Storage):
     def get_local_path(self, attachment_id: str) -> Optional[Path]:
         return self._get_candidate_path(attachment_id)
 
+    def probe(self, timeout: Optional[float] = None) -> bool:
+        """本地磁盘恒可用（已由 __init__ 创建目录）。"""
+        return True
+
 
 class S3Storage(Storage):
     """S3 兼容对象存储（MinIO / AWS S3）
@@ -155,17 +169,26 @@ class S3Storage(Storage):
         bucket: str = S3_BUCKET,
         access_key: str = S3_ACCESS_KEY,
         secret_key: str = S3_SECRET_KEY,
+        client=None,
+        probe_timeout: Optional[float] = None,
     ):
         self.endpoint = endpoint
         self.bucket = bucket
         self.access_key = access_key
         self.secret_key = secret_key
+        # 可注入的底层客户端（测试用 fake client；生产为 None，走真实 boto3）。探活函数本身可测。
+        self._injected_client = client
+        self._probe_timeout = probe_timeout
         self._client = None
         self._initialized = False
 
     def _init_client(self):
-        """懒加载 boto3 客户端"""
+        """懒加载 S3 客户端：优先使用注入的 fake client（测试），否则创建真实 boto3 客户端。"""
         if self._initialized:
+            return
+        if self._injected_client is not None:
+            self._client = self._injected_client
+            self._initialized = True
             return
         if not all([self.endpoint, self.bucket, self.access_key, self.secret_key]):
             self._initialized = True
@@ -189,14 +212,60 @@ class S3Storage(Storage):
             # boto3 未安装，回退到不初始化
             pass
         except Exception:
-            # 配置错误，不初始化，后续 fallback
+            # 配置错误，不初始化，后续 fail-closed
             pass
         self._initialized = True
 
-    def is_available(self) -> bool:
-        """客户端是否已初始化成功（用于生产启动校验，禁止静默降级到本地）。"""
+    @staticmethod
+    def _s3_error_code(exc: Exception) -> str:
+        """从异常中尽量提取 S3 错误码（ClientError.response.Error.Code 等），提取不到返回空串。"""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            err = resp.get("Error", {})
+            if isinstance(err, dict) and err.get("Code"):
+                return str(err["Code"])
+        code = getattr(exc, "code", None)
+        if code:
+            return str(code)
+        return ""
+
+    def probe(self, timeout: Optional[float] = None) -> bool:
+        """真实探活：head bucket →（若不存在则创建）→ 写入临时对象 → 读取 → 删除。
+
+        用有限超时的往返验证读写链路，而非仅凭客户端对象创建成功判断可用。
+        任何一步失败即返回 False（fail-closed）。
+        """
         self._init_client()
-        return self._client is not None
+        if self._client is None:
+            return False
+        if not self.bucket:
+            return False
+        import uuid
+        token = f"probe-{uuid.uuid4().hex}".encode("ascii")
+        key = f"probe/{uuid.uuid4().hex}.bin"
+        try:
+            # 1) head bucket；不存在则创建（幂等）
+            try:
+                self._client.head_bucket(Bucket=self.bucket)
+            except Exception as head_exc:  # noqa: BLE001
+                if self._s3_error_code(head_exc) in ("404", "NotFound", "NoSuchBucket", "NoBucket"):
+                    self._client.create_bucket(Bucket=self.bucket)
+                else:
+                    return False
+            # 2) 写入临时对象
+            self._client.put_object(Bucket=self.bucket, Key=key, Body=token)
+            # 3) 读取并校验内容
+            resp = self._client.get_object(Bucket=self.bucket, Key=key)
+            body = resp["Body"].read()
+            # 4) 删除临时对象
+            self._client.delete_object(Bucket=self.bucket, Key=key)
+            return body == token
+        except Exception:  # noqa: BLE001 - 探活失败即 fail-closed
+            return False
+
+    def is_available(self) -> bool:
+        """客户端是否可用。生产启动校验：真实往返探活，禁止仅凭客户端创建成功静默降级。"""
+        return self.probe(timeout=self._probe_timeout)
 
     def _get_key(self, attachment_id: str, original_filename: str) -> str:
         """构造对象键。
@@ -282,13 +351,16 @@ class S3Storage(Storage):
 
 
 def get_storage() -> Storage:
-    """工厂函数：根据环境变量选择存储后端
+    """工厂函数：根据环境变量选择存储后端。
 
     - 若 S3 配置完整 → S3Storage
-    - 否则 → LocalStorage
+    - 若 S3_REQUIRED（生产默认）但 S3 配置缺失 → 抛错，禁止静默回退本地磁盘
+    - 否则（dev/test + S3_REQUIRED=false）→ LocalStorage
     """
     if all([S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY]):
         return S3Storage()
+    if S3_REQUIRED:
+        raise RuntimeError("生产环境强制 S3/MinIO（S3_REQUIRED=true），S3_* 配置缺失，禁止回退本地磁盘")
     return LocalStorage()
 
 

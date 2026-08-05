@@ -737,7 +737,7 @@ def regenerate_invitation_link(
         "invitationId": inv.id,
         "supplierId": supplier_id,
         "inquiryId": inquiry_id,
-        "portalUrl": f"{config.PORTAL_BASE_URL}?token={raw_token}",
+        "portalUrl": config.build_invitation_url(raw_token),
     }
 
 

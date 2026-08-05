@@ -11,7 +11,7 @@ import pytest
 from app import config
 from app.scanner import (
     ClamAVScanner, NoopScanner, SanitizingScanner, ScanResult, ScanStatus,
-    get_scanner, FileScanner,
+    get_scanner, FileScanner, EICAR_STRING, check_scanner_available,
 )
 
 
@@ -231,3 +231,87 @@ def test_get_scanner_unknown_provider_raises(monkeypatch):
     monkeypatch.setattr(config, "SCANNER_PROVIDER", "bogus")
     with pytest.raises(RuntimeError):
         get_scanner()
+
+
+# ============ P0-8：声明 MIME 一致性（MIME 欺骗） ============
+
+def test_sanitizing_rejects_declared_mime_mismatch():
+    """扩展名 .pdf 但声明 MIME 为 image/png → MIME 欺骗 → infected，不进入底层扫描。"""
+    s, probe = _scanner()
+    result = s.scan(b"%PDF-1.4 fake", "doc.pdf", "image/png")
+    assert result.status == ScanStatus.INFECTED
+    assert "MIME" in result.result
+    assert probe.called is False
+
+
+def test_sanitizing_accepts_empty_declared_mime():
+    """声明 MIME 为空（未提供）不拒绝，交由魔数/content 兜底。"""
+    s, probe = _scanner()
+    result = s.scan(b"%PDF-1.4 fake", "doc.pdf", "")
+    assert result.status == ScanStatus.CLEAN
+    assert probe.called is True
+
+
+# ============ P0-8：EICAR 测试与探活（fail-closed） ============
+
+def test_eicar_normal_file_passes(monkeypatch):
+    """正常文件（非 EICAR）经 ClamAV 返回 clean。"""
+    sock = FakeSocket([b"stream: OK\n"])
+    _patch_connection(monkeypatch, sock)
+    result = ClamAVScanner("clamav", 3310).scan(b"%PDF-1.4 normal", "a.pdf", "application/pdf")
+    assert result.status == ScanStatus.CLEAN
+
+
+def test_eicar_infected_rejected(monkeypatch):
+    """EICAR 感染文件被拒绝（infected）。"""
+    sock = FakeSocket([b"stream: Eicar-Test-Signature FOUND\n"])
+    _patch_connection(monkeypatch, sock)
+    result = ClamAVScanner("clamav", 3310).scan(EICAR_STRING, "eicar.txt", "text/plain")
+    assert result.status == ScanStatus.INFECTED
+    assert "Eicar" in (result.result + (result.matched or ""))
+
+
+def test_clamav_probe_true_when_eicar_detected(monkeypatch):
+    """探活：clamd 识别出 EICAR → 可用（病毒库已加载 + 链路可用）。"""
+    sock = FakeSocket([b"stream: Eicar-Test-Signature FOUND\n"])
+    _patch_connection(monkeypatch, sock)
+    assert ClamAVScanner("clamav", 3310).probe() is True
+
+
+def test_clamav_probe_false_when_clean(monkeypatch):
+    """探活：clamd 在线但未识别 EICAR（病毒库缺失/异常）→ 不可用（fail-closed）。"""
+    sock = FakeSocket([b"stream: OK\n"])
+    _patch_connection(monkeypatch, sock)
+    assert ClamAVScanner("clamav", 3310).probe() is False
+
+
+def test_clamav_probe_false_when_unavailable(monkeypatch):
+    """探活：ClamAV 不可用 → 探活 False（生产 fail-closed，禁止放行）。"""
+    def raise_refused(*a, **k):
+        raise ConnectionRefusedError("clamd down")
+    monkeypatch.setattr(socket, "create_connection", raise_refused)
+    assert ClamAVScanner("clamav", 3310, fail_open=False).probe() is False
+
+
+def test_check_scanner_available_noop_true():
+    """dev/test 默认 noop 扫描器视为可用。"""
+    assert check_scanner_available() is True
+
+
+def test_check_scanner_available_clamav_probe(monkeypatch):
+    """配置 clamav 时经 EICAR 探活判定可用性。"""
+    monkeypatch.setattr(config, "APP_ENV", "prod")
+    monkeypatch.setattr(config, "SCANNER_PROVIDER", "clamav")
+    sock = FakeSocket([b"stream: Eicar-Test-Signature FOUND\n"])
+    _patch_connection(monkeypatch, sock)
+    assert check_scanner_available() is True
+
+
+def test_check_scanner_available_clamav_unavailable_fail_closed(monkeypatch):
+    """配置 clamav 但不可用 → 探活 False（fail-closed）。"""
+    monkeypatch.setattr(config, "APP_ENV", "prod")
+    monkeypatch.setattr(config, "SCANNER_PROVIDER", "clamav")
+    def raise_refused(*a, **k):
+        raise ConnectionRefusedError("clamd down")
+    monkeypatch.setattr(socket, "create_connection", raise_refused)
+    assert check_scanner_available() is False

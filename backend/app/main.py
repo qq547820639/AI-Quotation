@@ -13,7 +13,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,6 +21,7 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import text
 
 from .config import (
+    APP_ENV,
     CORS_ORIGINS,
     DB_AUTO_CREATE,
     CSP_DEFAULT,
@@ -29,15 +30,25 @@ from .config import (
     REFERRER_POLICY,
     PERMISSIONS_POLICY,
     REDIS_URL,
+    S3_ENDPOINT,
+    S3_BUCKET,
+    S3_ACCESS_KEY,
+    S3_SECRET_KEY,
+    S3_REQUIRED,
+    SCANNER_PROVIDER,
+    CELERY_TASK_ALWAYS_EAGER,
 )
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401  触发所有 ORM 模型注册到 Base.metadata
-from .models import AIUsage, Attachment, OutboxEvent, TaskRecord
+from .models import AIUsage, Attachment, OutboxEvent, TaskRecord, User
 from .config_validation import assert_production_config
 from .logging import get_request_id, new_request_id, set_request_id, setup_logging
+from .auth import require_admin
 from . import metrics as metrics_mod
 from .redis_client import get_store
-from .seed import init_db
+from .seed import ensure_app_settings, init_db
+from .scanner import check_scanner_available
+from .storage import get_storage, S3Storage
 from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics, portal, ai, users, events, tasks
 
 # 慢请求阈值（毫秒）：超时记录结构化 slow_request 日志（Task 22 慢查询观测）
@@ -58,7 +69,12 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        init_db(db)
+        if APP_ENV != "prod":
+            # dev/test：注入演示种子数据（幂等；生产由 Alembic 建表 + bootstrap-admin 引导）
+            init_db(db)
+        else:
+            # 生产：仅确保 AppSettings 配置单行，绝不注入/绝不回填演示数据
+            ensure_app_settings(db)
     finally:
         db.close()
     # 启动钩子：补齐未 dispatched 的 outbox 事件（broker 短暂断开/上一次进程重启后未入队的任务）
@@ -318,11 +334,12 @@ def root():
 
 
 @app.get("/api/metrics")
-def metrics_endpoint():
+def metrics_endpoint(_user: User = Depends(require_admin)):
     """轻量级进程内指标（JSON）：request_total / request_error_total / 请求延迟直方图 /
     队列积压 / 任务失败 / AI 调用 / 扫描失败等。
 
     不依赖 prometheus_client，避免新增依赖；供运维/监控抓取。
+    需管理员权限（P0-7）：指标含内部队列/任务/进程信息，禁止匿名公开。
     """
     _refresh_db_derived_metrics()
     return metrics_mod.get_metrics()
@@ -376,7 +393,12 @@ def health_check():
         finally:
             db.close()
     except Exception as e:
-        db_error = str(e)
+        # P0-7：不向客户端泄露原始 DB 异常（连接串/堆栈/方言），仅记录脱敏日志并返回通用文案。
+        logger.warning(
+            "health_db_check_failed",
+            extra={"extra_fields": {"error": str(e)}},
+        )
+        db_error = "database unavailable"
     return {
         "status": "ok" if db_ok else "degraded",
         "version": "1.0.0",
@@ -387,9 +409,15 @@ def health_check():
 
 @app.get("/api/ready")
 def ready_check():
-    """Readiness 探针：DB 连通 + 关键表（users/inquiries）可查询 +（若配置）Redis 连通才算就绪，否则返回 503。
+    """Readiness 探针：PostgreSQL + 关键表 +（若配置）Redis + S3/MinIO + ClamAV + Celery Worker
+    全部就绪才返回 200，否则返回 503。
 
-    用于编排依赖（如 compose 中 frontend 等待 backend 就绪、负载均衡摘除流量）。
+    覆盖（P0-8）：
+    - PostgreSQL：SELECT 1 + users/inquiries 关键表可查询。
+    - Redis：若配置 REDIS_URL 则必须 ping 通过（未配置不阻塞，dev/test）。
+    - S3/MinIO：若配置 S3_* 则真实探活（head bucket/create/write/read/delete）；生产强制 S3_REQUIRED。
+    - ClamAV：若 SCANNER_PROVIDER=clamav 则 EICAR 探活（fail-closed）。
+    - Celery Worker：非 eager 模式（生产）必须有存活 worker 响应。
     """
     db = SessionLocal()
     try:
@@ -404,14 +432,86 @@ def ready_check():
         )
     db.close()
 
-    # 若配置了 Redis，则必须可用才视为就绪；未配置（dev/test 内存回退）不阻塞就绪。
+    result: dict = {"status": "ready", "db": "connected"}
+
+    # Redis
     if REDIS_URL:
         try:
             get_store().ping()
+            result["redis"] = "connected"
         except Exception:
             return JSONResponse(
                 status_code=503,
                 content={"status": "not_ready", "db": "connected", "redis": "disconnected"},
             )
+    else:
+        result["redis"] = "not_configured"
 
-    return {"status": "ready", "db": "connected", "redis": "connected" if REDIS_URL else "not_configured"}
+    # S3/MinIO：配置齐全则真实探活；生产强制 S3 但未配置 → 不就绪
+    s3_configured = bool(S3_ENDPOINT and S3_BUCKET and S3_ACCESS_KEY and S3_SECRET_KEY)
+    if s3_configured:
+        try:
+            storage = get_storage()
+            if not isinstance(storage, S3Storage) or not storage.probe():
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "not_ready", "db": "connected",
+                             "redis": result.get("redis"), "s3": "disconnected"},
+                )
+            result["s3"] = "connected"
+        except Exception:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "db": "connected",
+                         "redis": result.get("redis"), "s3": "disconnected"},
+            )
+    elif S3_REQUIRED:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "db": "connected",
+                     "redis": result.get("redis"), "s3": "not_configured"},
+        )
+    else:
+        result["s3"] = "not_configured"
+
+    # ClamAV：配置为 clamav 时 EICAR 探活（fail-closed）
+    if (SCANNER_PROVIDER or "").strip().lower() == "clamav":
+        if not check_scanner_available():
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "db": "connected",
+                         "redis": result.get("redis"), "s3": result.get("s3"),
+                         "clamav": "disconnected"},
+            )
+        result["clamav"] = "connected"
+    else:
+        result["clamav"] = "not_configured"
+
+    # Celery Worker：非 eager 模式（生产）必须有存活 worker
+    if not CELERY_TASK_ALWAYS_EAGER:
+        if not _celery_worker_ok():
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "db": "connected",
+                         "redis": result.get("redis"), "s3": result.get("s3"),
+                         "clamav": result.get("clamav"), "celery": "disconnected"},
+            )
+        result["celery"] = "connected"
+    else:
+        result["celery"] = "not_configured"
+
+    return result
+
+
+def _celery_worker_ok() -> bool:
+    """探测是否有存活 Celery worker（生产非 eager 模式）。
+
+    通过 celery control ping 广播向 worker 发起探活；无 worker 响应或 broker 不可用 → False。
+    """
+    try:
+        from .tasks import celery_app
+        replies = celery_app.control.ping(timeout=3)
+        return bool(replies)
+    except Exception:  # noqa: BLE001 - 探活失败即不就绪
+        logger.warning("celery_worker_probe_failed")
+        return False

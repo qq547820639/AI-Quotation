@@ -90,7 +90,10 @@ jobs:
       - name: Run PostgreSQL integration tests (real PG)
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-        run: cd backend && python -m pytest tests/test_postgres_integration.py -v -p no:cov
+        # 修复 pytest-cov 禁用冲突：pytest.ini 的 addopts 会注入 --cov=app，
+        # 若仅用 -p no:cov 禁用插件，--cov 参数将变成无法识别的参数导致 pytest 报错退出。
+        # -p no:cov 禁用插件，-o addopts= 清空 addopts 彻底移除 --cov 注入，二者结合才真正关闭覆盖率。
+        run: cd backend && python -m pytest tests/test_postgres_integration.py -v -p no:cov -o addopts=
       - name: Upload backend test logs on failure
         if: failure()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3 (node20)

@@ -106,9 +106,9 @@ def test_not_found_error_is_structured(client, buyer_headers):
 
 # ============ Task 25：指标端点与依赖故障 ============
 
-def test_metrics_endpoint_returns_json(client):
-    """GET /api/metrics 返回指标 JSON（含 request_total / uptime_seconds）"""
-    r = client.get("/api/metrics")
+def test_metrics_endpoint_returns_json(client, admin_headers):
+    """GET /api/metrics 返回指标 JSON（含 request_total / uptime_seconds）；需管理员权限"""
+    r = client.get("/api/metrics", headers=admin_headers)
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body, dict)
@@ -117,19 +117,27 @@ def test_metrics_endpoint_returns_json(client):
     assert body["request_total"] >= 1  # metrics 请求自身已被计数
 
 
-def test_metrics_request_total_increments(client):
+def test_metrics_requires_admin(client, buyer_headers):
+    """GET /api/metrics 受控：非管理员（普通用户）访问应 403，匿名应 401（P0-7）"""
+    r_anon = client.get("/api/metrics")
+    assert r_anon.status_code == 401
+    r_buyer = client.get("/api/metrics", headers=buyer_headers)
+    assert r_buyer.status_code == 403
+
+
+def test_metrics_request_total_increments(client, admin_headers):
     """发起一次请求后 request_total 增加"""
-    before = client.get("/api/metrics").json()["request_total"]
+    before = client.get("/api/metrics", headers=admin_headers).json()["request_total"]
     client.get("/api/health")
-    after = client.get("/api/metrics").json()["request_total"]
+    after = client.get("/api/metrics", headers=admin_headers).json()["request_total"]
     assert after > before
 
 
-def test_metrics_error_total_increments_on_4xx(client):
+def test_metrics_error_total_increments_on_4xx(client, admin_headers):
     """4xx 请求累计 request_error_total"""
     metrics_mod.request_error_total()  # 保证基线非负
     client.get("/api/not-exist-404")
-    body = client.get("/api/metrics").json()
+    body = client.get("/api/metrics", headers=admin_headers).json()
     assert body["request_error_total"] >= 1
 
 
@@ -168,9 +176,9 @@ def test_metrics_request_duration_histogram_updates(client):
     assert m["buckets"]["100"] >= 1  # 5.0ms 落入 100ms 桶
 
 
-def test_metrics_endpoint_exposes_db_derived_gauges(client):
+def test_metrics_endpoint_exposes_db_derived_gauges(client, admin_headers):
     """GET /api/metrics 返回 DB 派生瞬时指标（队列积压/任务失败/AI 调用/扫描失败）与延迟"""
-    r = client.get("/api/metrics")
+    r = client.get("/api/metrics", headers=admin_headers)
     assert r.status_code == 200
     body = r.json()
     for key in ("queue_backlog_gauge", "task_fail_gauge", "ai_call_gauge", "scan_fail_gauge"):

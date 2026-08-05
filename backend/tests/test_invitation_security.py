@@ -130,6 +130,18 @@ def test_regenerate_link_returns_working_token(client):
     assert portal.json()["id"] == iid
 
 
+def test_regenerate_link_returns_canonical_portal_url(client):
+    """P0-4：regenerate 返回的 portalUrl 使用 canonical /supplier-portal/{token}，不再用废弃 /portal?token="""
+    headers = _login(client, "u-2")
+    iid = _create_and_send_inquiry(client, headers, "sup-1")
+    resp = client.post(f"/api/inquiries/{iid}/invitations/sup-1/regenerate", headers=headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    url = data["portalUrl"]
+    assert f"/supplier-portal/{data['token']}" in url
+    assert "/portal?token=" not in url
+
+
 def test_regenerate_link_forbidden_for_uninvited_supplier(client):
     """未受邀供应商无法重新生成链接（403）"""
     headers = _login(client, "u-2")
@@ -309,3 +321,82 @@ def test_concurrent_resend_single_valid_token(client):
         assert client.get("/api/portal/inquiries", headers={"X-Invitation-Token": store_tok}).status_code == 200
     finally:
         check.close()
+
+
+# ============ P0-4：投递链接 canonical URL + 并发提交 ============
+
+def test_delivery_context_portal_url_is_canonical(client):
+    """投递模板上下文中的 portalUrl 使用 canonical /supplier-portal/{token}，不再用废弃 /portal?token="""
+    from app.delivery import _invitation_context
+    from app.models import InquiryItem
+    headers = _login(client, "u-2")
+    iid, inv_id = _fresh_invitation(client, headers)
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(SupplierInvitation.id == inv_id).first()
+        ctx = _invitation_context(inv, db)
+        raw = get_invitation_raw_token(inv_id)
+        item = db.query(InquiryItem).filter(InquiryItem.inquiry_id == iid).first()
+        item_id = item.id
+    finally:
+        db.close()
+    assert raw
+    assert f"/supplier-portal/{raw}" in ctx["portalUrl"]
+    assert "/portal?token=" not in ctx["portalUrl"]
+
+
+def test_concurrent_submit_yields_single_submitted_quotation(client):
+    """P0-4：并发提交（多线程）最终只产生一条已提交报价，邀请状态为 submitted，DB 状态一致"""
+    from app.models import Quotation, InquiryItem
+    headers = _login(client, "u-2")
+    iid = _create_and_send_inquiry(client, headers, "sup-1")
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == iid,
+            SupplierInvitation.supplier_id == "sup-1",
+        ).first()
+        raw = get_invitation_raw_token(inv.id)
+        item_id = db.query(InquiryItem).filter(InquiryItem.inquiry_id == iid).first().id
+    finally:
+        db.close()
+    assert raw and item_id
+
+    statuses, mlock = [], threading.Lock()
+
+    def _submit(tok):
+        r = client.post(
+            "/api/portal/quotations/submit",
+            headers={"X-Invitation-Token": tok},
+            json={
+                "idempotencyKey": f"conc-{datetime.now(timezone.utc).timestamp()}-{threading.get_ident()}",
+                "items": [{"inquiryItemId": item_id, "unitPrice": 100, "taxRate": 0.13, "deliveryDays": 7}],
+            },
+        )
+        with mlock:
+            statuses.append(r.status_code)
+
+    threads = [threading.Thread(target=_submit, args=(raw,)) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # 最终状态一致：恰好一条已提交报价 + 邀请标记 submitted（无论个别请求瞬时 409/200）
+    assert any(s == 200 for s in statuses), f"无任何提交请求成功: {statuses}"
+    check = SessionLocal()
+    try:
+        inv2 = check.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == iid,
+            SupplierInvitation.supplier_id == "sup-1",
+        ).first()
+        qs = check.query(Quotation).filter(
+            Quotation.inquiry_id == iid,
+            Quotation.supplier_id == "sup-1",
+        ).all()
+    finally:
+        check.close()
+    assert inv2.status == "submitted"
+    assert len(qs) == 1
+    assert qs[0].status == "SUBMITTED"
+    assert qs[0].receipt_code is not None

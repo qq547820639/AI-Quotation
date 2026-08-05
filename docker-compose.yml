@@ -1,4 +1,51 @@
 version: '3.8'
+
+# 生产关键密钥默认值（SECRET_KEY / S3 密钥）仅用于开发/CI 演示；
+# 生产部署必须通过项目根 .env 注入真实强密钥，后端在 APP_ENV=prod 启动时会
+# 校验并拒绝不安全默认值（config_validation.assert_production_config 已在
+# backend/app/main.py lifespan 调用）：SECRET_KEY 为默认/过短时后端拒绝启动。
+# 采用后端启动守卫而非 compose `${VAR:?}` 必填语法，以保证无 .env 的
+# docker compose CI E2E（docker-e2e）job 仍可正常解析/构建/启动。
+
+# 后端/celery-worker/outbox-dispatcher/celery-beat 共享的环境变量（YAML 锚点）
+x-backend-env: &backend-env
+  # 生产使用 PostgreSQL：通过 DATABASE_URL 连接（psycopg2 驱动）
+  - DATABASE_URL=postgresql://${POSTGRES_USER:-procurement}:${POSTGRES_PASSWORD:-procurement}@postgres:5432/${POSTGRES_DB:-procurement}
+  - APP_ENV=prod
+  - DB_AUTO_CREATE=false
+  - APP_DEMO_MODE=${APP_DEMO_MODE:-false}
+  - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+  - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
+  - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
+  # P0：真实病毒扫描（ClamAV）。生产必须使用 clamav，禁 noop（fail closed）。
+  - SCANNER_PROVIDER=${SCANNER_PROVIDER:-clamav}
+  - CLAMAV_HOST=${CLAMAV_HOST:-clamav}
+  - CLAMAV_PORT=${CLAMAV_PORT:-3310}
+  - CLAMAV_TIMEOUT_SECONDS=${CLAMAV_TIMEOUT_SECONDS:-30}
+  - SCAN_FAIL_OPEN=${SCAN_FAIL_OPEN:-false}
+  # P0：Redis（限流/幂等/缓存/token，多实例共享）。生产 REDIS_REQUIRED=true 时不可用将拒绝启动。
+  - REDIS_URL=redis://redis:6379/0
+  # P0：对象存储（S3/MinIO）。未配置 S3_* 时回退本地 UPLOAD_DIR；生产配置齐全但不可用将拒绝启动。
+  - S3_ENDPOINT=${S3_ENDPOINT:-http://minio:9000}
+  - S3_BUCKET=${S3_BUCKET:-procurement-attachments}
+  - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+  - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+  # P1：持久化任务队列（Celery）。生产使用真实 Redis broker/backend，禁止 eager/内存。
+  - CELERY_BROKER_URL=redis://redis:6379/0
+  - CELERY_RESULT_BACKEND=redis://redis:6379/0
+  - CELERY_TASK_ALWAYS_EAGER=false
+  - CELERY_TASK_MAX_RETRIES=${CELERY_TASK_MAX_RETRIES:-3}
+  - CELERY_TASK_RETRY_BACKOFF=${CELERY_TASK_RETRY_BACKOFF:-true}
+  - CELERY_TASK_RETRY_BACKOFF_MAX=${CELERY_TASK_RETRY_BACKOFF_MAX:-60}
+  # 通知渠道（仅 NOTIFY_CHANNEL=email 时真实发送；生产配置校验拒绝 log/mailpit）
+  - NOTIFY_CHANNEL=${NOTIFY_CHANNEL:-log}
+  - SMTP_HOST=${SMTP_HOST:-}
+  - SMTP_PORT=${SMTP_PORT:-587}
+  - SMTP_USERNAME=${SMTP_USERNAME:-}
+  - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+  - SMTP_FROM=${SMTP_FROM:-}
+  - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -19,28 +66,7 @@ services:
     build: ./backend
     ports:
       - "8080:8080"
-    environment:
-      # 生产使用 PostgreSQL：通过 DATABASE_URL 连接（psycopg2 驱动）
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-procurement}:${POSTGRES_PASSWORD:-procurement}@postgres:5432/${POSTGRES_DB:-procurement}
-      - APP_ENV=prod
-      - DB_AUTO_CREATE=false
-      - APP_DEMO_MODE=${APP_DEMO_MODE:-false}
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
-      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
-      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
-      # P0：真实病毒扫描（ClamAV）。生产必须使用 clamav，禁 noop（fail closed）。
-      - SCANNER_PROVIDER=${SCANNER_PROVIDER:-clamav}
-      - CLAMAV_HOST=${CLAMAV_HOST:-clamav}
-      - CLAMAV_PORT=${CLAMAV_PORT:-3310}
-      - CLAMAV_TIMEOUT_SECONDS=${CLAMAV_TIMEOUT_SECONDS:-30}
-      - SCAN_FAIL_OPEN=${SCAN_FAIL_OPEN:-false}
-      # P0：Redis（限流/幂等/缓存/token，多实例共享）。生产 REDIS_REQUIRED=true 时不可用将拒绝启动。
-      - REDIS_URL=redis://redis:6379/0
-      # P0：对象存储（S3/MinIO）。未配置 S3_* 时回退本地 UPLOAD_DIR；生产配置齐全但不可用将拒绝启动。
-      - S3_ENDPOINT=${S3_ENDPOINT:-http://minio:9000}
-      - S3_BUCKET=${S3_BUCKET:-procurement-attachments}
-      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
-      - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+    environment: *backend-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -136,6 +162,79 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    restart: unless-stopped
+
+  # P0-5：Celery Worker —— 消费持久化任务队列（与 backend 同镜像/同环境）。
+  # 队列名默认 procurement（app.tasks celery_app task_default_queue），
+  # 并发/超时/重试策略均可通过环境变量覆盖。
+  celery-worker:
+    build: ./backend
+    environment: *backend-env
+    command: >
+      sh -c "celery -A app.tasks worker
+             --loglevel=${CELERY_LOG_LEVEL:-INFO}
+             --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
+             -Q ${CELERY_QUEUE_NAME:-procurement}
+             --soft-time-limit=${CELERY_TASK_SOFT_TIME_LIMIT:-300}
+             --time-limit=${CELERY_TASK_TIME_LIMIT:-600}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # 探测 broker（Redis）连通性；worker 依赖 broker，不可达即视为异常
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), timeout=5).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # P0-5：Outbox Dispatcher —— 持续扫描 pending outbox 事件并投递到 Celery。
+  # 「DB 已提交但任务未入队」（进程重启/Redis 短暂断开）由此补齐，不丢事件。
+  # 必须持续运行（while 循环），而非仅启动时执行一次。
+  outbox-dispatcher:
+    build: ./backend
+    environment: *backend-env
+    command: >
+      sh -c "
+      while true; do
+        python -c 'from app.queue_client import dispatch_outbox; dispatch_outbox()' ;
+        sleep ${OUTBOX_POLL_INTERVAL_SECONDS:-5} ;
+      done"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), timeout=5).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # P0-5（可选）：Celery Beat —— 周期任务调度器（如截止提醒 send_inquiry_reminder_task）。
+  # 未配置 beat_schedule 时仅作为占位运行；需要定时任务时在 app.tasks 的
+  # celery_app.conf.beat_schedule 中登记即可。
+  celery-beat:
+    build: ./backend
+    environment: *backend-env
+    command: >-
+      sh -c "celery -A app.tasks beat --loglevel=${CELERY_LOG_LEVEL:-INFO}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), timeout=5).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:
