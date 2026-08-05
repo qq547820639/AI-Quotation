@@ -145,8 +145,14 @@ jobs:
           # COPY requirements.txt 找不到文件、构建失败（非真实漏洞）。
           docker build -t procurement-backend -f backend/Dockerfile backend
           docker build -t procurement-frontend . -f Dockerfile.frontend
+          # 先输出一份 TABLE 摘要到 stdout（不带 --exit-code：有漏洞也退出 0），
+          # 便于在 Actions 日志里直接看到命中的 HIGH/CRITICAL CVE 与 Pkg/Installed 版本，
+          # 而不是只有 JSON 报表（JSON 需下载 artifact 才能排查）。
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --no-progress --severity HIGH,CRITICAL --format table procurement-backend
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --no-progress --severity HIGH,CRITICAL --format table procurement-frontend
           # 通过 -v "$PWD:/report" 把当前目录挂载进容器，使 trivy 的 -o 报表写到宿主机
           # （否则 -o 只写进刚退出的容器内，宿主拿不到报表，失败时无法排查）。
+          # --exit-code 1 作为强门禁：命中 HIGH/CRITICAL 即非零退出，阻断 CI。
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-backend.json procurement-backend
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-frontend.json procurement-frontend
       - name: Generate SBOM (CycloneDX via trivy, backend + frontend)
@@ -184,7 +190,7 @@ jobs:
     name: Docker Build + Compose + Real Frontend/Backend E2E
     needs: [quality, build, backend-test]
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 62
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0 (node24)
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0 (node24)

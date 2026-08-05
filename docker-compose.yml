@@ -102,6 +102,12 @@ services:
     environment:
       # 首次启动需下载病毒库，加快 freshclam 间隔
       - CLAMD_STARTUP_TIMEOUT=${CLAMD_STARTUP_TIMEOUT:-1800}
+      # 官方 clamav/clamav 镜像默认只监听 UNIX socket（/tmp/clamd.sock），不开 TCP 3310，
+      # 导致后端 INSTREAM 探活/扫描连不上（docker-e2e 曾在 /api/ready 上因 clamav: disconnected
+      # 卡满 20 分钟）。通过 CLAMD_CONF_* 环境变量让镜像入口脚本把对应项写入 /etc/clamav/clamd.conf：
+      # TCPSocket 3310 + TCPAddr 0.0.0.0，使 clamd 在 3310 端口对外提供 TCP 服务。
+      - CLAMD_CONF_TCPSocket=3310
+      - CLAMD_CONF_TCPAddr=0.0.0.0
     healthcheck:
       # 首次启动需下载病毒库，可能耗时较长；用足 start_period 覆盖下载期，
       # 避免健康检查在 clamd 就绪前反复失败导致后端（depends_on service_healthy）启动被阻塞。
