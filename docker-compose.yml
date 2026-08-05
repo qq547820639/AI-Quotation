@@ -216,6 +216,25 @@ services:
     stop_grace_period: 30s
     restart: unless-stopped
 
+  # P1：邮件测试服务（Mailpit）。仅用于开发/CI E2E 的本地邮件投递与 Webhook 回执观察；
+  # 生产必须使用真实邮件 Provider（NOTIFY_CHANNEL=email + SMTP），不得使用 mailpit 渠道。
+  # SMTP :1025 / 管理 Web :8025。
+  mailpit:
+    image: axllent/mailpit:latest
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=1
+      - MP_SMTP_AUTH_ALLOW_INSECURE=1
+    expose:
+      - "1025"
+    ports:
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # P0-5（可选）：Celery Beat —— 周期任务调度器（如截止提醒 send_inquiry_reminder_task）。
   # 未配置 beat_schedule 时仅作为占位运行；需要定时任务时在 app.tasks 的
   # celery_app.conf.beat_schedule 中登记即可。

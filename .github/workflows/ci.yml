@@ -182,15 +182,31 @@ jobs:
       - name: Install Playwright browser binaries (chromium + firefox + webkit)
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Build & start all services (docker compose)
+        # 生产配置在 APP_ENV=prod 下为 fail-fast：compose 的 dev 默认值（SECRET_KEY/
+        # DEMO_USER_PASSWORD/CORS/NOTIFY_CHANNEL）会被后端启动守卫拒绝。CI E2E 必须注入
+        # 满足生产校验的真实值：强随机 SECRET_KEY、强 DEMO_USER_PASSWORD、非本地 CORS
+        # 白名单、email 通知（SMTP 指向 mailpit 测试服务）。ClamAV 走真实扫描。
+        env:
+          SECRET_KEY: ${{ format('ci-e2e-{0}{1}{2}{3}', github.run_id, github.run_attempt, github.sha, 'strongsecretkey0123456789') }}
+          DEMO_USER_PASSWORD: ${{ format('ci-e2e-{0}-strong-password', github.run_id) }}
+          CORS_ORIGINS: https://ci-e2e.invalid,http://localhost:80
+          NOTIFY_CHANNEL: email
+          SMTP_HOST: mailpit
+          SMTP_PORT: 1025
+          SMTP_FROM: ci@ai-quotation.local
         run: docker compose up -d --build
-      - name: Wait for backend health check (real DB probe)
+      - name: Wait for backend readiness (/api/ready validates DB+Redis+S3+ClamAV+Worker)
         run: |
-          for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/health || true)
-            if [ "$code" = "200" ]; then echo "Backend healthy (attempt $i)"; break; fi
-            echo "Waiting for backend... (status=$code, attempt $i)"; sleep 5
+          ok=0
+          for i in $(seq 1 60); do
+            body=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/ready || true)
+            if [ "$body" = "200" ]; then ok=1; echo "Backend ready (attempt $i)"; break; fi
+            echo "Waiting for /api/ready... (status=$body, attempt $i)"; sleep 5
           done
-          curl -sf http://localhost:8080/api/health
+          if [ "$ok" != "1" ]; then
+            echo "Backend never became ready"; docker compose ps; docker compose logs --tail=200 backend; exit 1
+          fi
+          curl -sf http://localhost:8080/api/ready
       - name: Wait for frontend (nginx)
         run: |
           for i in $(seq 1 30); do
