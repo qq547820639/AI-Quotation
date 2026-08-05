@@ -107,6 +107,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0 (node24)
+        with:
+          # gitleaks 需要全量历史计算 PR/push 的 diff 范围（base^..head）；
+          # 默认浅克隆（depth=1）会导致 base 提交不可用，gitleaks 报
+          # "unknown revision / failed to scan Git repository" 而退出码 1。
+          fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.0.0 (node24)
         with:
           python-version: '3.11'

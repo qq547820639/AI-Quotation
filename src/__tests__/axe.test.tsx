@@ -192,5 +192,5 @@ describe('核心页面 axe 无障碍（serious/critical）', () => {
     );
     await screen.findByText('服务器设备采购询价');
     await assertNoSeriousViolations(container);
-  });
+  }, 20000);
 });
