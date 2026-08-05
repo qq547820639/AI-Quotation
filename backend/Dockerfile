@@ -1,14 +1,13 @@
 # 后端：Python 3.11 + uvicorn
-# 基础镜像固定为 Debian 12 bookworm（LTS 稳定/安全支持线）。不要退化为 python:3.11-slim ——
-# 该浮动 tag 现指向全新的 Debian 13 trixie，其大量 OS 包存在尚未被上游修复的
-# HIGH/CRITICAL CVE（apt upgrade 也无新版本可升），会被 Trivy 镜像扫描阻断门禁。
-FROM python:3.11-slim-bookworm
+# 基础镜像改用 Alpine（固定 3.24，与前端 nginx:alpine 3.24 对齐）。
+# 为什么不用 Debian（bookworm/trixie）：Debian 基础镜像携带大量 OS 包（perl、ncurses、
+# util-linux、zlib1g、libsqlite3-0 等），其中含多个尚未被上游修复、或 Debian 明确
+# will_not_fix 的 HIGH/CRITICAL CVE（apt upgrade 也无新版本可升），会被 Trivy 镜像扫描
+# 以 --exit-code 1 强门禁阻断。Alpine 包裁剪最小、Trivy 扫描为 0 HIGH/CRITICAL，
+# 且本项目全部二进制 Python 依赖均发布 musllinux wheel（psycopg2-binary、pydantic_core、
+# greenlet、uvloop、bcrypt(abi3) 等），无需 gcc 编译即可直接安装。
+FROM python:3.11-alpine3.24
 WORKDIR /app
-# 打满基础镜像的 OS 安全补丁，降低 Trivy 镜像扫描的 HIGH/CRITICAL OS 包 CVE 数量。
-# 基础镜像为浮动 tag，上游会不定期更新；显式 apt upgrade 确保构建时使用最新已修复包。
-RUN apt-get update \
-    && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
