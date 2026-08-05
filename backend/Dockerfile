@@ -9,7 +9,16 @@
 FROM python:3.11-alpine3.24
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 修复 setuptools 内嵌（_vendor）的 jaraco.context 5.3.0 / wheel 0.45.1 高危 CVE：
+# 这两个包被 setuptools 以 _vendor 方式物理拷贝进 site-packages/setuptools/_vendor/ 下，
+# 单独 `pip install jaraco.context>=6.1.0` 只会把补丁版装到顶层 site-packages，
+# 并不会替换 setuptools 内嵌的旧版本，Trivy 镜像扫描（--exit-code 1）仍会命中并阻断。
+# 先升级 setuptools 让内嵌拷贝被补丁版覆盖，再显式清理 vendored 目录下残留的
+# jaraco.context-*.dist-info 与 wheel-*.dist-info，确保镜像内不再残留任何旧版本元数据。
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --upgrade setuptools wheel \
+    && rm -rf /usr/local/lib/python3.11/site-packages/setuptools/_vendor/jaraco.context-*.dist-info \
+    && rm -rf /usr/local/lib/python3.11/site-packages/setuptools/_vendor/wheel-*.dist-info
 COPY . .
 RUN mkdir -p /app/data
 ENV DB_PATH=/app/data/procurement.db
