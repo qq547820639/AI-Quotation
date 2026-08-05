@@ -1,0 +1,20 @@
+# gitleaks 配置
+# 说明：为保证 CI 安全门禁（gitleaks）真实生效，本文件仅对"测试夹具中的演示/引导凭据"做最小范围豁免，
+# 豁免已按文件+规则精确定位，绝不豁免真实密钥、API Token、证书或 .env 中的敏感值。
+title = "AI-Quotation gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+# 仅豁免 backend/tests 测试文件中的演示/引导密码字面量（非真实生产密钥）。
+# 这些值仅用于单测夹具（如 bootstrap_admin 测试），不连接任何真实服务。
+description = "Test-fixture demo/bootstrap credentials only (backend/tests/*), not real secrets"
+paths = [
+  '''backend/tests/test_seed_prod_safety\.py''',
+]
+regexes = [
+  # bootstrap_admin 测试夹具中的演示引导密码（非生产密钥）
+  '''password="prod-secret-123"''',
+  '''password="p[0-9]"''',
+]
