@@ -32,3 +32,10 @@ boto3==1.35.0
 
 # P1：持久化任务队列（outbox + Celery，broker 复用 Redis）
 celery[redis]==5.4.0
+
+# Trivy 镜像扫描门禁：修复基础镜像自带构建工具链的 METADATA 层 CVE
+# - wheel 0.45.1 -> 0.46.2（CVE-2026-24049，wheel 恶意文件提权/任意代码执行）
+# - jaraco.context 5.3.0 -> 6.1.0（CVE-2026-23949，恶意 tar 存档路径穿越；由 setuptools 引入）
+# 直接显式声明最低版本，强制 pip 在 install 时升级到已修复版本，避免残留在最终镜像。
+wheel>=0.46.2
+jaraco.context>=6.1.0
