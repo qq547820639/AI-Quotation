@@ -46,6 +46,9 @@ backend/procurement.db
 # Docker 数据卷
 data/
 
+# ClamAV 病毒库缓存（CI 通过 actions/cache 跨运行复用，避免每次冷启动全量下载）
+.clamav-cache/
+
 # 测试产物
 test-results/
 playwright-report/

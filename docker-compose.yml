@@ -109,6 +109,11 @@ services:
       # TCPSocket 3310 + TCPAddr 0.0.0.0，使 clamd 在 3310 端口对外提供 TCP 服务。
       - CLAMD_CONF_TCPSocket=3310
       - CLAMD_CONF_TCPAddr=0.0.0.0
+    # 病毒库持久化/缓存：挂载到宿主 .clamav-cache/，首次冷启动下载一次后，
+    # CI 通过 actions/cache 跨运行复用，避免每次 `docker compose up` 都全量下载
+    # 病毒库（实测冷启动约 20 分钟，是 docker-e2e 就绪等待的主要耗时）。
+    volumes:
+      - ./.clamav-cache:/var/lib/clamav
     healthcheck:
       # 首次启动需下载病毒库，可能耗时较长；用足 start_period 覆盖下载期，
       # 避免健康检查在 clamd 就绪前反复失败导致后端（depends_on service_healthy）启动被阻塞。

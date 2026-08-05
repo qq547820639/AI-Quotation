@@ -190,7 +190,7 @@ jobs:
     name: Docker Build + Compose + Real Frontend/Backend E2E
     needs: [quality, build, backend-test]
     runs-on: ubuntu-latest
-    timeout-minutes: 62
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0 (node24)
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0 (node24)
@@ -199,6 +199,15 @@ jobs:
           cache: npm
       - name: Install Playwright browser binaries (chromium + firefox + webkit)
         run: npx playwright install --with-deps chromium firefox webkit
+      - name: Cache ClamAV signature database
+        # 避免每次运行全量下载 ClamAV 病毒库（实测冷启动约 20 分钟）。
+        # 缓存命中后 clamav 容器启动即用已有库，freshclam 仅做增量检查，就绪时间缩至秒级。
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0 (node24)
+        with:
+          path: .clamav-cache
+          key: clamav-db-${{ runner.os }}
+          restore-keys: |
+            clamav-db-${{ runner.os }}
       - name: Build & start all services (docker compose)
         # 生产配置在 APP_ENV=prod 下为 fail-fast：compose 的 dev 默认值（SECRET_KEY/
         # DEMO_USER_PASSWORD/CORS/NOTIFY_CHANNEL）会被后端启动守卫拒绝。CI E2E 必须注入
@@ -216,9 +225,9 @@ jobs:
       - name: Wait for backend readiness (/api/ready validates DB+Redis+S3+ClamAV+Worker)
         run: |
           ok=0
-          # ClamAV 首次启动需下载病毒库，可能耗时较长（实测冷启动约 10 分钟）；
-          # 放宽就绪等待（最多 240*5s=1200s），并打印 /api/ready 响应体便于定位组件。
-          for i in $(seq 1 240); do
+          # ClamAV 首次启动需下载病毒库，冷启动实测约 20 分钟（命中 .clamav-cache 后秒级）；
+          # 放宽就绪等待（最多 360*5s=1800s），并打印 /api/ready 响应体便于定位组件。
+          for i in $(seq 1 360); do
             code=$(curl -s -o /tmp/ready.json -w "%{http_code}" http://localhost:8080/api/ready || true)
             if [ "$code" = "200" ]; then ok=1; echo "Backend ready (attempt $i)"; break; fi
             echo "Waiting for /api/ready... (status=$code, attempt $i) body=$(cat /tmp/ready.json 2>/dev/null)"; sleep 5
