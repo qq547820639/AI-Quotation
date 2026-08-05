@@ -67,10 +67,10 @@ test.describe('核心业务链路', () => {
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 5000 });
-    await approvalRow.getByRole('button', { name: /^通过|Approve/ }).click();
+    await approvalRow.getByRole('button', { name: /^通\s*过|Approve/ }).click();
     await page
       .locator('.ant-modal')
-      .getByRole('button', { name: /确定|OK/ })
+      .getByRole('button', { name: /确\s*定|OK/ })
       .click();
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
 
@@ -114,10 +114,10 @@ test.describe('核心业务链路', () => {
     await page.goto('/approval');
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 10000 });
-    await approvalRow.getByRole('button', { name: /^驳回|Reject/ }).click();
+    await approvalRow.getByRole('button', { name: /^驳\s*回|Reject/ }).click();
     await page
       .locator('.ant-modal')
-      .getByRole('button', { name: /确定|OK/ })
+      .getByRole('button', { name: /确\s*定|OK/ })
       .click();
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
 

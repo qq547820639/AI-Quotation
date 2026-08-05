@@ -18,7 +18,7 @@ test.describe('认证流程', () => {
     await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
 
     // 点击登录
-    await page.getByRole('button', { name: /登录|Login/ }).click();
+    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
 
     // 验证跳转到工作台
     await expect(page).toHaveURL(/\/dashboard/);
@@ -35,7 +35,7 @@ test.describe('认证流程', () => {
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
     await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登录|Login/ }).click();
+    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
     // 刷新页面，验证仍保持登录态（未跳回 /login）

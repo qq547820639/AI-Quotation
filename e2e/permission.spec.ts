@@ -21,7 +21,7 @@ test.describe('RBAC 权限', () => {
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '李明辉' }).click();
     await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登录|Login/ }).click();
+    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
     // 尝试访问设置页
@@ -37,7 +37,7 @@ test.describe('RBAC 权限', () => {
       expect(redirectedToForbidden || redirectedAway).toBeTruthy();
     } else {
       // 仍在 /settings，验证保存按钮不可见（权限组件拦截）
-      await expect(page.getByRole('button', { name: /保存|Save/ })).not.toBeVisible({
+      await expect(page.getByRole('button', { name: /保\s*存|Save/ })).not.toBeVisible({
         timeout: 5000,
       });
     }
@@ -49,7 +49,7 @@ test.describe('RBAC 权限', () => {
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
     await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登录|Login/ }).click();
+    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
 
     // 访问设置页
@@ -60,7 +60,7 @@ test.describe('RBAC 权限', () => {
       page.locator('.ant-form-item, .ant-switch, .ant-input-number').first(),
     ).toBeVisible({ timeout: 10000 });
     // 验证保存按钮可见
-    await expect(page.getByRole('button', { name: /保存|Save/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /保\s*存|Save/ }).first()).toBeVisible({
       timeout: 5000,
     });
   });

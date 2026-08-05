@@ -21,7 +21,7 @@ export async function login(page: Page, name: string, password = DEMO_PASSWORD) 
   await page.locator('.ant-select-selector').click();
   await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
   await page.locator('input[type="password"]').fill(password);
-  await page.getByRole('button', { name: /登录|Login/ }).click();
+  await page.getByRole('button', { name: /登\s*录|Login/ }).click();
   await expect(page).toHaveURL(/\/dashboard/);
 }
 

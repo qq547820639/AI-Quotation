@@ -21,7 +21,7 @@ async function login(page: Page, name: string, password = DEMO_PASSWORD) {
   await page.locator('.ant-select-selector').click();
   await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
   await page.locator('input[type="password"]').fill(password);
-  await page.getByRole('button', { name: /登录|Login/ }).click();
+  await page.getByRole('button', { name: /登\s*录|Login/ }).click();
   await expect(page).toHaveURL(/\/dashboard/);
 }
 
@@ -36,7 +36,7 @@ async function openSupplierPageAndToggle(page: Page) {
   await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
   const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
   await expect(row).toBeVisible({ timeout: 5000 });
-  await row.getByRole('button', { name: /停用|禁用|Disable/ }).click();
+  await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
 }
 
 test.describe('异常场景', () => {
@@ -192,7 +192,7 @@ test.describe('异常场景', () => {
     await page.goto('/supplier');
     await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
     const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
-    await row.getByRole('button', { name: /停用|禁用|Disable/ }).click();
+    await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
     await confirmOk(page);
 
     // 请求未完成时再次点击确定，应被 pendingOps 拦截（不发起第二次请求）
@@ -326,7 +326,7 @@ test.describe('异常场景', () => {
 
     // 重试成功：再次停用（乐观更新已回滚，按钮仍为"停用"）
     const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
-    await row.getByRole('button', { name: /停用|禁用|Disable/ }).click();
+    await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
     await confirmOk(page);
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 10000 });
   });
