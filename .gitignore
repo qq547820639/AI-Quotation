@@ -58,3 +58,13 @@ coverage/
 # 构建缓存
 .vite/
 .eslintcache
+
+# 安全扫描产物（由 CI security-scan 本地生成，不入库）
+npm-audit.json
+pip-audit.json
+backend/bandit.html
+backend/bandit.json
+trivy-*.json
+sbom-*.cdx.json
+sbom-backend-requirements.txt
+sbom-frontend-package-lock.json

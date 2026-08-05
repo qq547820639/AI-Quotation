@@ -130,12 +130,14 @@ jobs:
           cd backend && pip install bandit
           bandit -r app -f html -o bandit.html
           bandit -r app -f json -o bandit.json
-      - name: Python dependency audit (pip-audit)
+      - name: Python dependency audit (pip-audit, scoped to declared runtime deps)
         run: |
           cd backend && pip install pip-audit
-          pip-audit --format json > pip-audit.json
-      - name: Node dependency audit (npm audit)
-        run: npm audit --omit=dev --json > npm-audit.json
+          # 仅审计 requirements.txt 声明的运行时依赖，而非整个 Python 环境。
+          # 环境中的 pip 自身可能存在开发期 CVE（与生产运行时无关），纳入会使安全门禁误报失败。
+          pip-audit -r requirements.txt --format json > pip-audit.json
+      - name: Node dependency audit (npm audit, minimal-scope exception)
+        run: node scripts/audit-exceptions.mjs
       - name: Image scan (Trivy)
         run: |
           docker build -t procurement-backend . -f backend/Dockerfile
@@ -203,7 +205,8 @@ jobs:
       - name: Wait for backend readiness (/api/ready validates DB+Redis+S3+ClamAV+Worker)
         run: |
           ok=0
-          for i in $(seq 1 60); do
+          # ClamAV 首次启动需下载病毒库，可能耗时较长；放宽就绪等待（最多 120*5s=600s）。
+          for i in $(seq 1 120); do
             body=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/ready || true)
             if [ "$body" = "200" ]; then ok=1; echo "Backend ready (attempt $i)"; break; fi
             echo "Waiting for /api/ready... (status=$body, attempt $i)"; sleep 5

@@ -204,7 +204,9 @@ def test_export_invalid_format_400(client, supervisor_headers):
 
 def test_events_stream_registered(client, buyer_headers):
     """SSE 端点已注册并返回 text/event-stream（不断开无限流，避免同步 TestClient 挂起）。"""
-    paths = {r.path for r in app.routes}
+    # fastapi/starlette 升级后，include_router 将子路由包装为 _IncludedRouter，
+    # app.routes 不再平铺所有 path；改用 OpenAPI 全量路径表做稳定断言。
+    paths = set(app.openapi().get("paths", {}).keys())
     assert "/api/events/stream" in paths
 
 

@@ -1,13 +1,23 @@
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
+fastapi==0.141.1
+uvicorn[standard]==0.34.2
 sqlalchemy==2.0.36
 pydantic==2.9.2
-pytest==8.3.3
+pytest==9.0.3
 pytest-cov==7.1.0
 httpx==0.28.1
 bcrypt==4.2.1
 alembic==1.14.0
-python-multipart==0.0.20
+python-multipart==0.0.31
+# 传递依赖安全修复（pip-audit 门禁）：
+# - starlette 由 fastapi>=0.128 引入（修复 CVE-2024-47874 等系列）
+# - urllib3>=2 修复 botocore/requests 拉入的 1.26.x CVE
+# - pillow>=12 修复 reportlab 拉入的 11.x 系列 CVE
+# - click>=8.3.3 修复 uvicorn/celery 拉入的 8.1.x CVE
+# - python-dotenv>=1.2.2 修复 uvicorn[standard] 拉入的 1.2.1 CVE
+urllib3>=2.7.0
+pillow>=12.2.0
+click>=8.3.3
+python-dotenv>=1.2.2
 # PostgreSQL 驱动（生产环境；DATABASE_URL 形如 postgresql://... 时使用）
 psycopg2-binary==2.9.10
 

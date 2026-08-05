@@ -70,8 +70,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # ClamAV 首次启动需下载病毒库，可能耗时较长；若用 service_healthy 会阻塞 `docker compose up`
+      # 直至 clamav 就绪。真实就绪以 /api/ready（校验 DB+Redis+S3+ClamAV+Worker）为准，
+      # 因此这里只需保证启动顺序（service_started），不要阻塞 up。
       clamav:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_healthy
     # 启动前先执行迁移（prod 禁用 create_all，必须由 Alembic 建表），再启动 uvicorn
@@ -95,11 +98,13 @@ services:
       # 首次启动需下载病毒库，加快 freshclam 间隔
       - CLAMD_STARTUP_TIMEOUT=${CLAMD_STARTUP_TIMEOUT:-1800}
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 3310), timeout=5).close()"]
-      interval: 30s
+      # 首次启动需下载病毒库，可能耗时较长；用足 start_period 覆盖下载期，
+      # 避免健康检查在 clamd 就绪前反复失败导致后端（depends_on service_healthy）启动被阻塞。
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 3310), timeout=10).close()"]
+      interval: 15s
       timeout: 10s
-      retries: 5
-      start_period: 120s
+      retries: 40
+      start_period: 480s
     restart: unless-stopped
 
   # P0：Redis（限流/幂等/缓存/token，多实例共享）。
@@ -155,8 +160,9 @@ services:
     ports:
       - "80:80"
     depends_on:
+      # 与 backend→clamav 同理：真实就绪以 /api/ready 为准，前端 nginx 不阻塞 `docker compose up`。
       backend:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost"]
       interval: 30s
@@ -208,6 +214,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # 依赖 backend 启动（其启动时先执行 alembic upgrade head 建表），
+      # 确保 outbox_events 表已存在；dispatch 使用 while 循环自愈，不依赖 backend 完全健康。
+      backend:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), timeout=5).close()"]
       interval: 30s
