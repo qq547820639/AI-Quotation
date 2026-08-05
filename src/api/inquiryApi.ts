@@ -68,4 +68,40 @@ export const inquiryApi = {
       .then((r) => r.data),
   triggerDeadlineReminders: () =>
     client.post<{ created: number }>('/inquiries/reminders/deadline').then((r) => r.data),
+  /** Task 19：批量发送询价（返回逐条结果） */
+  batchSend: (ids: string[]) =>
+    client.post<BatchOperationResult>('/inquiries/batch/send', { ids }).then((r) => r.data),
+  /** Task 19：批量发送截止提醒（返回逐条结果） */
+  batchRemind: (ids: string[]) =>
+    client.post<BatchOperationResult>('/inquiries/batch/remind', { ids }).then((r) => r.data),
+  /** Task 19：批量导出（后台队列，返回任务 id 与逐条结果） */
+  batchExport: (ids: string[], format: 'pdf' | 'xlsx' = 'xlsx') =>
+    client
+      .post<BatchOperationResult>('/inquiries/batch/export', { ids, format })
+      .then((r) => r.data),
+  /** Task 19：批量调整负责人（返回逐条结果） */
+  batchAssign: (ids: string[], ownerId: string, ownerName: string) =>
+    client
+      .post<BatchOperationResult>('/inquiries/batch/assign', { ids, ownerId, ownerName })
+      .then((r) => r.data),
 };
+
+/** Task 19：批量操作逐条结果 */
+export interface BatchItemResult {
+  id: string;
+  success: boolean;
+  skipped?: boolean;
+  reason?: string;
+  exportUrl?: string;
+}
+
+/** Task 19：批量操作聚合结果（含后台队列任务信息） */
+export interface BatchOperationResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  results: BatchItemResult[];
+  taskId?: string;
+  queued?: boolean;
+}

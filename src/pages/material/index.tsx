@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -39,7 +40,14 @@ import { useMaterialStore } from '@/store/useMaterialStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { type Material } from '@/types';
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
-import { buildMaterials, parseMaterialFile } from '@/utils/materialImport';
+import {
+  buildImportErrorReport,
+  buildMaterials,
+  findDuplicateCodes,
+  parseMaterialFileDetailed,
+  type ImportCellError,
+} from '@/utils/materialImport';
+import { downloadTextFile } from '@/utils/csv';
 import { useIsMobile } from '@/utils/useIsMobile';
 import { getMaterialCategoryOptions } from '@/constants/materialCategories';
 
@@ -87,6 +95,7 @@ export default function MaterialPage() {
   // ===== 批量导入状态 =====
   const [importOpen, setImportOpen] = useState(false);
   const [importPreview, setImportPreview] = useState<Material[]>([]);
+  const [importErrors, setImportErrors] = useState<ImportCellError[]>([]);
   const [importing, setImporting] = useState(false);
 
   const importProps: UploadProps = {
@@ -95,14 +104,35 @@ export default function MaterialPage() {
     showUploadList: false,
     beforeUpload: async (file) => {
       try {
-        const parsed = await parseMaterialFile(file);
-        setImportPreview(buildMaterials(parsed));
+        const { items, errors } = await parseMaterialFileDetailed(file);
+        setImportErrors(errors);
+        setImportPreview(buildMaterials(items));
+        if (items.length === 0 && errors.length > 0) {
+          notifyError(t('material.import.noValidRows'));
+        } else if (errors.length > 0) {
+          notifyWarning(t('material.import.errorTitle', { count: errors.length }));
+        }
+        const duplicates = findDuplicateCodes(items);
+        if (duplicates.length > 0) {
+          notifyWarning(t('material.import.duplicateWarning', { codes: duplicates.join('、') }));
+        }
       } catch (e) {
         notifyError((e as Error).message || t('material.import.parseFailed'));
         setImportPreview([]);
+        setImportErrors([]);
       }
       return false;
     },
+  };
+
+  const handleDownloadErrorReport = () => {
+    if (importErrors.length === 0) return;
+    downloadTextFile(
+      `${t('material.import.reportFilename', { defaultValue: 'import-errors' })}.csv`,
+      buildImportErrorReport(importErrors),
+      'text/csv;charset=utf-8',
+    );
+    notifySuccess(t('material.import.reportDownloaded'));
   };
 
   const handleConfirmImport = async () => {
@@ -124,12 +154,14 @@ export default function MaterialPage() {
       notifySuccess(t('material.import.importSuccessCount', { count: importPreview.length }));
     }
     setImportPreview([]);
+    setImportErrors([]);
     setImportOpen(false);
     setImporting(false);
   };
 
   const handleCancelImport = () => {
     setImportPreview([]);
+    setImportErrors([]);
     setImportOpen(false);
   };
 
@@ -382,6 +414,7 @@ export default function MaterialPage() {
               options={getMaterialCategoryOptions()}
               style={{ width: '100%' }}
               allowClear
+              aria-label={t('material.list.categoryShort')}
             />
           </Col>
           <Col xs={24} sm={12} md={8} lg={6}>
@@ -627,6 +660,19 @@ export default function MaterialPage() {
           <Text type="secondary" style={{ fontSize: 12 }}>
             {t('material.import.supportedColumns')}
           </Text>
+          {importErrors.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              message={t('material.import.errorTitle', { count: importErrors.length })}
+              description={t('material.import.partialImportTip')}
+              action={
+                <Button size="small" onClick={handleDownloadErrorReport}>
+                  {t('material.import.downloadErrorReport')}
+                </Button>
+              }
+            />
+          )}
           {importPreview.length > 0 && (
             <>
               <Text strong>

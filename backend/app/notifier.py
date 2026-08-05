@@ -82,6 +82,8 @@ class EmailNotifier(Notifier):
                 server.send_message(msg)
             return DeliveryResult(success=True, message="邮件已发送")
         except Exception as exc:  # noqa: BLE001 - 投递失败需持久化记录，不向上抛出
+            from . import metrics as metrics_mod
+            metrics_mod.email_fail_total()
             logger.warning("notify_email_failed", extra={"extra_fields": {"to": to, "error": str(exc)}})
             return DeliveryResult(success=False, error=str(exc))
 

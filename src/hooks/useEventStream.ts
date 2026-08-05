@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { IS_DEMO_MODE } from '@/config';
+import { useNotificationStore } from '@/store/useNotificationStore';
 
 export interface SSEEvent {
   type: string;
@@ -16,13 +17,25 @@ export interface SSEEvent {
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 const MAX_RETRY_MS = 30000;
 
+/** 断线重连后默认补拉逻辑：重载通知以拉取遗漏通知 */
+function defaultReconnectCatchUp(): void {
+  void useNotificationStore.getState().loadFromApi();
+}
+
 /**
  * @param onEvent 收到事件时回调
  * @param enabled 是否启用（默认内联判断演示模式）
+ * @param onReconnect 断线重连成功后的回调（用于补拉遗漏数据）。缺省时补拉通知列表。
  */
-export function useEventStream(onEvent: (event: SSEEvent) => void, enabled = true): void {
+export function useEventStream(
+  onEvent: (event: SSEEvent) => void,
+  enabled = true,
+  onReconnect?: () => void,
+): void {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const onReconnectRef = useRef(onReconnect);
+  onReconnectRef.current = onReconnect;
 
   useEffect(() => {
     // 演示模式（MSW）不建立 SSE 连接
@@ -31,6 +44,16 @@ export function useEventStream(onEvent: (event: SSEEvent) => void, enabled = tru
     let es: EventSource | null = null;
     let closed = false;
     let retryMs = 2000;
+    // 首个 onopen 属于初始连接，之后的 onopen 视为断线重连成功
+    let hasConnected = false;
+
+    const triggerReconnect = () => {
+      if (onReconnectRef.current) {
+        onReconnectRef.current();
+      } else {
+        defaultReconnectCatchUp();
+      }
+    };
 
     const connect = () => {
       if (closed) return;
@@ -47,6 +70,11 @@ export function useEventStream(onEvent: (event: SSEEvent) => void, enabled = tru
 
       es.onopen = () => {
         retryMs = 2000;
+        if (hasConnected) {
+          // 断线重连成功后补拉遗漏通知
+          triggerReconnect();
+        }
+        hasConnected = true;
       };
       es.addEventListener('message', (ev) => {
         try {

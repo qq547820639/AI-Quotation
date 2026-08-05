@@ -23,6 +23,8 @@ import {
 import { BellOutlined, CheckOutlined } from '@ant-design/icons';
 import PageHeader from '@/components/PageHeader';
 import { useNotificationStore } from '@/store/useNotificationStore';
+import { useInquiryStore } from '@/store/useInquiryStore';
+import { useUIStore } from '@/store/useUIStore';
 import { NotificationType, type Notification } from '@/types';
 import { formatDateTime } from '@/utils/format';
 
@@ -38,6 +40,21 @@ const TYPE_COLOR: Record<NotificationType, string> = {
 };
 
 type ReadFilter = 'all' | 'unread';
+
+/** 通知链接状态：可跳转 / 资源已删除 / 无权限 / 无链接 */
+type LinkStatus = 'ok' | 'deleted' | 'noPermission' | 'none';
+
+/** 计算通知对应资源的链接状态（基于当前可见询价单与资源存在性） */
+function getNotificationLinkStatus(n: Notification): LinkStatus {
+  if (!n.inquiryId) return 'none';
+  const state = useInquiryStore.getState();
+  const exists = state.inquiries.some((i) => i.id === n.inquiryId);
+  if (!exists) return 'deleted';
+  const currentOrganization = useUIStore.getState().currentOrganization;
+  const visible = state.getVisibleInquiries(currentOrganization);
+  if (!visible.some((i) => i.id === n.inquiryId)) return 'noPermission';
+  return 'ok';
+}
 
 export default function NotificationPage() {
   const { t } = useTranslation();
@@ -62,7 +79,9 @@ export default function NotificationPage() {
 
   const handleClick = (n: Notification) => {
     markRead(n.id);
-    if (n.inquiryId) navigate(`/inquiry/detail/${n.inquiryId}`);
+    if (getNotificationLinkStatus(n) === 'ok' && n.inquiryId) {
+      navigate(`/inquiry/detail/${n.inquiryId}`);
+    }
   };
 
   const preferenceItems: { key: keyof typeof preferences; label: string; desc: string }[] = [
@@ -195,85 +214,102 @@ export default function NotificationPage() {
           ) : (
             <List
               dataSource={filtered}
-              renderItem={(n) => (
-                <List.Item
-                  style={{
-                    background: n.read ? 'transparent' : 'var(--color-primary-bg)',
-                    padding: 0,
-                    borderRadius: 8,
-                    marginBottom: 8,
-                    border: '1px solid var(--color-border-light)',
-                  }}
-                  actions={[
-                    !n.read ? (
-                      <Button
-                        type="link"
-                        size="small"
-                        key="read"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          markRead(n.id);
-                        }}
-                      >
-                        {t('notification.markRead')}
-                      </Button>
-                    ) : (
-                      <Text type="secondary" key="read" style={{ fontSize: 12 }}>
-                        {t('notification.read')}
-                      </Text>
-                    ),
-                  ]}
-                >
-                  <div
-                    role={n.inquiryId ? 'button' : undefined}
-                    tabIndex={n.inquiryId ? 0 : undefined}
-                    aria-label={
-                      n.inquiryId ? t('notification.openDetail', { title: n.title }) : undefined
-                    }
+              renderItem={(n) => {
+                const linkStatus = getNotificationLinkStatus(n);
+                const clickable = linkStatus === 'ok';
+                return (
+                  <List.Item
                     style={{
-                      padding: '12px 16px',
-                      cursor: n.inquiryId ? 'pointer' : 'default',
-                      width: '100%',
+                      background: n.read ? 'transparent' : 'var(--color-primary-bg)',
+                      padding: 0,
+                      borderRadius: 8,
+                      marginBottom: 8,
+                      border: '1px solid var(--color-border-light)',
                     }}
-                    onClick={() => handleClick(n)}
-                    onKeyDown={
-                      n.inquiryId
-                        ? (e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              handleClick(n);
-                            }
-                          }
-                        : undefined
-                    }
+                    actions={[
+                      !n.read ? (
+                        <Button
+                          type="link"
+                          size="small"
+                          key="read"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            markRead(n.id);
+                          }}
+                        >
+                          {t('notification.markRead')}
+                        </Button>
+                      ) : (
+                        <Text type="secondary" key="read" style={{ fontSize: 12 }}>
+                          {t('notification.read')}
+                        </Text>
+                      ),
+                    ]}
                   >
-                    <List.Item.Meta
-                      avatar={<Badge dot={!n.read} offset={[-4, 4]} />}
-                      title={
-                        <Space size={8}>
-                          <Text strong={!n.read}>{n.title}</Text>
-                          <Tag color={TYPE_COLOR[n.type]} style={{ marginInlineEnd: 0 }}>
-                            {t(`notification.type.${n.type}`)}
-                          </Tag>
-                        </Space>
+                    <div
+                      role={clickable ? 'button' : undefined}
+                      tabIndex={clickable ? 0 : undefined}
+                      aria-disabled={!clickable}
+                      aria-label={
+                        clickable ? t('notification.openDetail', { title: n.title }) : undefined
                       }
-                      description={
-                        <Space direction="vertical" size={4}>
-                          {n.content && (
-                            <Text type="secondary" style={{ fontSize: 13 }}>
-                              {n.content}
+                      style={{
+                        padding: '12px 16px',
+                        cursor: clickable ? 'pointer' : 'default',
+                        width: '100%',
+                      }}
+                      onClick={clickable ? () => handleClick(n) : undefined}
+                      onKeyDown={
+                        clickable
+                          ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handleClick(n);
+                              }
+                            }
+                          : undefined
+                      }
+                    >
+                      <List.Item.Meta
+                        avatar={<Badge dot={!n.read} offset={[-4, 4]} />}
+                        title={
+                          <Space size={8} wrap>
+                            <Text strong={!n.read}>{n.title}</Text>
+                            <Tag color={TYPE_COLOR[n.type]} style={{ marginInlineEnd: 0 }}>
+                              {t(`notification.type.${n.type}`)}
+                            </Tag>
+                            {linkStatus === 'deleted' && (
+                              <Tag color="error" style={{ marginInlineEnd: 0 }}>
+                                {t('notification.resourceDeleted')}
+                              </Tag>
+                            )}
+                            {linkStatus === 'noPermission' && (
+                              <Tag style={{ marginInlineEnd: 0 }}>
+                                {t('notification.noPermission')}
+                              </Tag>
+                            )}
+                          </Space>
+                        }
+                        description={
+                          <Space direction="vertical" size={4}>
+                            {n.content && (
+                              <Text type="secondary" style={{ fontSize: 13 }}>
+                                {n.content}
+                              </Text>
+                            )}
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {formatDateTime(n.time)}
+                              {linkStatus === 'ok' && t('notification.clickToViewDetail')}
+                              {linkStatus === 'deleted' && t('notification.resourceDeletedHint')}
+                              {linkStatus === 'noPermission' && t('notification.noPermissionHint')}
                             </Text>
-                          )}
-                          <Text type="secondary" style={{ fontSize: 12 }}>
-                            {formatDateTime(n.time)}
-                            {n.inquiryId && t('notification.clickToViewDetail')}
-                          </Text>
-                        </Space>
-                      }
-                    />
-                  </div>
-                </List.Item>
-              )}
+                          </Space>
+                        }
+                      />
+                    </div>
+                  </List.Item>
+                );
+              }}
             />
           )}
         </Space>

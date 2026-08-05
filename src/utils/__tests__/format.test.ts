@@ -29,6 +29,12 @@ describe('formatCurrency', () => {
   it('NaN 归零', () => {
     expect(formatCurrency(NaN)).toBe('¥0.00');
   });
+
+  it('避免浮点精度丢失（Task 24）：大额小数按两位四舍五入，无 0.1+0.2 类误差', () => {
+    expect(formatCurrency(0.1 + 0.2, Currency.USD)).toBe('$0.30');
+    expect(formatCurrency(12345.678, Currency.USD)).toBe('$12,345.68');
+    expect(formatCurrency(0.005, Currency.USD)).toBe('$0.01');
+  });
 });
 
 describe('formatDate', () => {

@@ -24,6 +24,8 @@ export enum InquiryStatus {
   PENDING_CONFIRM = 'PENDING_CONFIRM',
   /** 待审批（W5） */
   PENDING_APPROVAL = 'PENDING_APPROVAL',
+  /** 已驳回（可重新编辑并再次提交审批） */
+  RETURNED = 'RETURNED',
   /** 已完成 */
   COMPLETED = 'COMPLETED',
   /** 已取消 */
@@ -40,6 +42,7 @@ export const INQUIRY_STATUS_LABEL: Record<InquiryStatus, string> = {
   [InquiryStatus.TIMEOUT]: '已超时',
   [InquiryStatus.PENDING_CONFIRM]: '待确认',
   [InquiryStatus.PENDING_APPROVAL]: '待审批',
+  [InquiryStatus.RETURNED]: '已驳回',
   [InquiryStatus.COMPLETED]: '已完成',
   [InquiryStatus.CANCELLED]: '已取消',
 };
@@ -54,6 +57,7 @@ export const INQUIRY_STATUS_COLOR: Record<InquiryStatus, TagProps['color']> = {
   [InquiryStatus.TIMEOUT]: 'error',
   [InquiryStatus.PENDING_CONFIRM]: 'gold',
   [InquiryStatus.PENDING_APPROVAL]: 'orange',
+  [InquiryStatus.RETURNED]: 'volcano',
   [InquiryStatus.COMPLETED]: 'green',
   [InquiryStatus.CANCELLED]: 'default',
 };

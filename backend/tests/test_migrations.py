@@ -22,6 +22,8 @@ ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
 
 # 迁移后应存在的关键表（0001 建表 + 0003 sessions 等）
 CORE_TABLES = {"users", "inquiries", "suppliers", "materials", "quotations", "sessions"}
+# 0009 持久化任务队列新增表
+TASK_QUEUE_TABLES = {"task_records", "outbox_events"}
 
 
 def _alembic_config() -> Config:
@@ -50,18 +52,24 @@ def test_migration_round_trip(monkeypatch, tmp_path):
     tables = _table_names(db_url)
     missing = CORE_TABLES - tables
     assert not missing, f"upgrade head 后缺少表: {missing}"
+    missing_task = TASK_QUEUE_TABLES - tables
+    assert not missing_task, f"upgrade head 后缺少任务队列表: {missing_task}"
 
     # 2) 关键迁移 downgrade：0003 → 0002（移除 sessions 表）
     command.downgrade(cfg, "0002")
     tables = _table_names(db_url)
     assert "sessions" not in tables, "downgrade 0003→0002 后 sessions 表应被移除"
     assert "users" in tables and "inquiries" in tables, "downgrade 后核心表应保留"
+    leaked_task = TASK_QUEUE_TABLES & tables
+    assert not leaked_task, f"downgrade 0009→0002 后任务队列表应被回退: {leaked_task}"
 
     # 3) re-upgrade head（round-trip）
     command.upgrade(cfg, "head")
     tables = _table_names(db_url)
     missing = CORE_TABLES - tables
     assert not missing, f"re-upgrade head 后缺少表: {missing}"
+    missing_task = TASK_QUEUE_TABLES - tables
+    assert not missing_task, f"re-upgrade head 后缺少任务队列表: {missing_task}"
 
     # 4) 全部回退到 base，确认无业务表残留
     command.downgrade(cfg, "base")

@@ -21,15 +21,20 @@ from ..config import (
     COOKIE_DOMAIN,
     COOKIE_SECURE,
     COOKIE_SAMESITE,
+    CORS_ORIGINS,
     REFRESH_TOKEN_TTL_SECONDS,
     TRUSTED_PROXY,
 )
 from ..database import get_db
 from ..models import User, Token, Session
-from ..schemas import LoginParams, LoginResult, UserSchema, SuccessResult, RefreshResult, SessionInfo
+from ..schemas import (
+    LoginParams, LoginResult, UserSchema, SuccessResult, RefreshResult,
+    SessionInfo, ChangePasswordParams,
+)
 from ..auth import (
     get_current_user,
     verify_password,
+    hash_password,
     is_login_blocked,
     record_login_failure,
     reset_login_attempts,
@@ -69,6 +74,42 @@ def get_client_ip(request: Request) -> str:
         if fwd:
             return fwd.split(",")[0].strip()
     return client_host
+
+
+def _assert_same_origin(request: Request) -> None:
+    """CSRF 防护：对 cookie 认证的状态修改端点校验 Origin/Referer 必须为可信同源。
+
+    - 仅当请求携带 Origin 或 Referer 头时校验（浏览器始终携带；纯 API 客户端如 curl/测试
+      通常不带，此时放行以保持对非浏览器调用方的兼容）。
+    - Origin 优先；若 Origin 缺失则回退校验 Referer 的 origin 部分。
+    - 校验通过条件：该 origin 在 CORS_ORIGINS 白名单内（与 CORS 配置一致）。
+    - 不匹配则 403，阻断跨站请求伪造（配合 SameSite=Lax 双重防护）。
+    """
+    def _origin_of(referer: str) -> str:
+        # 仅取 scheme://host（忽略 path/query），避免同源判定被 path 干扰
+        try:
+            from urllib.parse import urlsplit
+            parts = urlsplit(referer)
+            if parts.scheme and parts.netloc:
+                return f"{parts.scheme}://{parts.netloc}"
+        except (ValueError, TypeError):
+            return referer
+        return referer
+
+    origin = request.headers.get("origin")
+    if not origin:
+        referer = request.headers.get("referer")
+        if not referer:
+            return  # 无 Origin/Referer：非浏览器调用，放行
+        origin = _origin_of(referer)
+
+    # 仅信任 CORS 白名单内的来源（与 CORS 配置一致）
+    allowed = set(CORS_ORIGINS)
+    if origin not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="跨站请求被拒绝（Origin 校验失败）",
+        )
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -159,6 +200,8 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
 
     若检测到已用 refresh token 再次使用（重用检测）→ 判定会话被窃取，撤销整个会话。
     """
+    # CSRF 防护：refresh 走 Cookie 认证，校验来源同源（配合 SameSite=Lax）
+    _assert_same_origin(request)
     refresh_token = request.cookies.get(REFRESH_COOKIE)
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="缺少 refresh token")
@@ -280,3 +323,36 @@ def logout_all(
 @router.get("/me", response_model=UserSchema)
 def me(user: User = Depends(get_current_user)):
     return user_to_schema(user)
+
+
+@router.post("/change-password", response_model=SuccessResult)
+def change_password(
+    body: ChangePasswordParams,
+    user: User = Depends(get_current_user),
+    response: Response = None,
+    db: Session = Depends(get_db),
+):
+    """修改密码（P1）：校验当前密码 → 更新 bcrypt 哈希 → 撤销该用户所有会话（含当前）。
+
+    改密后所有旧 access/refresh token 立即失效，强制重新登录，防止改密前泄露的
+    会话继续使用。
+    """
+    if not body.newPassword or len(body.newPassword) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密码长度至少 8 位")
+    if body.confirmPassword is not None and body.newPassword != body.confirmPassword:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="两次输入的新密码不一致")
+    if not verify_password(body.currentPassword or "", user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前密码错误")
+    user.password_hash = hash_password(body.newPassword)
+    # 撤销该用户所有会话（含当前），并删除其下所有 access token 记录
+    sessions = db.query(Session).filter(Session.user_id == user.id).all()
+    for s in sessions:
+        revoke_session(db, s.id, "password_changed")
+    # 清理无会话绑定的历史 access token（兼容旧数据）
+    db.query(Token).filter(
+        Token.user_id == user.id,
+        Token.session_id.is_(None),
+    ).delete()
+    db.commit()
+    _clear_refresh_cookie(response)
+    return SuccessResult(success=True)

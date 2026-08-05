@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -153,6 +153,7 @@ def get_session_by_refresh_hash(db: Session, refresh_token_hash: str) -> Session
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
+    request: Request = None,  # type: ignore[assignment]  # FastAPI 注入 Request
 ) -> User:
     """解析 token（按哈希查找），返回当前用户；无 token / 无效 / 过期 token → 401"""
     if credentials is None or credentials.scheme.lower() != "bearer":
@@ -168,6 +169,10 @@ def get_current_user(
     user = db.query(User).filter(User.id == token_record.user_id).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+    # 注入认证上下文到 request.state，供结构化日志（user_id / organization）使用
+    if request is not None:
+        request.state.user_id = user.id
+        request.state.organization = user.organization
     return user
 
 
@@ -183,9 +188,22 @@ def require_permission(perm: str):
     return checker
 
 
+# 管理员专属接口（AI 用量统计等）统一走角色校验，不依赖前端隐藏按钮。
+# 不新增 ROLE_PERMISSIONS 权限项（保持与前端矩阵一致），仅按角色判定。
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    """管理员角色校验依赖：非管理员 → 403"""
+    if user.role != "管理员":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要管理员权限",
+        )
+    return user
+
+
 def get_optional_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
+    request: Request = None,  # type: ignore[assignment]  # FastAPI 注入 Request
 ) -> User | None:
     """可选认证：有 token 则解析，无 token 返回 None（用于登录等端点）"""
     if credentials is None:
@@ -195,4 +213,8 @@ def get_optional_user(
         return None
     if token_record.expires_at is not None and token_record.expires_at < datetime.utcnow():
         return None
-    return db.query(User).filter(User.id == token_record.user_id).first()
+    user = db.query(User).filter(User.id == token_record.user_id).first()
+    if user is not None and request is not None:
+        request.state.user_id = user.id
+        request.state.organization = user.organization
+    return user

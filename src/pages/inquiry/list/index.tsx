@@ -17,6 +17,7 @@ import {
   Empty,
   Input,
   List,
+  Modal,
   Row,
   Select,
   Space,
@@ -27,6 +28,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  BellOutlined,
   ClearOutlined,
   CopyOutlined,
   EditOutlined,
@@ -36,8 +38,11 @@ import {
   MoreOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SaveOutlined,
   SearchOutlined,
+  SendOutlined,
   StopOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import PageHeader from '@/components/PageHeader';
@@ -48,7 +53,7 @@ import { useQuotationStore } from '@/store/useQuotationStore';
 import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useQuery } from '@tanstack/react-query';
-import { inquiryApi } from '@/api';
+import { inquiryApi, type BatchOperationResult } from '@/api';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import { IS_DEMO_MODE } from '@/config';
 import {
@@ -70,9 +75,26 @@ import {
   useTablePreferences,
   type TableColumnPref,
 } from '@/hooks/useTablePreferences';
+import { useSavedViews, type SavedFilterView } from '@/hooks/useSavedViews';
+import {
+  useBatchInquiries,
+  type BatchActionKind,
+  type BatchPreviewItem,
+} from '@/hooks/useBatchInquiries';
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
+
+/** 保存视图使用的可序列化筛选条件（Dayjs 序列化为 ISO 字符串） */
+interface SavedViewFilter {
+  code: string;
+  subject: string;
+  creator: string;
+  status: InquiryStatus[];
+  createdAt: [string, string] | null;
+  deadline: [string, string] | null;
+  category: string | undefined;
+}
 
 export default function InquiryListPage() {
   const { t } = useTranslation();
@@ -95,6 +117,27 @@ export default function InquiryListPage() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [filterOpen, setFilterOpen] = useState(false);
+
+  // ===== Task 19：保存筛选视图 + 默认视图 =====
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [viewName, setViewName] = useState('');
+  const viewsApi = useSavedViews<SavedViewFilter>(20);
+  const {
+    views: savedViews,
+    saveView,
+    setDefaultView: setViewDefault,
+    removeView: removeSavedView,
+    getDefaultView,
+  } = viewsApi;
+
+  // ===== Task 19：批量操作（发送/提醒/导出/负责人调整）=====
+  const batch = useBatchInquiries();
+  const [batchKind, setBatchKind] = useState<BatchActionKind | null>(null);
+  const [batchPreviewOpen, setBatchPreviewOpen] = useState(false);
+  const [batchPreviewItems, setBatchPreviewItems] = useState<BatchPreviewItem[]>([]);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignOwner, setAssignOwner] = useState('');
+  const canSend = hasPermission('INQUIRY_SEND');
 
   // ===== 筛选状态（输入态，点击查询后写入 applied） =====
   const [filterCode, setFilterCode] = useState('');
@@ -319,6 +362,148 @@ export default function InquiryListPage() {
     };
     setApplied(empty);
     syncUrl(empty, 1);
+  };
+
+  // ===== Task 19：保存筛选视图（序列化 / 反序列化 / 应用）=====
+  const serializeFilter = (f: typeof applied): SavedViewFilter => ({
+    code: f.code,
+    subject: f.subject,
+    creator: f.creator,
+    status: f.status,
+    createdAt:
+      f.createdAt?.[0] && f.createdAt?.[1]
+        ? [f.createdAt[0].toISOString(), f.createdAt[1].toISOString()]
+        : null,
+    deadline:
+      f.deadline?.[0] && f.deadline?.[1]
+        ? [f.deadline[0].toISOString(), f.deadline[1].toISOString()]
+        : null,
+    category: f.category,
+  });
+
+  const applySavedView = (view: SavedFilterView<SavedViewFilter>) => {
+    const v = view.filter;
+    const next: typeof applied = {
+      code: v.code,
+      subject: v.subject,
+      creator: v.creator,
+      status: v.status,
+      createdAt: v.createdAt ? [dayjs(v.createdAt[0]), dayjs(v.createdAt[1])] : null,
+      deadline: v.deadline ? [dayjs(v.deadline[0]), dayjs(v.deadline[1])] : null,
+      category: v.category,
+    };
+    // 同步到输入态与 applied，并写回 URL
+    setFilterCode(v.code);
+    setFilterSubject(v.subject);
+    setFilterCreator(v.creator);
+    setFilterStatus(v.status);
+    setFilterCreatedAt(next.createdAt as [Dayjs | null, Dayjs | null] | null);
+    setFilterDeadline(next.deadline as [Dayjs | null, Dayjs | null] | null);
+    setFilterCategory(v.category);
+    setApplied(next);
+    syncUrl(next, 1);
+  };
+
+  // Task 19：进入列表页时自动应用默认视图
+  useEffect(() => {
+    const def = getDefaultView();
+    if (def) applySavedView(def);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSaveView = () => {
+    const name = viewName.trim();
+    if (!name) {
+      notifyError(t('inquiry.savedViews.nameRequired'));
+      return;
+    }
+    saveView(name, serializeFilter(applied));
+    notifySuccess(t('inquiry.savedViews.saved', { name }));
+    setViewModalOpen(false);
+    setViewName('');
+  };
+
+  const handleApplyView = (view: SavedFilterView<SavedViewFilter>) => {
+    applySavedView(view);
+    notifySuccess(t('inquiry.savedViews.applied', { name: view.name }));
+  };
+
+  const handleSetDefaultView = (view: SavedFilterView<SavedViewFilter>) => {
+    setViewDefault(view.id);
+    notifySuccess(t('inquiry.savedViews.defaultSet', { name: view.name }));
+  };
+
+  const handleRemoveView = (view: SavedFilterView<SavedViewFilter>) => {
+    confirmAction({
+      title: t('inquiry.savedViews.remove'),
+      content: t('inquiry.savedViews.confirmRemove', { name: view.name }),
+      danger: true,
+      onOk: () => {
+        removeSavedView(view.id);
+        notifySuccess(t('inquiry.savedViews.removed'));
+      },
+    });
+  };
+
+  // ===== Task 19：批量操作执行前预览 + 逐条结果 =====
+  const showBatchPreview = (kind: BatchActionKind) => {
+    const items = batch.preview(selectedRowKeys.map(String), kind, inquiries);
+    setBatchKind(kind);
+    setBatchPreviewItems(items);
+    setBatchPreviewOpen(true);
+  };
+
+  const runBatch = async () => {
+    if (!batchKind) return;
+    const ids = selectedRowKeys.map(String);
+    let result: BatchOperationResult | null = null;
+    try {
+      if (batchKind === 'send') result = await batch.batchSend(ids);
+      else if (batchKind === 'remind') result = await batch.batchRemind(ids);
+      else if (batchKind === 'export') result = await batch.batchExport(ids, 'xlsx');
+      else if (batchKind === 'assign') {
+        if (!assignOwner.trim()) {
+          notifyError(t('inquiry.list.batchOwnerRequired'));
+          return;
+        }
+        result = await batch.batchAssign(ids, currentUser.id, assignOwner.trim());
+      }
+    } catch (e) {
+      notifyError((e as Error)?.message ?? t('common.operateFailed'));
+      return;
+    }
+    setBatchPreviewOpen(false);
+    setAssignOpen(false);
+    setAssignOwner('');
+    if (!result) return;
+    // 成功提示（导出提示后台队列）
+    if (result.succeeded > 0) {
+      const key =
+        batchKind === 'send'
+          ? 'batchSendSuccess'
+          : batchKind === 'remind'
+            ? 'batchRemindSuccess'
+            : batchKind === 'export'
+              ? 'batchExportSuccess'
+              : 'batchAssignSuccess';
+      notifySuccess(t(`inquiry.list.${key}`, { count: result.succeeded }));
+    }
+    if (batchKind === 'export' && result.queued) {
+      notifySuccess(t('inquiry.list.batchExportQueued'));
+    }
+    // 逐条失败提示
+    if (result.failed > 0) {
+      const reasons = Array.from(
+        new Set(
+          result.results
+            .filter((r) => !r.success && !r.skipped && r.reason)
+            .map((r) => r.reason as string),
+        ),
+      );
+      const reasonText = reasons.length ? `：${reasons.join('；')}` : '';
+      notifyError(t('inquiry.list.batchPartialFailed', { count: result.failed }) + reasonText);
+    }
+    setSelectedRowKeys([]);
   };
 
   const handleCopy = (inquiry: Inquiry) => {
@@ -966,6 +1151,58 @@ export default function InquiryListPage() {
           <Button icon={<ReloadOutlined />} onClick={resetDefaultView}>
             {t('table.resetDefaultView')}
           </Button>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: 'save',
+                  label: t('inquiry.savedViews.save'),
+                  icon: <SaveOutlined />,
+                },
+                { type: 'divider' },
+                ...(savedViews.length === 0
+                  ? [{ key: 'empty', label: t('inquiry.savedViews.empty'), disabled: true }]
+                  : savedViews.map((v) => ({
+                      key: v.id,
+                      label: (
+                        <Space size={4}>
+                          {v.name}
+                          {v.isDefault && (
+                            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                              {t('inquiry.savedViews.defaultTag')}
+                            </Tag>
+                          )}
+                        </Space>
+                      ),
+                      children: [
+                        { key: `apply-${v.id}`, label: t('inquiry.savedViews.apply') },
+                        { key: `default-${v.id}`, label: t('inquiry.savedViews.setDefault') },
+                        {
+                          key: `remove-${v.id}`,
+                          label: t('inquiry.savedViews.remove'),
+                          danger: true,
+                        },
+                      ],
+                    }))),
+              ],
+              onClick: ({ key }) => {
+                if (key === 'save') {
+                  setViewModalOpen(true);
+                } else if (key.startsWith('apply-')) {
+                  const v = savedViews.find((i) => i.id === key.slice(6));
+                  if (v) handleApplyView(v);
+                } else if (key.startsWith('default-')) {
+                  const v = savedViews.find((i) => i.id === key.slice(8));
+                  if (v) handleSetDefaultView(v);
+                } else if (key.startsWith('remove-')) {
+                  const v = savedViews.find((i) => i.id === key.slice(7));
+                  if (v) handleRemoveView(v);
+                }
+              },
+            }}
+          >
+            <Button icon={<SaveOutlined />}>{t('inquiry.savedViews.title')}</Button>
+          </Dropdown>
           <TableSettings
             columns={prefs.columns}
             density={prefs.density}
@@ -999,6 +1236,30 @@ export default function InquiryListPage() {
             <Text style={{ color: '#fff' }}>
               {t('inquiry.list.selectedCount', { count: selectedRowKeys.length })}
             </Text>
+            {canSend && (
+              <Button icon={<SendOutlined />} onClick={() => showBatchPreview('send')}>
+                {t('inquiry.list.batchSend')}
+              </Button>
+            )}
+            {canSend && (
+              <Button icon={<BellOutlined />} onClick={() => showBatchPreview('remind')}>
+                {t('inquiry.list.batchRemind')}
+              </Button>
+            )}
+            <Button icon={<ExportOutlined />} onClick={() => showBatchPreview('export')}>
+              {t('inquiry.list.batchExport')}
+            </Button>
+            {canEdit && (
+              <Button
+                icon={<UserOutlined />}
+                onClick={() => {
+                  setBatchKind('assign');
+                  setAssignOpen(true);
+                }}
+              >
+                {t('inquiry.list.batchAssign')}
+              </Button>
+            )}
             {canCancel && (
               <Button
                 danger
@@ -1019,6 +1280,90 @@ export default function InquiryListPage() {
           </Space>
         </div>
       )}
+
+      {/* Task 19：批量操作执行前预览 Modal */}
+      <Modal
+        title={t('inquiry.list.batchPreviewTitle')}
+        open={batchPreviewOpen}
+        onCancel={() => setBatchPreviewOpen(false)}
+        onOk={runBatch}
+        okText={t('common.confirm')}
+        confirmLoading={batch.running}
+        okButtonProps={{ disabled: batchPreviewItems.every((i) => !i.executable) }}
+      >
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          {t('inquiry.list.batchPreviewSummary', {
+            total: batchPreviewItems.length,
+            executable: batchPreviewItems.filter((i) => i.executable).length,
+            skipped: batchPreviewItems.filter((i) => !i.executable).length,
+          })}
+        </Text>
+        <List
+          size="small"
+          dataSource={batchPreviewItems}
+          renderItem={(item) => (
+            <List.Item>
+              <Space>
+                <Text strong>{item.code}</Text>
+                <Text type="secondary" ellipsis style={{ maxWidth: 240 }}>
+                  {item.subject}
+                </Text>
+              </Space>
+              {item.executable ? (
+                <Tag color="success">{t('common.yes')}</Tag>
+              ) : (
+                <Tag color="warning">
+                  {item.reason === 'status_not_sendable'
+                    ? t('inquiry.list.batchReasonNotSendable')
+                    : t('inquiry.list.batchReasonNotFound')}
+                </Tag>
+              )}
+            </List.Item>
+          )}
+        />
+      </Modal>
+
+      {/* Task 19：批量调整负责人 Modal */}
+      <Modal
+        title={t('inquiry.list.batchAssignTitle')}
+        open={assignOpen}
+        onCancel={() => {
+          setAssignOpen(false);
+          setAssignOwner('');
+        }}
+        onOk={runBatch}
+        confirmLoading={batch.running}
+        okButtonProps={{ disabled: !assignOwner.trim() }}
+      >
+        <Input
+          placeholder={t('inquiry.list.batchAssignPlaceholder')}
+          value={assignOwner}
+          onChange={(e) => setAssignOwner(e.target.value)}
+          onPressEnter={runBatch}
+        />
+      </Modal>
+
+      {/* Task 19：保存筛选视图 Modal */}
+      <Modal
+        title={t('inquiry.savedViews.save')}
+        open={viewModalOpen}
+        onCancel={() => {
+          setViewModalOpen(false);
+          setViewName('');
+        }}
+        onOk={handleSaveView}
+        okButtonProps={{ disabled: !viewName.trim() }}
+      >
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          {t('inquiry.savedViews.saveDesc')}
+        </Text>
+        <Input
+          placeholder={t('inquiry.savedViews.namePlaceholder')}
+          value={viewName}
+          onChange={(e) => setViewName(e.target.value)}
+          onPressEnter={handleSaveView}
+        />
+      </Modal>
 
       <Card styles={{ body: { padding: 0 } }}>
         {isMobile ? (

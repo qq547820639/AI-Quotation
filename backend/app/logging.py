@@ -14,7 +14,7 @@ from contextvars import ContextVar
 # 每请求 request_id（contextvar，随请求作用域传播）
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
-# 敏感字段名（子串匹配，小写比对）。命中即对该 key 的值做脱敏。
+# 敏感字段名（子串匹配，小写比对）。命中即对该 key 的值整体掩码为 ***。
 SENSITIVE_KEYS = (
     "password",
     "passwd",
@@ -27,7 +27,18 @@ SENSITIVE_KEYS = (
     "refresh_token",
     "credential",
     "authorization",
+    # 报价业务正文（报价正文/说明/备注等自由文本，避免招采明细落盘）
+    "content",
+    "body",
+    "quotation",
+    "quotation_body",
+    "quote_content",
+    "quote_body",
+    "remark",
 )
+
+# 邮箱类 key：采用「部分脱敏」而非整体掩码（保留域名，本地部分仅暴露首字符）
+EMAIL_KEYS = ("email",)
 
 
 def _is_sensitive(key: str) -> bool:
@@ -35,13 +46,40 @@ def _is_sensitive(key: str) -> bool:
     return any(s in k for s in SENSITIVE_KEYS)
 
 
-def redact(data):
-    """递归脱敏：对敏感 key 的值替换为掩码，返回新结构（不修改入参）。
+def _is_email(key: str) -> bool:
+    k = str(key).lower()
+    return any(s in k for s in EMAIL_KEYS)
 
-    支持 dict / list / 标量。非敏感 key 原样保留。
+
+def _mask_email(value):
+    """对邮箱做部分脱敏：保留域名，本地部分仅保留首字符。非邮箱格式则整体掩码。"""
+    s = str(value)
+    if "@" not in s:
+        return "***"
+    user, _, domain = s.partition("@")
+    if not user:
+        return f"***@{domain}"
+    masked = user[0] + "***" if len(user) > 1 else "***"
+    return f"{masked}@{domain}"
+
+
+def redact(data):
+    """递归脱敏：对敏感 key 的 value 掩码，返回新结构（不修改入参）。
+
+    - 邮箱类 key（含 email）：部分脱敏，保留域名
+    - 其余敏感 key（password/token/authorization/报价正文等）：整体掩码为 ***
+    - 支持 dict / list / 标量；非敏感 key 原样保留
     """
     if isinstance(data, dict):
-        return {k: ("***" if _is_sensitive(k) else redact(v)) for k, v in data.items()}
+        out = {}
+        for k, v in data.items():
+            if _is_email(k):
+                out[k] = _mask_email(v) if v is not None else v
+            elif _is_sensitive(k):
+                out[k] = "***"
+            else:
+                out[k] = redact(v)
+        return out
     if isinstance(data, (list, tuple)):
         return [redact(v) for v in data]
     return data
@@ -80,7 +118,8 @@ class JsonFormatter(logging.Formatter):
             payload["request_id"] = rid
         extra = getattr(record, "extra_fields", None)
         if isinstance(extra, dict):
-            payload.update(extra)
+            # 落盘前对 extra_fields 应用脱敏（密码/token/邮箱部分/报价正文）
+            payload.update(redact(extra))
         return json.dumps(payload, ensure_ascii=False)
 
 

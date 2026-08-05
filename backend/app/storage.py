@@ -178,7 +178,12 @@ class S3Storage(Storage):
                 endpoint_url=self.endpoint,
                 aws_access_key_id=self.access_key,
                 aws_secret_access_key=self.secret_key,
-                config=Config(signature_version="s3v4"),
+                config=Config(
+                    signature_version="s3v4",
+                    connect_timeout=5,          # 连接建立超时（秒）
+                    read_timeout=30,            # 读超时（秒）
+                    retries={"max_attempts": 3, "mode": "standard"},  # 有限重试
+                ),
             )
         except ImportError:
             # boto3 未安装，回退到不初始化
@@ -188,8 +193,26 @@ class S3Storage(Storage):
             pass
         self._initialized = True
 
+    def is_available(self) -> bool:
+        """客户端是否已初始化成功（用于生产启动校验，禁止静默降级到本地）。"""
+        self._init_client()
+        return self._client is not None
+
     def _get_key(self, attachment_id: str, original_filename: str) -> str:
+        """构造对象键。
+
+        严格校验：attachment_id 由服务端生成（gen_id，形如 att-<ms>-<rand>），
+        禁止路径遍历（..）、路径分隔符、以 / 结尾及危险字符。绝不信任用户输入路径。
+        """
+        if not attachment_id:
+            raise ValueError("attachment_id 不能为空")
+        if ".." in attachment_id or "/" in attachment_id or "\\" in attachment_id:
+            raise ValueError("attachment_id 含非法路径字符")
+        if not re.match(r"^[A-Za-z0-9-]+$", attachment_id):
+            raise ValueError("attachment_id 含非法字符")
         ext = get_extension(original_filename)
+        if ext and not re.match(r"^\.[A-Za-z0-9]+$", ext):
+            raise ValueError("original_filename 含非法扩展名")
         return f"attachments/{attachment_id}{ext}"
 
     def save(self, attachment_id: str, data: bytes, original_filename: str) -> Tuple[bool, str]:

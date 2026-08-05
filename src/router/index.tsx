@@ -30,6 +30,30 @@ const NotFoundPage = lazy(() => import('@/pages/not-found'));
 const LoginPage = lazy(() => import('@/pages/login'));
 const ForbiddenPage = lazy(() => import('@/pages/forbidden'));
 
+/**
+ * 路由级代码拆分（Task 23 性能基线）：所有页面组件均通过 React.lazy 懒加载。
+ * 供性能基线测试断言：确保每个页面组件都是 lazy 组件（动态 chunk），而非同步打包进首屏。
+ */
+export const lazyPageComponents = [
+  DashboardPage,
+  InquiryListPage,
+  InquiryCreatePage,
+  InquiryDetailPage,
+  QuotationPendingPage,
+  QuotationComparePage,
+  ApprovalPage,
+  NotificationPage,
+  SupplierPage,
+  SupplierDetailPage,
+  MaterialPage,
+  LogPage,
+  SettingsPage,
+  SupplierPortalPage,
+  NotFoundPage,
+  LoginPage,
+  ForbiddenPage,
+];
+
 export const appRouter = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/403', element: <ForbiddenPage /> },

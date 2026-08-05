@@ -707,11 +707,15 @@ export default function InquiryDetailPage() {
                 {t('inquiry.detail.cancelInquiry')}
               </Button>
             )}
-            {canApprove && inquiry.status === InquiryStatus.PENDING_CONFIRM && (
-              <Button icon={<AuditOutlined />} onClick={handleSubmitApproval}>
-                {t('inquiry.detail.submitApproval')}
-              </Button>
-            )}
+            {canApprove &&
+              (inquiry.status === InquiryStatus.PENDING_CONFIRM ||
+                inquiry.status === InquiryStatus.RETURNED) && (
+                <Button icon={<AuditOutlined />} onClick={handleSubmitApproval}>
+                  {inquiry.status === InquiryStatus.RETURNED
+                    ? t('inquiry.detail.resubmitApproval')
+                    : t('inquiry.detail.submitApproval')}
+                </Button>
+              )}
             {canApprove && inquiry.status === InquiryStatus.PENDING_APPROVAL && (
               <>
                 <Button

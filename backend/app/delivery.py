@@ -62,7 +62,10 @@ def _invitation_context(invitation: SupplierInvitation, db: Session) -> dict:
     supplier = db.query(Supplier).filter(Supplier.id == invitation.supplier_id).first()
     # 原始 token 从短期存储读取；已被重新生成则取不到，此时不注入 portalUrl（避免发出失效链接）
     raw_token = get_invitation_raw_token(invitation.id)
-    portal_url = f"{config.PORTAL_BASE_URL}?token={raw_token}" if raw_token else ""
+    if not raw_token:
+        # 防御性处理：绝不对明文 token 已丢失的邀请发出空/失效链接
+        raise ValueError("invitation raw token is missing; cannot build a valid portal link")
+    portal_url = f"{config.PORTAL_BASE_URL}?token={raw_token}"
     return {
         "inquiryCode": inquiry.code if inquiry else "",
         "subject": inquiry.subject if inquiry else "",
@@ -88,7 +91,17 @@ def deliver_single_invitation(db: Session, invitation: SupplierInvitation, notif
         return
     supplier = db.query(Supplier).filter(Supplier.id == invitation.supplier_id).first()
     to = supplier.email if supplier else ""
-    variables = _invitation_context(invitation, db)
+    try:
+        variables = _invitation_context(invitation, db)
+    except ValueError as exc:
+        # 防御性处理：明文 token 缺失时绝不发出空链接，标记为失败而非静默
+        logger.warning(
+            "invitation_raw_token_missing",
+            extra={"extra_fields": {"invitation_id": invitation.id, "error": str(exc)}},
+        )
+        invitation.delivery_status = D_FAILED
+        invitation.delivery_error = "邀请 token 缺失，无法生成有效链接"
+        return
     subject = render_subject("inquiry", None, variables)
     body = render_template("inquiry", None, variables)
     result = notifier.send(to, subject, body, variables)

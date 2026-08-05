@@ -39,7 +39,7 @@ vi.mock('@/utils/confirm', () => ({
 }));
 
 import { portalApi } from '@/api/portal';
-import { confirmAction, notifyError } from '@/utils/confirm';
+import { notifyError } from '@/utils/confirm';
 import SupplierPortalPage from '../index';
 
 const TOKEN = 'inv-token-valid';
@@ -237,15 +237,20 @@ describe('供应商门户页面状态', () => {
 });
 
 describe('供应商门户提交', () => {
-  it('提交调用 API 并展示回执', async () => {
+  it('提交前预览：点正式提交打开预览，展示逐项报价与总额，确认后调用 API 并展示回执', async () => {
     mockedPortal.validateInvitation.mockResolvedValue(validInvitation);
     mockedPortal.getPortalInquiry.mockResolvedValue(inquiry);
     mockedPortal.getCurrentQuotation.mockResolvedValue(prefilledDraft);
     mockedPortal.submitQuotation.mockResolvedValue(receipt);
     renderWithProviders(<SupplierPortalPage />);
     await screen.findByText('服务器设备采购询价');
-    const submitBtn = screen.getByText('正式提交').closest('button')!;
-    fireEvent.click(submitBtn);
+    // 点击「正式提交」→ 打开提交前预览 Modal
+    fireEvent.click(screen.getByText('正式提交').closest('button')!);
+    expect(await screen.findByText('提交前预览')).toBeInTheDocument();
+    // 预览展示含税总额（formatCurrency 带 ¥ 符号；行小计与总额均含 800.00）
+    expect(screen.getAllByText(/800\.00/).length).toBeGreaterThan(0);
+    // 确认提交 → 调用 submitQuotation
+    fireEvent.click(screen.getByText('确认提交').closest('button')!);
     await waitFor(() => {
       expect(mockedPortal.submitQuotation).toHaveBeenCalledWith(
         TOKEN,
@@ -257,7 +262,6 @@ describe('供应商门户提交', () => {
         }),
       );
     });
-    expect(confirmAction).toHaveBeenCalled();
     expect(await screen.findByText('报价提交成功')).toBeInTheDocument();
   });
 
@@ -275,14 +279,30 @@ describe('供应商门户提交', () => {
     );
     renderWithProviders(<SupplierPortalPage />);
     await screen.findByText('服务器设备采购询价');
-    const submitBtn = screen.getByText('正式提交').closest('button')!;
-    fireEvent.click(submitBtn);
+    fireEvent.click(screen.getByText('正式提交').closest('button')!);
+    await screen.findByText('提交前预览');
+    fireEvent.click(screen.getByText('确认提交').closest('button')!);
     await waitFor(() => {
       expect(notifyError).toHaveBeenCalled();
     });
     // 未切到回执页，仍显示表单
     expect(screen.queryByText('报价提交成功')).not.toBeInTheDocument();
     expect(screen.getByText('正式提交')).toBeInTheDocument();
+  });
+
+  it('提交前预览：不完整报价提示缺失项', async () => {
+    mockedPortal.validateInvitation.mockResolvedValue(validInvitation);
+    mockedPortal.getPortalInquiry.mockResolvedValue(inquiry);
+    // 草稿缺单价与交货天数 → 校验失败，不打开预览
+    mockedPortal.getCurrentQuotation.mockResolvedValue(null);
+    renderWithProviders(<SupplierPortalPage />);
+    await screen.findByText('服务器设备采购询价');
+    fireEvent.click(screen.getByText('正式提交').closest('button')!);
+    // 校验失败：不打开预览，提示请补全
+    expect(
+      await screen.findByText('请补全所有物料的单价（>0）与交货周期（>0）后再提交'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('提交前预览')).not.toBeInTheDocument();
   });
 });
 

@@ -12,10 +12,12 @@ import {
   Button,
   Card,
   Form,
+  Input,
   Modal,
   Result,
   Space,
   Steps,
+  Tag,
   Typography,
 } from 'antd';
 import type { FormInstance } from 'antd';
@@ -33,13 +35,10 @@ import {
   type InquiryItem,
   type InquiryLog,
 } from '@/types';
-import {
-  confirmAction,
-  notifyError,
-  notifySuccess,
-  notifyWarning,
-} from '@/utils/confirm';
-import { loadJSON, removeKey, saveJSON } from '@/utils/storage';
+import { confirmAction, notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
+import { loadJSON, removeKey } from '@/utils/storage';
+import { useInquiryDraft } from '@/hooks/useInquiryDraft';
+import { buildTemplate, type InquiryTemplate } from './draft';
 import BasicInfoStep from './BasicInfoStep';
 import MaterialStep from './MaterialStep';
 import SupplierMatchStep from './SupplierMatchStep';
@@ -89,9 +88,18 @@ export default function InquiryCreatePage() {
 
   const STEP_ITEMS = [
     { title: t('inquiry.create.steps.basic'), description: t('inquiry.create.steps.basicDesc') },
-    { title: t('inquiry.create.steps.material'), description: t('inquiry.create.steps.materialDesc') },
-    { title: t('inquiry.create.steps.supplier'), description: t('inquiry.create.steps.supplierDesc') },
-    { title: t('inquiry.create.steps.preview'), description: t('inquiry.create.steps.previewDesc') },
+    {
+      title: t('inquiry.create.steps.material'),
+      description: t('inquiry.create.steps.materialDesc'),
+    },
+    {
+      title: t('inquiry.create.steps.supplier'),
+      description: t('inquiry.create.steps.supplierDesc'),
+    },
+    {
+      title: t('inquiry.create.steps.preview'),
+      description: t('inquiry.create.steps.previewDesc'),
+    },
   ];
 
   const addInquiry = useInquiryStore((s) => s.addInquiry);
@@ -121,7 +129,12 @@ export default function InquiryCreatePage() {
   );
   const [current, setCurrent] = useState(0);
   const [dirty, setDirty] = useState(false);
-  const [lastAutoSave, setLastAutoSave] = useState<string>('');
+  // Task 15：草稿自动保存状态 / 并发冲突 / 模板
+  const draft = useInquiryDraft();
+  // saveNow 为稳定引用（useCallback），用于自动保存防抖回调，避免把整个 draft 对象（每次渲染重建）加入依赖触发定时器重置
+  const { saveNow } = draft;
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [templateName, setTemplateName] = useState('');
 
   /** dirty 同步 ref：避免「置脏后立即 navigate」被 blocker 拦截 */
   const dirtyRef = useRef(false);
@@ -153,7 +166,7 @@ export default function InquiryCreatePage() {
     [markDirty],
   );
 
-  /** 草稿自动保存（debounce 2s） */
+  /** 草稿自动保存（debounce 2s，状态由 useInquiryDraft 管理） */
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSave = useCallback(() => {
     if (readOnly) return;
@@ -169,10 +182,9 @@ export default function InquiryCreatePage() {
         editingId,
         savedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
       };
-      saveJSON(DRAFT_KEY, snapshot);
-      setLastAutoSave(snapshot.savedAt);
+      saveNow(snapshot, editingId);
     }, 2000);
-  }, [basicInfo, items, selectedSupplierIds, current, editingId, readOnly]);
+  }, [basicInfo, items, selectedSupplierIds, current, editingId, readOnly, saveNow]);
 
   useEffect(() => {
     autoSave();
@@ -244,6 +256,62 @@ export default function InquiryCreatePage() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [readOnly]);
+
+  /** Task 15：并发编辑冲突弹窗（提供差异提示 / 重新加载 / 覆盖） */
+  useEffect(() => {
+    if (!draft.conflict) return;
+    const modal = Modal.confirm({
+      title: t('inquiry.create.conflictTitle'),
+      content: t('inquiry.create.conflictContent'),
+      okText: t('inquiry.create.conflictOverwrite'),
+      cancelText: t('inquiry.create.conflictReload'),
+      okType: 'danger',
+      onOk: () => {
+        draft.overwrite(buildSnapshot(), editingId);
+        notifySuccess(t('inquiry.create.conflictOverwritten'));
+      },
+      onCancel: () => {
+        draft.reload();
+        notifyWarning(t('inquiry.create.conflictReloaded'));
+      },
+    });
+    return () => modal.destroy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.conflict, t]);
+
+  /** 由当前页面状态构造草稿快照（供冲突覆盖 / 模板保存复用） */
+  const buildSnapshot = useCallback(
+    (): DraftSnapshot => ({
+      basicInfo: serializeBasicInfo(basicInfo),
+      items,
+      selectedSupplierIds,
+      current,
+      editingId,
+      savedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    }),
+    [basicInfo, items, selectedSupplierIds, current, editingId],
+  );
+
+  /** 保存为询价模板 */
+  const handleSaveTemplate = () => {
+    if (items.length === 0) {
+      notifyError(t('inquiry.create.addMaterialFirst'));
+      return;
+    }
+    const template: InquiryTemplate = buildTemplate(
+      templateName,
+      basicInfo.subject,
+      items,
+      selectedSupplierIds,
+    );
+    if (draft.saveAsTemplate(templateName, template)) {
+      notifySuccess(t('inquiry.create.templateSaved'));
+    } else {
+      notifyError(t('inquiry.create.templateSaveFailed'));
+    }
+    setTemplateModalOpen(false);
+    setTemplateName('');
+  };
 
   /** 步骤校验 */
   const validateStep = useCallback(
@@ -320,37 +388,14 @@ export default function InquiryCreatePage() {
       const logs: InquiryLog[] = isEdit ? [...(editingInquiry!.logs ?? [])] : [];
       if (!isEdit) {
         logs.push(
-          buildLog(
-            id,
-            LogType.CREATE,
-            `创建询价单 ${code}`,
-            undefined,
-            user.name,
-            user.role,
-          ),
+          buildLog(id, LogType.CREATE, `创建询价单 ${code}`, undefined, user.name, user.role),
         );
       } else {
-        logs.push(
-          buildLog(
-            id,
-            LogType.UPDATE,
-            '修改询价单内容',
-            undefined,
-            user.name,
-            user.role,
-          ),
-        );
+        logs.push(buildLog(id, LogType.UPDATE, '修改询价单内容', undefined, user.name, user.role));
       }
       if (status === InquiryStatus.DRAFT) {
         logs.push(
-          buildLog(
-            id,
-            LogType.SAVE_DRAFT,
-            '保存询价单草稿',
-            undefined,
-            user.name,
-            user.role,
-          ),
+          buildLog(id, LogType.SAVE_DRAFT, '保存询价单草稿', undefined, user.name, user.role),
         );
       }
 
@@ -362,9 +407,7 @@ export default function InquiryCreatePage() {
         ownerName: basicInfo.ownerName,
         ownerId: isEdit ? editingInquiry!.ownerId : user.id,
         currency: basicInfo.currency,
-        deadline: basicInfo.deadline
-          ? basicInfo.deadline.format('YYYY-MM-DD HH:mm:ss')
-          : '',
+        deadline: basicInfo.deadline ? basicInfo.deadline.format('YYYY-MM-DD HH:mm:ss') : '',
         expectedDeliveryDate: basicInfo.expectedDeliveryDate
           ? basicInfo.expectedDeliveryDate.format('YYYY-MM-DD')
           : undefined,
@@ -545,10 +588,18 @@ export default function InquiryCreatePage() {
             : t('inquiry.create.createDesc')
         }
         extra={
-          lastAutoSave ? (
+          draft.status === 'saving' ? (
+            <Tag color="processing" icon={<SaveOutlined spin />}>
+              {t('inquiry.create.saveStatusSaving')}
+            </Tag>
+          ) : draft.status === 'saved' && draft.savedAt ? (
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {t('inquiry.create.autoSavedAt', { time: lastAutoSave })}
+              {t('inquiry.create.autoSavedAt', { time: draft.savedAt })}
             </Text>
+          ) : draft.status === 'failed' ? (
+            <Tag color="error">{t('inquiry.create.saveStatusFailed')}</Tag>
+          ) : draft.status === 'offline' ? (
+            <Tag color="warning">{t('inquiry.create.saveStatusOffline')}</Tag>
           ) : null
         }
       />
@@ -564,12 +615,7 @@ export default function InquiryCreatePage() {
       )}
 
       <Card>
-        <Steps
-          current={current}
-          size="small"
-          onChange={handleStepClick}
-          items={STEP_ITEMS}
-        />
+        <Steps current={current} size="small" onChange={handleStepClick} items={STEP_ITEMS} />
       </Card>
 
       <Card styles={{ body: { paddingTop: 16, paddingBottom: 16 } }}>
@@ -633,12 +679,15 @@ export default function InquiryCreatePage() {
           </Button>
         </Space>
         <Space size={8} wrap>
+          {!readOnly && (
+            <Button icon={<SaveOutlined />} onClick={() => setTemplateModalOpen(true)}>
+              {t('inquiry.create.saveAsTemplate')}
+            </Button>
+          )}
           <Button icon={<SaveOutlined />} onClick={handleSaveDraft} disabled={readOnly}>
             {t('common.saveDraft')}
           </Button>
-          {current > 0 && (
-            <Button onClick={handlePrev}>{t('common.prev')}</Button>
-          )}
+          {current > 0 && <Button onClick={handlePrev}>{t('common.prev')}</Button>}
           {current < STEP_ITEMS.length - 1 ? (
             <Button type="primary" onClick={handleNext}>
               {t('common.next')}
@@ -648,13 +697,34 @@ export default function InquiryCreatePage() {
               type="primary"
               icon={<SendOutlined />}
               onClick={handleSend}
-              disabled={readOnly || !canSend || selectedSupplierIds.length === 0 || items.length === 0}
+              disabled={
+                readOnly || !canSend || selectedSupplierIds.length === 0 || items.length === 0
+              }
             >
               {t('inquiry.create.batchSend')}
             </Button>
           )}
         </Space>
       </div>
+
+      <Modal
+        title={t('inquiry.create.saveAsTemplate')}
+        open={templateModalOpen}
+        onOk={handleSaveTemplate}
+        onCancel={() => {
+          setTemplateModalOpen(false);
+          setTemplateName('');
+        }}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
+      >
+        <Input
+          placeholder={t('inquiry.create.templateNamePlaceholder')}
+          value={templateName}
+          onChange={(e) => setTemplateName(e.target.value)}
+          maxLength={50}
+        />
+      </Modal>
     </div>
   );
 }

@@ -118,9 +118,48 @@ def test_reject_flow(client, buyer_headers, supervisor_headers):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "PENDING_CONFIRM"
+    assert data["status"] == "RETURNED"
     assert "REJECT" in _log_types(data)
     assert any(n["status"] == "REJECTED" for n in data["approvalNodes"])
+
+
+def test_reject_then_resubmit_flow(client, buyer_headers, supervisor_headers):
+    """审批驳回 → RETURNED（可重新编辑），重新提交审批 → PENDING_APPROVAL"""
+    inq = _create_inquiry(client, buyer_headers, "INQ-FLOW-004")
+    inq_id = inq["id"]
+    client.post(f"/api/inquiries/{inq_id}/send", headers=buyer_headers)
+    client.post(f"/api/inquiries/{inq_id}/submit-approval", headers=buyer_headers)
+
+    # 驳回 → RETURNED
+    resp = client.post(
+        f"/api/inquiries/{inq_id}/reject",
+        json={"comment": "资料不全"},
+        headers=supervisor_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "RETURNED"
+
+    # RETURNED 可重新提交审批 → PENDING_APPROVAL（新增 PENDING 节点）
+    resp = client.post(f"/api/inquiries/{inq_id}/submit-approval", headers=buyer_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "PENDING_APPROVAL"
+    assert "SUBMIT_APPROVAL" in _log_types(data)
+    assert any(n["status"] == "PENDING" for n in data["approvalNodes"])
+
+
+def test_reject_non_approval_state_returns_409(client, buyer_headers, supervisor_headers):
+    """DRAFT（非审批状态）直接 reject → 409，且状态不变"""
+    inq = _create_inquiry(client, buyer_headers, "INQ-FLOW-005")
+    inq_id = inq["id"]
+    resp = client.post(
+        f"/api/inquiries/{inq_id}/reject",
+        json={"comment": "x"},
+        headers=supervisor_headers,
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error_type"] == "invalid_state_transition"
+    assert client.get(f"/api/inquiries/{inq_id}", headers=buyer_headers).json()["status"] == "DRAFT"
 
 
 def test_failed_create_rolls_back_no_partial_state(client, buyer_headers):
@@ -182,8 +221,12 @@ ILLEGAL_INQUIRY_TRANSITIONS = [
     ("PENDING_CONFIRM", "PENDING_APPROVAL"),
     ("COMPLETED", "DRAFT"),
     ("COMPLETED", "INQUIRING"),
+    ("COMPLETED", "RETURNED"),
     ("CANCELLED", "DRAFT"),
     ("TIMEOUT", "INQUIRING"),
+    ("DRAFT", "RETURNED"),
+    ("RETURNED", "COMPLETED"),
+    ("RETURNED", "PENDING_CONFIRM"),
 ]
 
 

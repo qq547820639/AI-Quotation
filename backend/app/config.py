@@ -55,12 +55,25 @@ REFRESH_TOKEN_TTL_SECONDS = int(os.environ.get("REFRESH_TOKEN_TTL", str(14 * 24 
 
 # Redis 连接：设置 REDIS_URL 时使用 Redis 客户端，否则回退到进程内（内存）实现（开发/测试/单实例）
 REDIS_URL = os.environ.get("REDIS_URL", "")
+# 生产是否强制要求 Redis（默认 APP_ENV=prod 为 true，可由 REDIS_REQUIRED 覆盖）。
+# 生产开启时，若配置了 REDIS_URL 但连接不可用则拒绝启动（禁止静默降级到进程内内存限流/幂等/缓存/token）。
+REDIS_REQUIRED = os.environ.get("REDIS_REQUIRED", "true" if APP_ENV == "prod" else "false").lower() in ("1", "true", "yes")
+
+# ============ 对象存储（S3/MinIO，可选） ============
+# 未配置 S3_* 时回退本地 UPLOAD_DIR；生产若配置完整但客户端不可用则拒绝启动（禁止静默降级）。
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
+S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "")
+S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "")
 
 # 安全响应头（CSP/HSTS 从环境变量读取，宽松默认）
+# 收紧的 CSP：限制 frame 嵌入（frame-ancestors 'none'）、禁用 object（object-src 'none'）、
+# 限制 base/form 来源。script-src 移除 'unsafe-inline'（前端构建产物无内联脚本，见 dist/index.html）。
 CSP_DEFAULT = os.environ.get(
     "CSP_DEFAULT",
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self' 'unsafe-inline'; connect-src 'self'",
+    "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; "
+    "base-uri 'self'; form-action 'self'",
 )
 HSTS_ENABLED = os.environ.get("HSTS_ENABLED", "false").lower() in ("1", "true", "yes")
 HSTS_MAX_AGE = os.environ.get("HSTS_MAX_AGE", "31536000")
@@ -108,6 +121,20 @@ ALLOWED_UPLOAD_MIME_TYPES = {
 # 允许的扩展名
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".xlsx", ".docx"}
 
+# ============ 附件病毒扫描（P0：真实扫描器 + fail closed） ============
+
+# 扫描器提供方：clamav（真实 ClamAV，生产必须）/ noop（占位，仅开发/测试）/ sanitizing（仅静态校验）
+# 生产环境（APP_ENV=prod）必须显式设为 clamav，否则 get_scanner() 拒绝创建并抛错（fail closed）。
+SCANNER_PROVIDER = os.environ.get("SCANNER_PROVIDER", "noop").strip().lower()
+# ClamAV clamd 地址（docker-compose 内为服务名 clamav）
+CLAMAV_HOST = os.environ.get("CLAMAV_HOST", "127.0.0.1")
+CLAMAV_PORT = int(os.environ.get("CLAMAV_PORT", "3310"))
+# clamd INSTREAM 扫描/连接超时（秒）
+CLAMAV_TIMEOUT_SECONDS = float(os.environ.get("CLAMAV_TIMEOUT_SECONDS", "30"))
+CLAMAV_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("CLAMAV_CONNECT_TIMEOUT_SECONDS", "5"))
+# 扫描服务不可用/超时时是否放行（fail-open）。生产默认 false（fail-closed：返回 error，禁止下载）。
+SCAN_FAIL_OPEN = os.environ.get("SCAN_FAIL_OPEN", "false").lower() in ("1", "true", "yes")
+
 # ============ 生产环境（P1 预留） ============
 
 # 用于签名等对称加密用途的密钥（生产必须通过环境变量 SECRET_KEY 注入，勿写入代码）
@@ -150,3 +177,28 @@ AI_CIRCUIT_ENABLED = os.environ.get("AI_CIRCUIT_ENABLED", "true").lower() in ("1
 # 成本估算（每 1000 token 的价格，未配置则按 0 计）
 AI_COST_PER_1K_PROMPT_TOKENS = float(os.environ.get("AI_COST_PER_1K_PROMPT_TOKENS", "0"))
 AI_COST_PER_1K_COMPLETION_TOKENS = float(os.environ.get("AI_COST_PER_1K_COMPLETION_TOKENS", "0"))
+
+# 预算上限（累计成本，货币单位）。<=0 表示不限制。
+# 进程内累计成本达到该值后，后续远程调用被拒绝并降级本地（并发请求不绕过预算）。
+AI_BUDGET_MAX_COST = float(os.environ.get("AI_BUDGET_MAX_COST", "0"))
+
+# 结构化输出模式（Task 12）：默认开启，向远端点请求 response_format={"type":"json_object"}，
+# 让模型优先返回合法 JSON；仍以 Pydantic 严格校验兜底。若远端不支持（400），回退本地规则。
+AI_STRUCTURED_OUTPUT = os.environ.get("AI_STRUCTURED_OUTPUT", "true").lower() in ("1", "true", "yes")
+
+# ============ 持久化任务队列（Celery，P1 可靠性） ============
+
+# broker / backend：默认复用 REDIS_URL；未配置（dev/test）时回退 memory:// 或依赖 eager 模式。
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", REDIS_URL)
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+
+# 是否以 eager 模式同步执行任务（开发/测试默认开启，无需真实 broker/worker；生产默认关闭）
+CELERY_TASK_ALWAYS_EAGER = os.environ.get(
+    "CELERY_TASK_ALWAYS_EAGER",
+    "true" if APP_ENV != "prod" else "false",
+).lower() in ("1", "true", "yes")
+
+# 任务默认重试配置
+CELERY_TASK_MAX_RETRIES = int(os.environ.get("CELERY_TASK_MAX_RETRIES", "3"))
+CELERY_TASK_RETRY_BACKOFF = os.environ.get("CELERY_TASK_RETRY_BACKOFF", "true").lower() in ("1", "true", "yes")
+CELERY_TASK_RETRY_BACKOFF_MAX = int(os.environ.get("CELERY_TASK_RETRY_BACKOFF_MAX", "60"))

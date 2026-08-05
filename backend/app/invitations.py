@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -31,6 +32,22 @@ INV_EXPIRED = "expired"
 
 # 可用的（处于有效状态）邀请状态
 VALID_INVITATION_STATUSES = (INV_PENDING, INV_SENT, INV_OPENED)
+
+
+class InvitationError(Exception):
+    """邀请操作被拒绝时的结构化错误（含 HTTP 状态码与结构化错误类型，供 409/410 使用）。"""
+
+    def __init__(self, status_code: int, error_type: str, message: str) -> None:
+        self.status_code = status_code
+        self.error_type = error_type
+        self.message = message
+        super().__init__(message)
+
+
+# 进程内串行化邀请 token 生成/重签/重发，保证 DB 中 token 哈希与短期存储明文 token 始终一致，
+# 避免并发点击产生 DB 哈希与明文 token 错位（跨进程一致性由 (inquiry_id, supplier_id) 行锁
+# with_for_update 在 PostgreSQL 上提供，SQLite 下退化为进程内锁）。
+_invitation_ops_lock = threading.RLock()
 
 
 def generate_invitation_token() -> str:
@@ -93,11 +110,24 @@ def revoke_invitation(db: Session, invitation: SupplierInvitation) -> SupplierIn
     return invitation
 
 
-def regenerate_invitation(db: Session, invitation: SupplierInvitation, created_by: str) -> tuple[str, SupplierInvitation]:
-    """在当前供应商邀请上原地重新生成 token（保持 (inquiry_id, supplier_id) 唯一）。
+def _lock_invitation_row(db: Session, invitation: SupplierInvitation) -> SupplierInvitation:
+    """对邀请行加行锁（with_for_update），返回最新行；行不存在则抛 404。
 
-    撤销旧 token 并签发新 token，使旧链接立即失效；不新增行，符合唯一的
-    (inquiry_id, supplier_id) 约束。原始新 token 仅写入短期存储，不落库。
+    用于重签/重发时的并发保护：串行化对同一 (inquiry_id, supplier_id) 行的修改，
+    避免并发写冲突或 DB 哈希与短期存储明文 token 错位。
+    """
+    locked = db.query(SupplierInvitation).filter(
+        SupplierInvitation.id == invitation.id
+    ).with_for_update().first()
+    if locked is None:
+        raise InvitationError(404, "invitation_not_found", "邀请不存在")
+    return locked
+
+
+def _apply_new_token(db: Session, invitation: SupplierInvitation, created_by: str, reset_delivery: bool) -> str:
+    """就地签发新 token（调用方须已持行锁）：在单一事务内更新哈希/过期/状态，并写新原始 token 到短期存储。
+
+    覆盖旧哈希即撤销旧 token，旧链接立即失效；返回新原始 token（仅写短期存储，不落库）。
     """
     token = generate_invitation_token()
     token_hash = hash_invitation_token(token)
@@ -111,11 +141,58 @@ def regenerate_invitation(db: Session, invitation: SupplierInvitation, created_b
     invitation.last_opened_at = None
     invitation.submitted_at = None
     invitation.created_by = created_by
+    if reset_delivery:
+        invitation.delivery_status = "pending"
+        invitation.delivery_error = None
     db.commit()
     db.refresh(invitation)
     # 覆盖短期存储中的原始 token（同 invitation.id 的 key），新 token 立即生效
     store_raw_token(invitation.id, token)
-    return token, invitation
+    return token
+
+
+def regenerate_invitation(db: Session, invitation: SupplierInvitation, created_by: str) -> tuple[str, SupplierInvitation]:
+    """在当前供应商邀请上原地重新生成 token（保持 (inquiry_id, supplier_id) 唯一）。
+
+    撤销旧 token 并签发新 token，使旧链接立即失效；不新增行，符合唯一的
+    (inquiry_id, supplier_id) 约束。原始新 token 仅写入短期存储，不落库。
+    并发保护：对 (inquiry_id, supplier_id) 行加锁 + 进程内串行化，确保 DB 哈希与
+    短期存储明文 token 一致，不会产生多个同时有效的 token。
+    """
+    with _invitation_ops_lock:
+        invitation = _lock_invitation_row(db, invitation)
+        token = _apply_new_token(db, invitation, created_by, reset_delivery=False)
+        return token, invitation
+
+
+def resend_invitation(db: Session, invitation: SupplierInvitation, created_by: str) -> tuple[str, SupplierInvitation]:
+    """重新投递邀请，返回 (原始 token, invitation)。
+
+    仅允许在有效可投递状态（pending/sent/opened 且未过期、未被撤销/提交）下重发：
+    - 若短期存储中仍有原原始 token → 复用并返回（重新投递同一有效链接，不产生多余有效 token）。
+    - 若明文 token 已丢失（get_invitation_raw_token 返回 None，如 Redis 数据丢失/进程重启）
+      → 自动重签：覆盖旧哈希、签发新 token、写新原始 token 到短期存储，保证重发的一定是有效链接，
+      绝不发出空/失效链接。
+    已撤销 / 已提交 / 已过期 / 询价已终结的邀请重发将抛出 InvitationError（409/410），不静默。
+    """
+    with _invitation_ops_lock:
+        invitation = _lock_invitation_row(db, invitation)
+        if invitation.status == INV_SUBMITTED:
+            raise InvitationError(409, "invitation_submitted", "该供应商已提交报价，不能重发")
+        if invitation.status == INV_REVOKED:
+            raise InvitationError(409, "invitation_revoked", "邀请已撤销，无法重发")
+        if not is_invitation_valid(invitation):
+            raise InvitationError(410, "invitation_expired", "邀请已过期或询价已结束，无法重发")
+        raw_token = get_invitation_raw_token(invitation.id)
+        if raw_token is None:
+            # 明文 token 已丢失 → 自动重签，保证重发为有效链接
+            raw_token = _apply_new_token(db, invitation, created_by, reset_delivery=True)
+        else:
+            # 复用同一有效 token，重置投递状态为待发送
+            invitation.delivery_status = "pending"
+            invitation.delivery_error = None
+            db.commit()
+        return raw_token, invitation
 
 
 def get_invitation_by_token(db: Session, raw_token: str) -> SupplierInvitation | None:

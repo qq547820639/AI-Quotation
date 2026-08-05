@@ -12,6 +12,10 @@ export interface ApiErrorInfo {
   fieldErrors?: Record<string, string>;
   status?: number;
   retryable: boolean;
+  /** 后端 request_id（Task 24），用于前后端关联定位 */
+  requestId?: string;
+  /** 409 冲突详情（Task 24），便于展示可恢复冲突信息 */
+  conflict?: unknown;
 }
 
 /** 统一错误对象，供 Store / 页面 / 组件统一消费 */
@@ -20,6 +24,8 @@ export class ApiError extends Error {
   fieldErrors?: Record<string, string>;
   status?: number;
   retryable: boolean;
+  requestId?: string;
+  conflict?: unknown;
 
   constructor(info: ApiErrorInfo) {
     super(info.message);
@@ -28,6 +34,8 @@ export class ApiError extends Error {
     this.fieldErrors = info.fieldErrors;
     this.status = info.status;
     this.retryable = info.retryable;
+    this.requestId = info.requestId;
+    this.conflict = info.conflict;
   }
 }
 
@@ -66,7 +74,7 @@ function extractBackendMessage(data: Record<string, unknown>): string | undefine
 /** 解析任意异常为统一 ApiError */
 export function parseApiError(error: unknown): ApiError {
   const e = (error ?? {}) as {
-    response?: { status?: number; data?: unknown };
+    response?: { status?: number; data?: unknown; headers?: unknown };
     request?: unknown;
     code?: string;
     message?: string;
@@ -76,37 +84,95 @@ export function parseApiError(error: unknown): ApiError {
   if (e.response) {
     const status = e.response.status;
     const data = (e.response.data ?? {}) as Record<string, unknown>;
-    const businessCode = typeof data.code === 'string' ? data.code : undefined;
+    const headers = (e.response.headers ?? {}) as Record<string, unknown>;
+    // Task 24：优先消费后端结构化错误字段（code / message / retryable / fieldErrors / request_id / conflict）
+    const backendCode = typeof data.code === 'string' ? data.code : undefined;
+    const backendMessage = typeof data.message === 'string' ? data.message : undefined;
+    const backendRetryable = typeof data.retryable === 'boolean' ? data.retryable : undefined;
     const fieldErrors = data.fieldErrors as Record<string, string> | undefined;
-    const retryable = status !== undefined && status >= 500;
+    const requestId =
+      (typeof data.request_id === 'string' && data.request_id) ||
+      (typeof (headers as { 'x-request-id'?: unknown })['x-request-id'] === 'string'
+        ? (headers as { 'x-request-id': string })['x-request-id']
+        : undefined);
+    const conflict = data.conflict;
+    // retryable：后端显式给出则以其为准，否则按状态码推断（>=500 可重试）
+    const retryable = backendRetryable ?? (status !== undefined && status >= 500);
 
     // 业务错误码优先：具体业务错误映射到明确 i18n 文案
-    if (businessCode && BUSINESS_CODE_I18N[businessCode]) {
-      return new ApiError({ code: businessCode, message: i18n.t(BUSINESS_CODE_I18N[businessCode]), status, retryable: false });
+    if (backendCode && BUSINESS_CODE_I18N[backendCode]) {
+      return new ApiError({
+        code: backendCode,
+        message: i18n.t(BUSINESS_CODE_I18N[backendCode]),
+        status,
+        retryable: false,
+        requestId,
+        conflict,
+      });
     }
 
     switch (status) {
       case 401:
-        return new ApiError({ code: ERROR_CODES.UNAUTHORIZED, message: i18n.t('errors.unauthorized'), status, retryable: false });
+        return new ApiError({
+          code: ERROR_CODES.UNAUTHORIZED,
+          message: i18n.t('errors.unauthorized'),
+          status,
+          retryable: false,
+          requestId,
+        });
       case 403:
-        return new ApiError({ code: ERROR_CODES.FORBIDDEN, message: i18n.t('errors.forbidden'), status, retryable: false });
+        return new ApiError({
+          code: ERROR_CODES.FORBIDDEN,
+          message: i18n.t('errors.forbidden'),
+          status,
+          retryable: false,
+          requestId,
+        });
       case 404:
-        return new ApiError({ code: ERROR_CODES.NOT_FOUND, message: i18n.t('errors.notFound'), status, retryable: false });
+        return new ApiError({
+          code: ERROR_CODES.NOT_FOUND,
+          message: i18n.t('errors.notFound'),
+          status,
+          retryable: false,
+          requestId,
+        });
       case 409:
-        return new ApiError({ code: ERROR_CODES.CONFLICT, message: i18n.t('errors.conflict'), status, retryable: false });
+        return new ApiError({
+          code: ERROR_CODES.CONFLICT,
+          message: backendMessage ?? i18n.t('errors.conflict'),
+          status,
+          retryable: false,
+          requestId,
+          conflict,
+        });
       case 422:
-        return new ApiError({ code: ERROR_CODES.VALIDATION, message: i18n.t('errors.validationFailed'), fieldErrors, status, retryable: false });
+        return new ApiError({
+          code: ERROR_CODES.VALIDATION,
+          message: backendMessage ?? i18n.t('errors.validationFailed'),
+          fieldErrors,
+          status,
+          retryable,
+          requestId,
+        });
       case 503:
-        return new ApiError({ code: ERROR_CODES.SERVER_UNAVAILABLE, message: i18n.t('errors.serviceUnavailable'), status, retryable: true });
+        return new ApiError({
+          code: ERROR_CODES.SERVER_UNAVAILABLE,
+          message: backendMessage ?? i18n.t('errors.serviceUnavailable'),
+          status,
+          retryable: true,
+          requestId,
+        });
       default: {
         // 业务错误：已有业务码映射的已在上方处理；此处尝试后端文案，其次通用提示
-        const backendMsg = extractBackendMessage(data);
+        const backendMsg = backendMessage ?? extractBackendMessage(data);
         return new ApiError({
-          code: businessCode ?? ERROR_CODES.BUSINESS,
+          code: backendCode ?? ERROR_CODES.BUSINESS,
           message: backendMsg ?? i18n.t('errors.serverError', { status: (status ?? 0).toString() }),
           fieldErrors,
           status,
           retryable,
+          requestId,
+          conflict,
         });
       }
     }
@@ -114,10 +180,18 @@ export function parseApiError(error: unknown): ApiError {
 
   // 无响应：区分请求超时 / 网络中断 / 服务不可达
   if (e.code === 'ECONNABORTED') {
-    return new ApiError({ code: ERROR_CODES.TIMEOUT, message: i18n.t('errors.timeout'), retryable: true });
+    return new ApiError({
+      code: ERROR_CODES.TIMEOUT,
+      message: i18n.t('errors.timeout'),
+      retryable: true,
+    });
   }
   if (e.request) {
-    return new ApiError({ code: ERROR_CODES.NETWORK, message: i18n.t('errors.networkError'), retryable: true });
+    return new ApiError({
+      code: ERROR_CODES.NETWORK,
+      message: i18n.t('errors.networkError'),
+      retryable: true,
+    });
   }
   return new ApiError({
     code: ERROR_CODES.UNKNOWN,

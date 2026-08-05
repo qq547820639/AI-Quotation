@@ -10,6 +10,11 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .base import AIProvider, ProviderResult
+from .prompts import (
+    PROMPT_VERSION_ANOMALY,
+    PROMPT_VERSION_CONCLUSION,
+    PROMPT_VERSION_INQUIRY_DESCRIPTION,
+)
 
 
 def _fmt(v: Any, digits: int = 2) -> str:
@@ -94,6 +99,13 @@ class LocalRuleProvider(AIProvider):
         return ProviderResult(
             source="local", model="local-rule", action="inquiry-description",
             description="\n".join(lines),
+            prompt_version=PROMPT_VERSION_INQUIRY_DESCRIPTION,
+            data_basis="基于询价参数（物料品类、数量、目标价、交付要求）本地规则生成",
+            references=[
+                {"type": "item", "name": str(i.get("name")), "code": str(i.get("code"))}
+                for i in items[:3]
+            ],
+            risk="本地规则自动生成，仅供参考，请人工复核",
         )
 
     async def analyze_quotation_anomalies(self, inquiry: Any, data: Any, rows: Any) -> ProviderResult:
@@ -178,6 +190,10 @@ class LocalRuleProvider(AIProvider):
         return ProviderResult(
             source="local", model="local-rule", action="quotation-anomalies",
             summary=summary, hasAnomaly=has_anomaly, anomalyCount=len(anomaly_texts),
+            prompt_version=PROMPT_VERSION_ANOMALY,
+            data_basis="基于各供应商报价的单价、总价、交货周期、技术偏离与目标价本地规则判定",
+            anomalies=anomaly_texts,
+            risk="异常判定为规则自动化结果，涉及商务决策请人工复核",
         )
 
     async def generate_compare_conclusion(self, inquiry: Any, data: Any, rows: Any) -> ProviderResult:
@@ -247,4 +263,7 @@ class LocalRuleProvider(AIProvider):
         return ProviderResult(
             source="local", model="local-rule", action="compare-conclusion",
             conclusion="\n".join(lines),
+            prompt_version=PROMPT_VERSION_CONCLUSION,
+            data_basis="基于各供应商总价、综合评分、交货周期与定标建议本地规则生成",
+            risk="比价结论自动生成，仅供参考，不作为定标依据",
         )

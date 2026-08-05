@@ -356,23 +356,85 @@ def test_attachment_upload_and_download_roundtrip(client):
 
 
 def test_attachment_scan_status_and_scan_endpoint(client):
-    """上传附件默认 scan_status=pending；调用占位扫描接口后标记为 clean/infected"""
+    """上传后自动扫描（dev/noop → clean）；/scan 接口可重新扫描；越权被拒"""
     draft = client.put("/api/portal/quotations/draft", headers=H5, json={
         "items": [{"inquiryItemId": "item-inq-3-1", "unitPrice": 4000, "taxRate": 0.13, "deliveryDays": 10}]})
     assert draft.status_code == 200
     qid = draft.json()["id"]
 
-    # 合法 PDF → 上传后 pending，扫描后 clean
+    # 合法 PDF → 上传时自动扫描完成，dev/noop → clean
     up = client.post(
         f"/api/portal/attachments?owner_type=quotation&owner_id={qid}",
         headers=H5, files={"file": ("报告.pdf", b"%PDF-1.4 fake", "application/pdf")},
     )
     assert up.status_code == 200, up.text
     att = up.json()
-    assert att["scanStatus"] == "pending"
+    assert att["scanStatus"] == "clean"
     scan = client.post(f"/api/portal/attachments/{att['id']}/scan", headers=H5)
     assert scan.status_code == 200, scan.text
     assert scan.json()["scanStatus"] == "clean"
 
     # 扫描越权：无 token 拒绝
     assert client.post(f"/api/portal/attachments/{att['id']}/scan").status_code == 401
+
+
+def test_attachment_infected_not_downloadable(client, monkeypatch):
+    """扫描判定 infected → 上传返回 infected，下载返回 403"""
+    from app.routers import portal as portal_module
+    from app.scanner import ScanResult, FileScanner
+
+    class InfectedScanner(FileScanner):
+        display_name = "fake-infected"
+
+        def scan(self, data, filename, mime_type):
+            return ScanResult.infected(result="fake infected", matched="Eicar-Test-Signature")
+
+    monkeypatch.setattr(portal_module, "get_scanner", lambda: InfectedScanner())
+
+    draft = client.put("/api/portal/quotations/draft", headers=H5, json={
+        "items": [{"inquiryItemId": "item-inq-3-1", "unitPrice": 4000, "taxRate": 0.13, "deliveryDays": 10}]})
+    assert draft.status_code == 200
+    qid = draft.json()["id"]
+    up = client.post(
+        f"/api/portal/attachments?owner_type=quotation&owner_id={qid}",
+        headers=H5, files={"file": ("evil.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    att = up.json()
+    assert att["scanStatus"] == "infected"
+    # infected 附件禁止下载
+    dl = client.get(f"/api/portal/attachments/{att['id']}/download", headers=H5)
+    assert dl.status_code == 403
+
+
+def test_attachment_pending_and_error_not_downloadable(client):
+    """pending/error 状态附件不可下载（403）"""
+    from app.database import SessionLocal
+    from app.models import Attachment
+    from app.serializers import gen_id
+
+    draft = client.put("/api/portal/quotations/draft", headers=H5, json={
+        "items": [{"inquiryItemId": "item-inq-3-1", "unitPrice": 4000, "taxRate": 0.13, "deliveryDays": 10}]})
+    assert draft.status_code == 200
+    qid = draft.json()["id"]
+
+    ids = {}
+    db = SessionLocal()
+    try:
+        for st in ("pending", "error"):
+            aid = gen_id("att")
+            ids[st] = aid
+            rec = Attachment(
+                id=aid, name="报告.pdf", url=f"/api/portal/attachments/{aid}/download",
+                size=13, upload_time="2026-01-01 00:00:00",
+                owner_type="quotation", owner_id=qid,
+                scan_status=st, scan_result="模拟未通过",
+            )
+            db.add(rec)
+        db.commit()
+    finally:
+        db.close()
+
+    for st, aid in ids.items():
+        dl = client.get(f"/api/portal/attachments/{aid}/download", headers=H5)
+        assert dl.status_code == 403, f"{st} 状态应禁止下载"

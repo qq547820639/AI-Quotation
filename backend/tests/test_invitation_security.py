@@ -13,9 +13,15 @@ token 绑定唯一询价与供应商、撤销拒绝、终态询价拒绝、重�
 （均为 pending 状态），避免与现有测试冲突。
 """
 from datetime import datetime, timedelta, timezone
+import threading
 
 from app.database import SessionLocal
-from app.invitations import get_invitation_by_token
+from app.invitations import (
+    get_invitation_by_token, get_invitation_raw_token, hash_invitation_token,
+    resend_invitation,
+)
+from app.models import SupplierInvitation
+from app.redis_client import get_store
 
 # 绑定 inq-3/sup-2 的种子邀请（只读）
 H3 = {"X-Invitation-Token": "inv-token-inq3-sup2-000000000000000000000000000000000000000000000000"}
@@ -138,3 +144,168 @@ def test_regenerate_link_requires_permission_and_access(client):
     # u-1 不能为不属于自己数据的 url 重新生成；这里用不存在的询价验证 404
     resp = client.post("/api/inquiries/inq-999/invitations/sup-1/regenerate", headers=headers)
     assert resp.status_code == 404
+
+
+# ============ P0: 重发语义（resend vs regenerate）与 token 加固 ============
+
+def _fresh_invitation(client, headers):
+    """创建一个新询价并发送，返回 (iid, supplier_id, invitation_id)"""
+    iid = _create_and_send_inquiry(client, headers, "sup-1")
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == iid,
+            SupplierInvitation.supplier_id == "sup-1",
+        ).first()
+        assert inv is not None
+        return iid, inv.id
+    finally:
+        db.close()
+
+
+def test_resend_reuses_same_token_when_available(client):
+    """明文 token 仍在短期存储时，重复重发复用同一有效 token（不产生多个有效 token）"""
+    headers = _login(client, "u-2")
+    iid, inv_id = _fresh_invitation(client, headers)
+    tok_before = get_invitation_raw_token(inv_id)
+    assert tok_before
+
+    for _ in range(2):
+        r = client.post(f"/api/inquiries/{iid}/deliveries/sup-1/resend", headers=headers)
+        assert r.status_code == 200, r.text
+
+    tok_after = get_invitation_raw_token(inv_id)
+    assert tok_after == tok_before  # 复用同一 token
+    # 原 token 仍有效
+    assert client.get("/api/portal/inquiries", headers={"X-Invitation-Token": tok_after}).status_code == 200
+
+
+def test_resend_after_token_loss_rotates_new_token(client):
+    """明文 token 丢失（Redis 重启/进程重启）后重发 → 自动重签新 token，旧 token 立即失效"""
+    headers = _login(client, "u-2")
+    iid, inv_id = _fresh_invitation(client, headers)
+    old_tok = get_invitation_raw_token(inv_id)
+    assert old_tok
+
+    # 模拟短期存储丢失
+    get_store().delete(f"procurement:inv:raw:{inv_id}")
+    assert get_invitation_raw_token(inv_id) is None
+
+    r = client.post(f"/api/inquiries/{iid}/deliveries/sup-1/resend", headers=headers)
+    assert r.status_code == 200, r.text
+
+    new_tok = get_invitation_raw_token(inv_id)
+    assert new_tok and new_tok != old_tok
+    # 旧 token 失效（哈希已被覆盖）
+    assert client.get("/api/portal/inquiries", headers={"X-Invitation-Token": old_tok}).status_code == 401
+    # 新 token 有效
+    assert client.get("/api/portal/inquiries", headers={"X-Invitation-Token": new_tok}).status_code == 200
+
+
+def test_resend_revoked_invitation_rejected(client):
+    """已撤销邀请不可重发 → 409 结构化错误 invitation_revoked"""
+    headers = _login(client, "u-2")
+    iid, inv_id = _fresh_invitation(client, headers)
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(SupplierInvitation.id == inv_id).first()
+        inv.status = "revoked"
+        inv.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+    r = client.post(f"/api/inquiries/{iid}/deliveries/sup-1/resend", headers=headers)
+    assert r.status_code == 409
+    assert r.json()["detail"]["error_type"] == "invitation_revoked"
+
+
+def test_resend_submitted_invitation_rejected(client):
+    """已提交邀请不可重发 → 409 结构化错误 invitation_submitted"""
+    headers = _login(client, "u-2")
+    iid, inv_id = _fresh_invitation(client, headers)
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(SupplierInvitation.id == inv_id).first()
+        inv.status = "submitted"
+        inv.submitted_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+    r = client.post(f"/api/inquiries/{iid}/deliveries/sup-1/resend", headers=headers)
+    assert r.status_code == 409
+    assert r.json()["detail"]["error_type"] == "invitation_submitted"
+
+
+def test_resend_expired_invitation_rejected(client):
+    """已过期邀请不可重发 → 410 结构化错误 invitation_expired"""
+    headers = _login(client, "u-2")
+    iid, inv_id = _fresh_invitation(client, headers)
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(SupplierInvitation.id == inv_id).first()
+        inv.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        db.commit()
+    finally:
+        db.close()
+    r = client.post(f"/api/inquiries/{iid}/deliveries/sup-1/resend", headers=headers)
+    assert r.status_code == 410
+    assert r.json()["detail"]["error_type"] == "invitation_expired"
+
+
+def test_concurrent_resend_single_valid_token(client):
+    """并发重发（多线程）只产生一个有效 token：DB 哈希与短期存储明文 token 始终一致"""
+    headers = _login(client, "u-2")
+    iid = _create_and_send_inquiry(client, headers, "sup-1")
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == iid,
+            SupplierInvitation.supplier_id == "sup-1",
+        ).first()
+        inv_id = inv.id
+        # 模拟明文 token 丢失，强制各线程走重签路径
+        get_store().delete(f"procurement:inv:raw:{inv_id}")
+        assert get_invitation_raw_token(inv_id) is None
+    finally:
+        db.close()
+
+    results, errors, mlock = [], [], threading.Lock()
+
+    def _run():
+        try:
+            s = SessionLocal()
+            try:
+                invx = s.query(SupplierInvitation).filter(
+                    SupplierInvitation.inquiry_id == iid,
+                    SupplierInvitation.supplier_id == "sup-1",
+                ).first()
+                tok, _ = resend_invitation(s, invx, "u-2")
+                with mlock:
+                    results.append(tok)
+            finally:
+                s.close()
+        except Exception as e:  # noqa: BLE001
+            with mlock:
+                errors.append(e)
+
+    threads = [threading.Thread(target=_run) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors
+
+    check = SessionLocal()
+    try:
+        final = check.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == iid,
+            SupplierInvitation.supplier_id == "sup-1",
+        ).first()
+        store_tok = get_invitation_raw_token(final.id)
+        assert store_tok is not None
+        # 只有一个生效 token：DB 哈希与短期存储明文 token 一致，且该 token 有效
+        assert hash_invitation_token(store_tok) == final.token_hash
+        assert store_tok in results
+        assert client.get("/api/portal/inquiries", headers={"X-Invitation-Token": store_tok}).status_code == 200
+    finally:
+        check.close()

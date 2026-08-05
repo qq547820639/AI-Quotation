@@ -615,7 +615,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           if (i.id !== inquiryId) return i;
           return {
             ...i,
-            status: InquiryStatus.PENDING_CONFIRM,
+            status: InquiryStatus.RETURNED,
             approvalNodes: i.approvalNodes.map((n) =>
               n.status === ApprovalNodeStatus.PENDING
                 ? { ...n, status: ApprovalNodeStatus.REJECTED, comment, time: nowStr }

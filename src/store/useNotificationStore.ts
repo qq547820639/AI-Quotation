@@ -39,6 +39,8 @@ export interface NotificationPayload {
   type: NotificationType;
   title: string;
   content: string;
+  /** 统一事件 ID（邮件/站内通知共享，用于幂等去重） */
+  eventId?: string;
 }
 
 interface NotificationState {
@@ -140,16 +142,22 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     let created: Notification | null = null;
     set((state) => {
       const now = dayjs();
-      // 去重：同 inquiryId + type 在窗口内不重复
-      const dup = state.notifications.some(
-        (n) =>
-          n.type === payload.type &&
-          n.inquiryId === payload.inquiryId &&
-          now.diff(dayjs(n.time)) < DEDUP_WINDOW_MS,
-      );
-      if (dup) return state;
+      // 统一事件 ID 幂等去重：同一 eventId 只保留一条（邮件与站内通知共享该 ID）
+      const nid =
+        payload.eventId ?? `ntf-${now.valueOf()}-${Math.random().toString(36).slice(2, 6)}`;
+      if (state.notifications.some((n) => n.id === nid)) return state;
+      // 兼容旧流程：无 eventId 时按 inquiryId + type 在时间窗内去重
+      if (!payload.eventId) {
+        const dup = state.notifications.some(
+          (n) =>
+            n.type === payload.type &&
+            n.inquiryId === payload.inquiryId &&
+            now.diff(dayjs(n.time)) < DEDUP_WINDOW_MS,
+        );
+        if (dup) return state;
+      }
       created = {
-        id: `ntf-${now.valueOf()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: nid,
         inquiryId: payload.inquiryId,
         type: payload.type,
         title: payload.title,

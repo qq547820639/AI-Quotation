@@ -26,7 +26,7 @@ from ..models import (
     SupplierInvitation, Inquiry, InquiryItem, Quotation, QuotationItem,
     Attachment, Supplier,
 )
-from ..scanner import run_scan
+from ..scanner import ScanStatus, get_scanner, run_scan
 from ..serializers import attachments_for, now_str, gen_id
 from ..state_machine import can_revise_submitted_quotation
 from ..storage import storage, sanitize_filename
@@ -567,6 +567,18 @@ async def portal_upload_attachment(
         extra={"extra_fields": {"action": "attachment_upload", "attachment_id": record.id,
                                 "owner": f"{owner_type}:{owner_id}", "size": record.size}},
     )
+    # P0：上传后立即执行病毒扫描（生产 fail closed）。未通过（infected/error）保持不可下载。
+    scan_result = get_scanner().scan(data, filename, content_type)
+    record.scan_status = scan_result.status
+    record.scan_result = scan_result.result
+    db.commit()
+    db.refresh(record)
+    audit_logger.info(
+        "attachment_scanned",
+        extra={"extra_fields": {"action": "attachment_scan", "attachment_id": record.id,
+                                "owner": f"{owner_type}:{owner_id}", "scan_status": record.scan_status,
+                                "scan_result": record.scan_result}},
+    )
     return {
         "id": record.id,
         "name": record.name,
@@ -614,6 +626,19 @@ def portal_download_attachment(
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件不存在")
     _verify_attachment_ownership(invitation, record.owner_type, record.owner_id, db)
+
+    # P0：仅允许下载通过病毒扫描（clean）的附件；infected/error/pending 一律禁止
+    if record.scan_status != ScanStatus.CLEAN:
+        audit_logger.warning(
+            "attachment_download_blocked",
+            extra={"extra_fields": {"action": "attachment_download", "attachment_id": attachment_id,
+                                    "owner": f"{record.owner_type}:{record.owner_id}",
+                                    "scan_status": record.scan_status}},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"附件未通过安全检查，禁止下载（状态: {record.scan_status}）",
+        )
 
     data = storage.read(attachment_id)
     if data is None:

@@ -252,6 +252,16 @@
       "materialCategory": "Material Category Distribution",
       "approvalFunnel": "Inquiry Approval Funnel"
     },
+    "workbench": {
+      "title": "Action Workbench",
+      "errorTitle": "Load Failed",
+      "errorDesc": "Unable to load workbench data, please retry.",
+      "empty": "No pending items",
+      "filterOwnerPlaceholder": "Filter by owner",
+      "filterEmpty": "No pending items under current filters, adjust the filter.",
+      "openCard": "Open card \"{{title}}\"",
+      "urgentTag": "Urgent"
+    },
     "chart": {
       "noData": "No data"
     },
@@ -290,6 +300,32 @@
     "chartSeries": {
       "inquiryStatus": "Inquiry Status",
       "quotationCount": "Submitted Quotations"
+    },
+    "workbench": {
+      "title": "Action Workbench",
+      "pendingSend": "Pending Send",
+      "pendingSendDesc": "Inquiries ready to send",
+      "deadlineApproaching": "Deadline Approaching",
+      "deadlineApproachingDesc": "Quotation deadline is near",
+      "unquotedSuppliers": "Unquoted Suppliers",
+      "unquotedSuppliersDesc": "Invited but not yet quoted",
+      "failedDeliveries": "Failed Deliveries",
+      "failedDeliveriesDesc": "Invitations failed to deliver",
+      "abnormalQuotations": "Abnormal Quotations",
+      "abnormalQuotationsDesc": "Quotations timed out or abnormal",
+      "pendingApproval": "Pending Approvals",
+      "pendingApprovalDesc": "Award requests awaiting approval",
+      "approvalTimeout": "Approval About to Timeout",
+      "approvalTimeoutDesc": "Approvals near their deadline",
+      "pendingConfirm": "Pending Confirmation",
+      "pendingConfirmDesc": "Quoted inquiries awaiting award",
+      "urgentTag": "Urgent",
+      "filterOwnerPlaceholder": "Filter by owner",
+      "openCard": "Open \"{{title}}\"",
+      "empty": "Nothing to act on right now",
+      "filterEmpty": "No inquiries match the current filters",
+      "errorTitle": "Failed to load data",
+      "errorDesc": "Could not load workbench data, please retry"
     }
   },
   "inquiry": {
@@ -347,7 +383,41 @@
       "batchCancelSuccess": "Cancelled {{count}} inquiry(ies)",
       "exportPdf": "Export PDF (server)",
       "batchCancelFailed": "Failed to cancel {{count}} inquiry(ies)",
-      "clearSelection": "Clear Selection"
+      "clearSelection": "Clear Selection",
+      "batchSend": "Batch Send",
+      "batchRemind": "Batch Remind",
+      "batchExport": "Batch Export",
+      "batchAssign": "Batch Assign Owner",
+      "batchPreviewTitle": "Batch Operation Preview",
+      "batchPreviewSummary": "{{total}} selected, {{executable}} executable, {{skipped}} skipped",
+      "batchSendSuccess": "Sent {{count}} inquiry(ies)",
+      "batchRemindSuccess": "Sent {{count}} deadline reminder(s)",
+      "batchExportSuccess": "Submitted {{count}} inquiry export(s), processing in background",
+      "batchAssignSuccess": "Updated owner of {{count}} inquiry(ies)",
+      "batchPartialFailed": "{{count}} operation(s) failed",
+      "batchExportQueued": "Export task queued in background",
+      "batchAssignTitle": "Assign Owner",
+      "batchAssignPlaceholder": "Enter owner name",
+      "batchOwnerRequired": "Please enter owner name",
+      "batchReasonNotSendable": "Status not sendable",
+      "batchReasonNotFound": "Inquiry not found"
+    },
+    "savedViews": {
+      "title": "Saved Filter Views",
+      "save": "Save as View",
+      "saveDesc": "Save current filters as a named view for quick reuse",
+      "namePlaceholder": "Enter view name",
+      "nameRequired": "Please enter view name",
+      "apply": "Apply",
+      "setDefault": "Set as Default",
+      "remove": "Remove",
+      "defaultTag": "Default",
+      "empty": "No saved views",
+      "saved": "View \"{{name}}\" saved",
+      "removed": "View removed",
+      "defaultSet": "Set \"{{name}}\" as default view",
+      "applied": "Applied view \"{{name}}\"",
+      "confirmRemove": "Remove view \"{{name}}\"?"
     },
     "create": {
       "title": "Create Inquiry",
@@ -561,7 +631,20 @@
       "autoSavedAt": "Draft auto-saved ({{time}})",
       "unsavedChanges": "You have unsaved changes",
       "unsavedChangesDesc": "Changes are auto-saved as draft. Click \"Save Draft\" to persist to the inquiry list.",
-      "batchSend": "Batch Send Inquiry"
+      "batchSend": "Batch Send Inquiry",
+      "saveStatusSaving": "Saving…",
+      "saveStatusFailed": "Save failed, check storage",
+      "saveStatusOffline": "Offline, draft saved locally",
+      "conflictTitle": "Concurrent edit conflict detected",
+      "conflictContent": "Another device or tab is editing this inquiry. Choose \"Overwrite\" to use your local content, or \"Reload\" to adopt the other version.",
+      "conflictOverwrite": "Overwrite",
+      "conflictReload": "Reload",
+      "conflictOverwritten": "Draft overwritten with local content",
+      "conflictReloaded": "Reloaded the other version",
+      "saveAsTemplate": "Save as Template",
+      "templateSaved": "Inquiry template saved",
+      "templateSaveFailed": "Failed to save template",
+      "templateNamePlaceholder": "Enter template name"
     },
     "detail": {
       "title": "Inquiry Detail",
@@ -589,6 +672,7 @@
       "sendInquiry": "Send Inquiry",
       "cancelInquiry": "Cancel Inquiry",
       "submitApproval": "Submit Approval",
+      "resubmitApproval": "Resubmit for Approval",
       "approve": "Approve",
       "reject": "Reject",
       "confirmResult": "Confirm Result",
@@ -946,7 +1030,18 @@
       "supportedColumns": "Supported columns: Material Code, Material Name, Material Category, Brand, Specification Model, Technical Params, Unit, Stock. Must include the \"Material Name\" column.",
       "previewCount": "Preview (first 10 rows, {{count}} total)",
       "noRows": "No data rows could be parsed",
-      "noValidRows": "No valid material rows (must include a \"Material Name\" column)"
+      "noValidRows": "No valid material rows (must include a \"Material Name\" column)",
+      "errorNoName": "Missing material name",
+      "errorInvalidNumber": "\"{{value}}\" is not a valid non-negative number",
+      "reportRow": "Row",
+      "reportColumn": "Column",
+      "reportReason": "Reason",
+      "errorTitle": "{{count}} row(s) below have errors and were skipped",
+      "downloadErrorReport": "Download Error Report",
+      "duplicateWarning": "Duplicate material codes detected: {{codes}}. Please verify before importing.",
+      "partialImportTip": "Valid rows will be imported, error rows will be skipped",
+      "reportFilename": "material-import-errors",
+      "reportDownloaded": "Error report downloaded"
     }
   },
   "quotation": {
@@ -1257,6 +1352,10 @@
     "openDetail": "View notification \"{{title}}\" detail",
     "deadlineTitle": "Inquiry {{code}} is approaching deadline",
     "deadlineContent": "{{subject}} ({{hours}} hours left)",
+    "resourceDeleted": "Associated resource deleted",
+    "noPermission": "No access permission",
+    "resourceDeletedHint": "The inquiry linked to this notification has been deleted and cannot be navigated.",
+    "noPermissionHint": "You do not have permission to access this inquiry.",
     "type": {
       "INQUIRY_SENT": "Inquiry Sent",
       "QUOTATION_SUBMITTED": "Quotation Submitted",
@@ -1690,7 +1789,16 @@
     "receiptDownloadTitle": "Quotation Receipt",
     "receiptFilename": "quotation-receipt",
     "receiptDownloadSuccess": "Receipt downloaded",
-    "downloadReceipt": "Download Receipt"
+    "downloadReceipt": "Download Receipt",
+    "previewTitle": "Review Before Submit",
+    "previewDesc": "Please review the quotation details below before submitting. Once submitted, it cannot be modified.",
+    "previewTotal": "Total Amount",
+    "previewConfirm": "Confirm Submit",
+    "previewBack": "Back to Edit",
+    "previewIncomplete": "{{count}} quotation item(s) incomplete (missing unit price or delivery days)",
+    "previewUnitPrice": "Unit Price",
+    "previewDelivery": "Delivery Days",
+    "previewIncompleteTip": "The following items are missing unit price or delivery days. Please confirm whether to keep them before submitting:"
   },
   "globalSearch": {
     "title": "Global Search",
@@ -1704,7 +1812,9 @@
     "resultCount": "{{count}} result(s) found",
     "detailPlaceholder": "Search inquiry code/subject, supplier name/code, material name/code",
     "noMatch": "No matching results",
-    "enterKeyword": "Please enter a keyword"
+    "enterKeyword": "Please enter a keyword",
+    "quotation": "Quotation",
+    "quotationAmount": "Total ¥{{amount}}"
   },
   "table": {
     "density": "Density",

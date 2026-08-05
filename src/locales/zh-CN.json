@@ -252,6 +252,16 @@
       "materialCategory": "物料品类分布",
       "approvalFunnel": "询价审批漏斗"
     },
+    "workbench": {
+      "title": "行动工作台",
+      "errorTitle": "加载失败",
+      "errorDesc": "无法加载工作台数据，请重试。",
+      "empty": "暂无待办事项",
+      "filterOwnerPlaceholder": "按负责人筛选",
+      "filterEmpty": "当前筛选条件下没有待办，请调整筛选。",
+      "openCard": "打开卡片「{{title}}」",
+      "urgentTag": "紧急"
+    },
     "chart": {
       "noData": "暂无数据"
     },
@@ -290,6 +300,32 @@
     "chartSeries": {
       "inquiryStatus": "询价状态",
       "quotationCount": "提交报价数"
+    },
+    "workbench": {
+      "title": "行动工作台",
+      "pendingSend": "待发送询价",
+      "pendingSendDesc": "已就绪待发送的询价单",
+      "deadlineApproaching": "即将截止询价",
+      "deadlineApproachingDesc": "报价即将截止，请跟进",
+      "unquotedSuppliers": "尚未报价供应商",
+      "unquotedSuppliersDesc": "已邀但未提交报价的供应商",
+      "failedDeliveries": "发送失败邀请",
+      "failedDeliveriesDesc": "邀请投递失败，需重发",
+      "abnormalQuotations": "异常报价",
+      "abnormalQuotationsDesc": "存在超时或其他异常报价",
+      "pendingApproval": "待审批事项",
+      "pendingApprovalDesc": "等待审批的定标申请",
+      "approvalTimeout": "即将超时审批",
+      "approvalTimeoutDesc": "临近时限的待审批事项",
+      "pendingConfirm": "待确认定标",
+      "pendingConfirmDesc": "已报价待确认定标结果",
+      "urgentTag": "紧急",
+      "filterOwnerPlaceholder": "按负责人筛选",
+      "openCard": "打开「{{title}}」",
+      "empty": "当前没有需要处理的行动项",
+      "filterEmpty": "当前筛选条件下没有匹配的询价单",
+      "errorTitle": "数据加载失败",
+      "errorDesc": "无法获取工作台数据，请检查网络后重试"
     }
   },
   "inquiry": {
@@ -347,7 +383,41 @@
       "batchCancelSuccess": "已取消 {{count}} 条询价单",
       "exportPdf": "导出 PDF（服务端）",
       "batchCancelFailed": "有 {{count}} 条询价单取消失败",
-      "clearSelection": "清空选择"
+      "clearSelection": "清空选择",
+      "batchSend": "批量发送",
+      "batchRemind": "批量提醒",
+      "batchExport": "批量导出",
+      "batchAssign": "批量调整负责人",
+      "batchPreviewTitle": "批量操作预览",
+      "batchPreviewSummary": "共 {{total}} 条，可执行 {{executable}} 条，{{skipped}} 条跳过",
+      "batchSendSuccess": "已发送 {{count}} 条询价",
+      "batchRemindSuccess": "已发送 {{count}} 条截止提醒",
+      "batchExportSuccess": "已提交 {{count}} 条询价导出，后台处理中",
+      "batchAssignSuccess": "已调整 {{count}} 条询价负责人",
+      "batchPartialFailed": "有 {{count}} 条操作失败",
+      "batchExportQueued": "导出任务已进入后台队列",
+      "batchAssignTitle": "调整负责人",
+      "batchAssignPlaceholder": "请输入负责人姓名",
+      "batchOwnerRequired": "请输入负责人姓名",
+      "batchReasonNotSendable": "状态不允许发送",
+      "batchReasonNotFound": "询价单不存在"
+    },
+    "savedViews": {
+      "title": "保存的筛选视图",
+      "save": "保存为视图",
+      "saveDesc": "将当前筛选条件保存为命名视图，方便下次快速应用",
+      "namePlaceholder": "请输入视图名称",
+      "nameRequired": "请输入视图名称",
+      "apply": "应用",
+      "setDefault": "设为默认",
+      "remove": "删除",
+      "defaultTag": "默认",
+      "empty": "暂无已保存的视图",
+      "saved": "视图「{{name}}」已保存",
+      "removed": "视图已删除",
+      "defaultSet": "已将「{{name}}」设为默认视图",
+      "applied": "已应用视图「{{name}}」",
+      "confirmRemove": "确认删除视图「{{name}}」？"
     },
     "create": {
       "title": "创建询价单",
@@ -561,7 +631,20 @@
       "autoSavedAt": "已自动保存草稿（{{time}}）",
       "unsavedChanges": "当前有未保存的修改",
       "unsavedChangesDesc": "内容变更后会自动暂存草稿，可随时点击「保存草稿」固化到询价单列表。",
-      "batchSend": "一键批量发送询价"
+      "batchSend": "一键批量发送询价",
+      "saveStatusSaving": "正在保存…",
+      "saveStatusFailed": "保存失败，请检查存储空间",
+      "saveStatusOffline": "离线，草稿暂存于本地",
+      "conflictTitle": "检测到并发编辑冲突",
+      "conflictContent": "另一台设备或标签页正在编辑此询价单。请选择「覆盖」以本地内容为准，或选择「重新加载」以采用对方版本。",
+      "conflictOverwrite": "覆盖",
+      "conflictReload": "重新加载",
+      "conflictOverwritten": "已用本地内容覆盖草稿",
+      "conflictReloaded": "已重新加载对方版本",
+      "saveAsTemplate": "保存为模板",
+      "templateSaved": "询价模板已保存",
+      "templateSaveFailed": "模板保存失败",
+      "templateNamePlaceholder": "请输入模板名称"
     },
     "detail": {
       "title": "询价单详情",
@@ -589,6 +672,7 @@
       "sendInquiry": "发送询价",
       "cancelInquiry": "取消询价",
       "submitApproval": "提交审批",
+      "resubmitApproval": "重新提交审批",
       "approve": "审批通过",
       "reject": "审批驳回",
       "confirmResult": "确认定标",
@@ -946,7 +1030,18 @@
       "supportedColumns": "支持列：物料编码、物料名称、物料品类、品牌、规格型号、技术参数、单位、库存。需包含「物料名称」列。",
       "previewCount": "预览（前 10 行，共 {{count}} 条）",
       "noRows": "未解析到任何数据行",
-      "noValidRows": "未解析到有效物料行（需包含\"物料名称\"列）"
+      "noValidRows": "未解析到有效物料行（需包含\"物料名称\"列）",
+      "errorNoName": "缺少物料名称",
+      "errorInvalidNumber": "「{{value}}」不是合法的非负数字",
+      "reportRow": "数据行",
+      "reportColumn": "出错列",
+      "reportReason": "错误原因",
+      "errorTitle": "以下 {{count}} 行存在错误，已跳过",
+      "downloadErrorReport": "下载错误报告",
+      "duplicateWarning": "检测到重复物料编码：{{codes}}，请核对后再导入",
+      "partialImportTip": "有效行将被导入，错误行将被跳过",
+      "reportFilename": "物料导入错误报告",
+      "reportDownloaded": "错误报告已下载"
     }
   },
   "quotation": {
@@ -1255,6 +1350,10 @@
     "allTypes": "全部类型",
     "clickToViewDetail": " · 点击查看询价单详情",
     "openDetail": "查看通知「{{title}}」详情",
+    "resourceDeleted": "资源已删除",
+    "noPermission": "无权限访问",
+    "resourceDeletedHint": " · 关联询价单已删除",
+    "noPermissionHint": " · 无权限查看该询价单",
     "deadlineTitle": "询价单 {{code}} 即将截止",
     "deadlineContent": "{{subject}}（剩余 {{hours}} 小时）",
     "type": {
@@ -1271,6 +1370,10 @@
     },
     "total": "共 {{count}} 条",
     "unreadCount": "{{count}} 条未读",
+    "resourceDeleted": "关联资源已删除",
+    "noPermission": "无访问权限",
+    "resourceDeletedHint": "该通知关联的询价单已被删除，无法跳转。",
+    "noPermissionHint": "您没有访问该询价单的权限，无法跳转。",
     "pref": {
       "title": "通知偏好",
       "inquirySent": "询价发送",
@@ -1690,7 +1793,16 @@
     "receiptDownloadTitle": "报价回执",
     "receiptFilename": "报价回执",
     "receiptDownloadSuccess": "回执已下载",
-    "downloadReceipt": "下载回执"
+    "downloadReceipt": "下载回执",
+    "previewTitle": "提交前预览",
+    "previewDesc": "请核对以下报价信息，确认无误后提交。提交后将无法修改。",
+    "previewTotal": "报价总金额",
+    "previewConfirm": "确认提交",
+    "previewBack": "返回修改",
+    "previewIncomplete": "尚有 {{count}} 项报价不完整（未填单价或交货周期）",
+    "previewUnitPrice": "单价",
+    "previewDelivery": "交货周期",
+    "previewIncompleteTip": "以下物料未填写单价或交货周期，提交前请确认是否保留："
   },
   "globalSearch": {
     "title": "全局搜索",
@@ -1704,7 +1816,9 @@
     "resultCount": "找到 {{count}} 个结果",
     "detailPlaceholder": "搜索询价单编号/主题、供应商名称/编号、物料名称/编码",
     "noMatch": "未找到匹配结果",
-    "enterKeyword": "请输入关键词"
+    "enterKeyword": "请输入关键词",
+    "quotation": "报价",
+    "quotationAmount": "报价金额 ¥{{amount}}"
   },
   "table": {
     "density": "密度",

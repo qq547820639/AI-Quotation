@@ -78,19 +78,50 @@ class _MemoryStore:
         with self._lock:
             self._data.clear()
 
+    def ping(self) -> bool:
+        """内存实现始终可用，返回 True。"""
+        return True
+
 
 class _RedisStore:
     """Redis 客户端实现（可多实例）。"""
 
+    # 连接/socket 超时（秒）与健康检查间隔，避免单次网络抖动长时间阻塞请求
+    SOCKET_CONNECT_TIMEOUT = 2.0
+    SOCKET_TIMEOUT = 2.0
+    HEALTH_CHECK_INTERVAL = 30
+    # 有限重试：短退避，兜底瞬时故障，避免一次网络抖动即失败
+    RETRY_TIMES = 3
+    RETRY_BASE_DELAY = 0.05
+
     def __init__(self, url: str) -> None:
-        self._client = redis.Redis.from_url(url, decode_responses=True)
+        self._client = redis.Redis.from_url(
+            url,
+            decode_responses=True,
+            socket_connect_timeout=self.SOCKET_CONNECT_TIMEOUT,
+            socket_timeout=self.SOCKET_TIMEOUT,
+            socket_keepalive=True,
+            health_check_interval=self.HEALTH_CHECK_INTERVAL,
+        )
+
+    def _with_retry(self, fn):
+        """对瞬时网络故障做有限重试（指数退避），重试耗尽后抛出原始异常。"""
+        last_exc: Exception | None = None
+        for attempt in range(self.RETRY_TIMES):
+            try:
+                return fn()
+            except Exception as e:  # noqa: BLE001 - 网络/超时/连接错误均需重试
+                last_exc = e
+                if attempt < self.RETRY_TIMES - 1:
+                    time.sleep(self.RETRY_BASE_DELAY * (2 ** attempt))
+        raise last_exc  # type: ignore[misc]
 
     def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         v = json.dumps(value) if not isinstance(value, (str, bytes)) else value
-        self._client.set(key, v, ex=ttl)
+        self._with_retry(lambda: self._client.set(key, v, ex=ttl))
 
     def get(self, key: str) -> Any | None:
-        raw = self._client.get(key)
+        raw = self._with_retry(lambda: self._client.get(key))
         if raw is None:
             return None
         try:
@@ -99,22 +130,26 @@ class _RedisStore:
             return raw
 
     def delete(self, key: str) -> None:
-        self._client.delete(key)
+        self._with_retry(lambda: self._client.delete(key))
 
     def incr(self, key: str, ttl: int | None = None) -> int:
-        val = self._client.incr(key)
+        val = self._with_retry(lambda: self._client.incr(key))
         if ttl is not None:
-            self._client.expire(key, ttl)
+            self._with_retry(lambda: self._client.expire(key, ttl))
         return int(val)
 
     def expire(self, key: str, ttl: int) -> None:
-        self._client.expire(key, ttl)
+        self._with_retry(lambda: self._client.expire(key, ttl))
 
     def clear(self) -> None:
         # 仅清空本项目前缀的键（限流/幂等都使用本项目前缀）
-        keys = self._client.keys("procurement:*")
+        keys = self._with_retry(lambda: self._client.keys("procurement:*"))
         if keys:
-            self._client.delete(*keys)
+            self._with_retry(lambda: self._client.delete(*keys))
+
+    def ping(self) -> bool:
+        """就绪检查：探测 Redis 连通性。失败抛异常（由调用方处理）。"""
+        return bool(self._with_retry(lambda: self._client.ping()))
 
 
 def _build_store():

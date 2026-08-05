@@ -14,3 +14,11 @@ psycopg2-binary==2.9.10
 # P2-12 Task 17：服务端导出（Excel / PDF）
 openpyxl==3.1.5
 reportlab==5.0.0
+
+# P0：Redis 客户端（REDIS_URL 配置时用于限流/幂等/缓存/token，可多实例）
+redis==5.0.8
+# P0：对象存储（S3/MinIO，S3_* 配置完整时用于附件存储）
+boto3==1.35.0
+
+# P1：持久化任务队列（outbox + Celery，broker 复用 Redis）
+celery[redis]==5.4.0

@@ -57,6 +57,7 @@ import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import { useIsMobile } from '@/utils/useIsMobile';
 import { downloadTextFile, generateCSV, parseCSV } from '@/utils/csv';
 import { AutoSaveIndicator, BatchToolbar, ErrorSummary, QuotationSteps } from './components';
+import SubmitPreviewModal from './SubmitPreviewModal';
 import {
   calcItemTotal,
   createEmptyItem,
@@ -112,6 +113,8 @@ export default function SupplierPortalPage() {
   const [remark, setRemark] = useState('');
   const [errors, setErrors] = useState<Record<string, Set<string>>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const mountedRef = useRef(true);
 
   // Task 16：自动保存状态
@@ -407,6 +410,7 @@ export default function SupplierPortalPage() {
     });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
+      setAttemptedSubmit(true);
       notifyError(t('supplierPortal.validateError'));
       return false;
     }
@@ -432,35 +436,32 @@ export default function SupplierPortalPage() {
     }
   };
 
-  /** 正式提交 */
+  /** 正式提交：校验通过后先打开提交前预览 Modal，核对无误后确认提交（Task 17） */
   const handleSubmit = () => {
     if (expired) {
       notifyError(t('supplierPortal.deadlinePassedSubmit'));
       return;
     }
     if (!validate()) return;
-    confirmAction({
-      title: t('supplierPortal.confirmSubmitTitle'),
-      content: t('supplierPortal.confirmSubmitContent'),
-      okText: t('supplierPortal.confirmSubmitOk'),
-      cancelText: t('supplierPortal.checkAgain'),
-      onOk: async () => {
-        setSubmitting(true);
-        try {
-          const result = await portalApi.submitQuotation(invitationToken, {
-            ...buildPayload(),
-            idempotencyKey: crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
-          });
-          setReceipt(result);
-          setPhase('submitted');
-          notifySuccess(t('supplierPortal.submitSuccessMsg'));
-        } catch (e) {
-          notifyError(getErrorMessage(e));
-        } finally {
-          setSubmitting(false);
-        }
-      },
-    });
+    setPreviewOpen(true);
+  };
+
+  /** 确认提交（预览 Modal 的「确认提交」回调） */
+  const doSubmit = async () => {
+    setSubmitting(true);
+    try {
+      const result = await portalApi.submitQuotation(invitationToken, {
+        ...buildPayload(),
+        idempotencyKey: crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+      });
+      setReceipt(result);
+      setPhase('submitted');
+      notifySuccess(t('supplierPortal.submitSuccessMsg'));
+    } catch (e) {
+      notifyError(getErrorMessage(e));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   /** 重新报价（撤销提交） */
@@ -973,18 +974,28 @@ export default function SupplierPortalPage() {
       width: 130,
       render: (_, record) => {
         const hasErr = errors[record.inquiryItemId]?.has('unitPrice');
+        const errId = `${record.inquiryItemId}-unitPrice-error`;
         return (
-          <InputNumber
-            id={`${record.inquiryItemId}-unitPrice`}
-            value={record.unitPrice}
-            min={0}
-            precision={2}
-            style={{ width: '100%', ...highlightStyle(record, 'unitPrice') }}
-            placeholder={t('common.required')}
-            status={hasErr ? 'error' : undefined}
-            aria-label={t('supplierPortal.materialUnitPrice')}
-            onChange={(v) => updateField(record.inquiryItemId, 'unitPrice', v ?? undefined)}
-          />
+          <div>
+            <InputNumber
+              id={`${record.inquiryItemId}-unitPrice`}
+              value={record.unitPrice}
+              min={0}
+              precision={2}
+              style={{ width: '100%', ...highlightStyle(record, 'unitPrice') }}
+              placeholder={t('common.required')}
+              status={hasErr ? 'error' : undefined}
+              aria-label={t('supplierPortal.materialUnitPrice')}
+              aria-invalid={hasErr || undefined}
+              aria-describedby={hasErr ? errId : undefined}
+              onChange={(v) => updateField(record.inquiryItemId, 'unitPrice', v ?? undefined)}
+            />
+            {hasErr && (
+              <div id={errId} style={{ fontSize: 12, color: 'var(--color-error)' }}>
+                {t(`supplierPortal.errorField.unitPrice`)}
+              </div>
+            )}
+          </div>
         );
       },
     },
@@ -1036,17 +1047,27 @@ export default function SupplierPortalPage() {
       width: 130,
       render: (_, record) => {
         const hasErr = errors[record.inquiryItemId]?.has('deliveryDays');
+        const errId = `${record.inquiryItemId}-deliveryDays-error`;
         return (
-          <InputNumber
-            id={`${record.inquiryItemId}-deliveryDays`}
-            value={record.deliveryDays}
-            min={0}
-            style={{ width: '100%', ...highlightStyle(record, 'deliveryDays') }}
-            placeholder={t('common.required')}
-            status={hasErr ? 'error' : undefined}
-            aria-label={t('supplierPortal.deliveryDaysCol')}
-            onChange={(v) => updateField(record.inquiryItemId, 'deliveryDays', v ?? undefined)}
-          />
+          <div>
+            <InputNumber
+              id={`${record.inquiryItemId}-deliveryDays`}
+              value={record.deliveryDays}
+              min={0}
+              style={{ width: '100%', ...highlightStyle(record, 'deliveryDays') }}
+              placeholder={t('common.required')}
+              status={hasErr ? 'error' : undefined}
+              aria-label={t('supplierPortal.deliveryDaysCol')}
+              aria-invalid={hasErr || undefined}
+              aria-describedby={hasErr ? errId : undefined}
+              onChange={(v) => updateField(record.inquiryItemId, 'deliveryDays', v ?? undefined)}
+            />
+            {hasErr && (
+              <div id={errId} style={{ fontSize: 12, color: 'var(--color-error)' }}>
+                {t(`supplierPortal.errorField.deliveryDays`)}
+              </div>
+            )}
+          </div>
         );
       },
     },
@@ -1662,6 +1683,17 @@ export default function SupplierPortalPage() {
         {/* Task 16-4：提交前错误摘要 */}
         <ErrorSummary errors={errors} getItemName={getItemName} onFocus={focusField} />
 
+        {/* 提交校验失败的内联提示（与 toast 并存，便于键盘/读屏用户感知） */}
+        {attemptedSubmit && Object.keys(errors).length > 0 && (
+          <Alert
+            type="error"
+            showIcon
+            role="alert"
+            style={{ marginBottom: 12 }}
+            message={t('supplierPortal.validateError')}
+          />
+        )}
+
         {/* CSV 导入隐藏输入框 */}
         <input
           ref={fileInputRef}
@@ -1779,6 +1811,20 @@ export default function SupplierPortalPage() {
             {t('supplierPortal.submitBtn')}
           </Button>
         </div>
+      )}
+
+      {/* 提交前预览 Modal */}
+      {inquiry && (
+        <SubmitPreviewModal
+          open={previewOpen}
+          inquiry={inquiry}
+          items={formItems}
+          remark={remark}
+          totalAmount={totalAmount}
+          loading={submitting}
+          onConfirm={() => void doSubmit()}
+          onCancel={() => setPreviewOpen(false)}
+        />
       )}
     </Space>
   );

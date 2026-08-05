@@ -7,19 +7,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Button,
-  Card,
-  Col,
-  Empty,
-  List,
-  Row,
-  Skeleton,
-  Space,
-  Table,
-  Tag,
-  Typography,
-} from 'antd';
+import { Button, Card, Col, Empty, List, Row, Skeleton, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   BellOutlined,
@@ -54,6 +42,7 @@ import {
 import { formatDateTime, getRemainingTime } from '@/utils/format';
 import { useChartColors, useChartTextColor, useChartAxisLineColor } from '@/utils/useChartColors';
 import { useTranslation } from 'react-i18next';
+import ActionWorkbench from './ActionWorkbench';
 
 const { Text } = Typography;
 
@@ -109,21 +98,15 @@ function countPendingQuotations(
   let total = 0;
   inquiries
     .filter(
-      (i) =>
-        i.status === InquiryStatus.INQUIRING ||
-        i.status === InquiryStatus.PARTIAL_QUOTED,
+      (i) => i.status === InquiryStatus.INQUIRING || i.status === InquiryStatus.PARTIAL_QUOTED,
     )
     .forEach((i) => {
       const submittedSupplierIds = new Set(
         quotations
-          .filter(
-            (q) => q.inquiryId === i.id && q.status === QuotationStatus.SUBMITTED,
-          )
+          .filter((q) => q.inquiryId === i.id && q.status === QuotationStatus.SUBMITTED)
           .map((q) => q.supplierId),
       );
-      const pending = i.invitedSupplierIds.filter(
-        (id) => !submittedSupplierIds.has(id),
-      ).length;
+      const pending = i.invitedSupplierIds.filter((id) => !submittedSupplierIds.has(id)).length;
       total += pending;
     });
   return total;
@@ -132,10 +115,7 @@ function countPendingQuotations(
 /** 即将超时询价单列表（urgent 且状态为 INQUIRING/PARTIAL_QUOTED） */
 function getUrgentInquiries(inquiries: Inquiry[]): Inquiry[] {
   return inquiries.filter((i) => {
-    if (
-      i.status !== InquiryStatus.INQUIRING &&
-      i.status !== InquiryStatus.PARTIAL_QUOTED
-    ) {
+    if (i.status !== InquiryStatus.INQUIRING && i.status !== InquiryStatus.PARTIAL_QUOTED) {
       return false;
     }
     return getRemainingTime(i.deadline).urgent;
@@ -260,7 +240,14 @@ function StatusPieChart({ inquiries }: { inquiries: Inquiry[] }) {
     );
   }
 
-  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.inquiryStatus')} style={{ width: '100%', height: 300 }} />;
+  return (
+    <div
+      ref={domRef}
+      role="img"
+      aria-label={t('dashboard.charts.inquiryStatus')}
+      style={{ width: '100%', height: 300 }}
+    />
+  );
 }
 
 /** 近期报价趋势折线图（近 7 天每天 SUBMITTED 报价数量） */
@@ -359,7 +346,14 @@ function QuotationTrendChart({
     );
   }
 
-  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.quotationTrend')} style={{ width: '100%', height: 300 }} />;
+  return (
+    <div
+      ref={domRef}
+      role="img"
+      aria-label={t('dashboard.charts.quotationTrend')}
+      style={{ width: '100%', height: 300 }}
+    />
+  );
 }
 
 /** 供应商报价频次 Top10（横向 BarChart，B6 新增） */
@@ -385,8 +379,7 @@ function SupplierFrequencyChart({ inquiries }: { inquiries: Inquiry[] }) {
       });
     });
 
-    const supName = (sid: string) =>
-      suppliers.find((s) => s.id === sid)?.name ?? sid;
+    const supName = (sid: string) => suppliers.find((s) => s.id === sid)?.name ?? sid;
 
     const sorted = [...freqMap.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -442,7 +435,14 @@ function SupplierFrequencyChart({ inquiries }: { inquiries: Inquiry[] }) {
     return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
   }
 
-  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.supplierFrequency')} style={{ width: '100%', height: 300 }} />;
+  return (
+    <div
+      ref={domRef}
+      role="img"
+      aria-label={t('dashboard.charts.supplierFrequency')}
+      style={{ width: '100%', height: 300 }}
+    />
+  );
 }
 
 /** 物料品类分布（PieChart Rose 模式，B6 新增） */
@@ -511,7 +511,14 @@ function CategoryDistributionChart({ inquiries }: { inquiries: Inquiry[] }) {
     return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
   }
 
-  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.materialCategory')} style={{ width: '100%', height: 300 }} />;
+  return (
+    <div
+      ref={domRef}
+      role="img"
+      aria-label={t('dashboard.charts.materialCategory')}
+      style={{ width: '100%', height: 300 }}
+    />
+  );
 }
 
 /** 询价审批漏斗（FunnelChart，B6 新增） */
@@ -533,7 +540,11 @@ function ApprovalFunnelChart({ inquiries }: { inquiries: Inquiry[] }) {
       { key: InquiryStatus.PENDING_SEND, label: t('enum.inquiryStatus.PENDING_SEND'), colorIdx: 1 },
       { key: InquiryStatus.INQUIRING, label: t('enum.inquiryStatus.INQUIRING'), colorIdx: 2 },
       { key: InquiryStatus.ALL_QUOTED, label: t('enum.inquiryStatus.ALL_QUOTED'), colorIdx: 3 },
-      { key: InquiryStatus.PENDING_APPROVAL, label: t('enum.inquiryStatus.PENDING_APPROVAL'), colorIdx: 4 },
+      {
+        key: InquiryStatus.PENDING_APPROVAL,
+        label: t('enum.inquiryStatus.PENDING_APPROVAL'),
+        colorIdx: 4,
+      },
       { key: InquiryStatus.COMPLETED, label: t('enum.inquiryStatus.COMPLETED'), colorIdx: 5 },
     ];
 
@@ -626,7 +637,14 @@ function ApprovalFunnelChart({ inquiries }: { inquiries: Inquiry[] }) {
     return <Empty description={t('dashboard.chart.noData')} style={{ padding: '40px 0' }} />;
   }
 
-  return <div ref={domRef} role="img" aria-label={t('dashboard.charts.approvalFunnel')} style={{ width: '100%', height: 300 }} />;
+  return (
+    <div
+      ref={domRef}
+      role="img"
+      aria-label={t('dashboard.charts.approvalFunnel')}
+      style={{ width: '100%', height: 300 }}
+    />
+  );
 }
 
 /* ============================ 统计卡片 ============================ */
@@ -667,11 +685,9 @@ function StatCard({ data }: { data: StatCardData }) {
           >
             {data.trend}
             {data.mom !== undefined && data.mom !== null && (
-              <Tag
-                color={data.mom >= 0 ? 'green' : 'red'}
-                style={{ marginLeft: 6, fontSize: 11 }}
-              >
-                {data.mom >= 0 ? '+' : ''}{data.mom}% {t('dashboard.mom')}
+              <Tag color={data.mom >= 0 ? 'green' : 'red'} style={{ marginLeft: 6, fontSize: 11 }}>
+                {data.mom >= 0 ? '+' : ''}
+                {data.mom}% {t('dashboard.mom')}
               </Tag>
             )}
           </div>
@@ -774,10 +790,7 @@ export default function DashboardPage() {
 
   // 最近 5 条询价单（按 createdAt 降序）
   const recentInquiries = useMemo(
-    () =>
-      [...inquiries]
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-        .slice(0, 5),
+    () => [...inquiries].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 5),
     [inquiries],
   );
 
@@ -827,7 +840,10 @@ export default function DashboardPage() {
           <Space size={4} direction="vertical" style={{ lineHeight: 1.3 }}>
             <Text style={{ fontSize: 12 }}>{formatDateTime(deadline)}</Text>
             <Text
-              style={{ fontSize: 12, color: showUrgent ? WARNING_COLOR : 'var(--color-text-tertiary)' }}
+              style={{
+                fontSize: 12,
+                color: showUrgent ? WARNING_COLOR : 'var(--color-text-tertiary)',
+              }}
             >
               {r.text}
             </Text>
@@ -847,11 +863,7 @@ export default function DashboardPage() {
       key: 'action',
       width: 90,
       render: (_: unknown, record: Inquiry) => (
-        <Button
-          type="link"
-          size="small"
-          onClick={() => navigate(`/inquiry/detail/${record.id}`)}
-        >
+        <Button type="link" size="small" onClick={() => navigate(`/inquiry/detail/${record.id}`)}>
           {t('dashboard.recent.viewDetail')}
         </Button>
       ),
@@ -893,16 +905,34 @@ export default function DashboardPage() {
             size="small"
             style={{ borderRadius: 8 }}
             onClick={() => navigate('/inquiry/create')}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/inquiry/create'); } }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate('/inquiry/create');
+              }
+            }}
           >
             <Space>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-primary-bg)', color: PRIMARY_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  background: 'var(--color-primary-bg)',
+                  color: PRIMARY_COLOR,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
                 <PlusOutlined style={{ fontSize: 18 }} />
               </div>
               <div>
                 <Text strong>{t('dashboard.quickAction.createInquiry')}</Text>
                 <br />
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('dashboard.quickAction.createInquiryDesc')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('dashboard.quickAction.createInquiryDesc')}
+                </Text>
               </div>
             </Space>
           </Card>
@@ -915,16 +945,34 @@ export default function DashboardPage() {
             size="small"
             style={{ borderRadius: 8 }}
             onClick={() => navigate('/quotation/pending')}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/quotation/pending'); } }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate('/quotation/pending');
+              }
+            }}
           >
             <Space>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-warning-bg)', color: WARNING_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  background: 'var(--color-warning-bg)',
+                  color: WARNING_COLOR,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
                 <SolutionOutlined style={{ fontSize: 18 }} />
               </div>
               <div>
                 <Text strong>{t('dashboard.quickAction.pendingQuotation')}</Text>
                 <br />
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('dashboard.quickAction.pendingQuotationDesc')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('dashboard.quickAction.pendingQuotationDesc')}
+                </Text>
               </div>
             </Space>
           </Card>
@@ -938,16 +986,34 @@ export default function DashboardPage() {
               size="small"
               style={{ borderRadius: 8 }}
               onClick={() => navigate('/approval')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/approval'); } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  navigate('/approval');
+                }
+              }}
             >
               <Space>
-                <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-primary-bg)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    background: 'var(--color-primary-bg)',
+                    color: 'var(--color-primary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
                   <SafetyCertificateOutlined style={{ fontSize: 18 }} />
                 </div>
                 <div>
                   <Text strong>{t('dashboard.quickAction.approvalTodo')}</Text>
                   <br />
-                  <Text type="secondary" style={{ fontSize: 12 }}>{t('dashboard.quickAction.approvalTodoDesc')}</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('dashboard.quickAction.approvalTodoDesc')}
+                  </Text>
                 </div>
               </Space>
             </Card>
@@ -961,21 +1027,44 @@ export default function DashboardPage() {
             size="small"
             style={{ borderRadius: 8 }}
             onClick={() => navigate('/notification')}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/notification'); } }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate('/notification');
+              }
+            }}
           >
             <Space>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--color-success-bg)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  background: 'var(--color-success-bg)',
+                  color: 'var(--color-success)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
                 <BellOutlined style={{ fontSize: 18 }} />
               </div>
               <div>
                 <Text strong>{t('menu.notification')}</Text>
                 <br />
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('dashboard.quickAction.notificationDesc')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('dashboard.quickAction.notificationDesc')}
+                </Text>
               </div>
             </Space>
           </Card>
         </Col>
       </Row>
+
+      {/* 行动工作台（P2 Task 14） */}
+      <div style={{ marginTop: 16 }}>
+        <ActionWorkbench />
+      </div>
 
       {/* 第二行：最近询价单 + 待处理任务 */}
       <Row gutter={16} style={{ marginTop: 16 }}>
@@ -1013,9 +1102,7 @@ export default function DashboardPage() {
           <Card
             title={t('dashboard.pendingTasks')}
             extra={
-              <Tag color={pendingTasks.length ? 'warning' : 'default'}>
-                {pendingTasks.length}
-              </Tag>
+              <Tag color={pendingTasks.length ? 'warning' : 'default'}>{pendingTasks.length}</Tag>
             }
             style={{ borderRadius: 8, height: '100%' }}
           >
@@ -1032,7 +1119,12 @@ export default function DashboardPage() {
                         aria-label={t('dashboard.openTask', { subject: item.subject })}
                         style={{ cursor: 'pointer', padding: '10px 0', width: '100%' }}
                         onClick={() => navigate(`/inquiry/detail/${item.id}`)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/inquiry/detail/${item.id}`); } }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            navigate(`/inquiry/detail/${item.id}`);
+                          }
+                        }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                           <span
@@ -1062,9 +1154,7 @@ export default function DashboardPage() {
                               <Text style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                                 {item.code}
                               </Text>
-                              <Text style={{ fontSize: 12, color: WARNING_COLOR }}>
-                                {r.text}
-                              </Text>
+                              <Text style={{ fontSize: 12, color: WARNING_COLOR }}>{r.text}</Text>
                             </Space>
                           </div>
                           <RightOutlined style={{ color: '#C9CDD4', fontSize: 12 }} />

@@ -12,6 +12,9 @@ describe('isEditable', () => {
   it('PENDING_SEND 可编辑', () => {
     expect(isEditable(InquiryStatus.PENDING_SEND)).toBe(true);
   });
+  it('RETURNED 可编辑（驳回后可重新编辑）', () => {
+    expect(isEditable(InquiryStatus.RETURNED)).toBe(true);
+  });
   it('INQUIRING 不可编辑', () => {
     expect(isEditable(InquiryStatus.INQUIRING)).toBe(false);
   });

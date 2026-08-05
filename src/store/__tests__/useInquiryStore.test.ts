@@ -263,13 +263,13 @@ describe('useInquiryStore', () => {
   });
 
   describe('rejectInquiry', () => {
-    it('状态转 PENDING_CONFIRM + 节点转 REJECTED + 追加 REJECT 日志', () => {
+    it('状态转 RETURNED + 节点转 REJECTED + 追加 REJECT 日志', () => {
       const inq = makeInquiry({ id: 'inq-no', status: InquiryStatus.PENDING_APPROVAL });
       resetStore([inq]);
       useInquiryStore.getState().submitForApproval('inq-no');
       useInquiryStore.getState().rejectInquiry('inq-no', '价格过高');
       const updated = useInquiryStore.getState().getInquiryById('inq-no');
-      expect(updated?.status).toBe(InquiryStatus.PENDING_CONFIRM);
+      expect(updated?.status).toBe(InquiryStatus.RETURNED);
       expect(updated?.approvalNodes.some((n) => n.status === ApprovalNodeStatus.REJECTED)).toBe(
         true,
       );
@@ -332,9 +332,7 @@ describe('useInquiryStore', () => {
       expect(res.succeeded).toBe(1);
       expect(res.skipped).toBe(1);
       expect(res.failed).toBe(0);
-      expect(useInquiryStore.getState().getInquiryById('a')?.status).toBe(
-        InquiryStatus.CANCELLED,
-      );
+      expect(useInquiryStore.getState().getInquiryById('a')?.status).toBe(InquiryStatus.CANCELLED);
       // 不可取消项保持原状态
       expect(useInquiryStore.getState().getInquiryById('b')?.status).toBe(InquiryStatus.DRAFT);
       const skipped = res.results.find((r) => r.id === 'b');
@@ -370,7 +368,9 @@ describe('useInquiryStore', () => {
       const inq = makeInquiry({ subject: '原主题' });
       resetStore([inq]);
       vi.mocked(inquiryApi.update).mockRejectedValueOnce(new Error('boom'));
-      const res = await useInquiryStore.getState().updateInquiry('inq-test-1', { subject: '新主题' });
+      const res = await useInquiryStore
+        .getState()
+        .updateInquiry('inq-test-1', { subject: '新主题' });
       expect(res).toEqual(expect.objectContaining({ success: false, reason: 'error' }));
       expect(res.error).toBeInstanceOf(ApiError);
       // 本地状态回滚到操作前
@@ -412,10 +412,7 @@ describe('useInquiryStore', () => {
 
   describe('并发与多物料供应商定标（Task 17）', () => {
     it('并发更新不同实体互不覆盖', async () => {
-      resetStore([
-        makeInquiry({ id: 'a', subject: 'A' }),
-        makeInquiry({ id: 'b', subject: 'B' }),
-      ]);
+      resetStore([makeInquiry({ id: 'a', subject: 'A' }), makeInquiry({ id: 'b', subject: 'B' })]);
       const [ra, rb] = await Promise.all([
         useInquiryStore.getState().updateInquiry('a', { subject: 'A-new' }),
         useInquiryStore.getState().updateInquiry('b', { subject: 'B-new' }),

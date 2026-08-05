@@ -1,7 +1,7 @@
 """SQLAlchemy ORM 模型，对齐前端 src/types/index.ts"""
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, Text, DateTime, JSON, ForeignKey, Table,
-    Numeric, UniqueConstraint, CheckConstraint,
+    Numeric, UniqueConstraint, CheckConstraint, Index,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -66,6 +66,9 @@ class Supplier(Base):
 class Attachment(Base):
     """多态归属附件：owner_type + owner_id"""
     __tablename__ = "attachments"
+    __table_args__ = (
+        Index("ix_attachments_owner", "owner_type", "owner_id"),
+    )
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
     url = Column(Text, nullable=False)
@@ -79,6 +82,16 @@ class Attachment(Base):
 
 class Inquiry(Base):
     __tablename__ = "inquiries"
+    __table_args__ = (
+        # Task 7：高频查询索引（组织可见性过滤 / 状态筛选 / 按负责人查询）
+        Index("ix_inquiries_organization", "organization"),
+        Index("ix_inquiries_status", "status"),
+        Index("ix_inquiries_owner_id", "owner_id"),
+        # Task 22：搜索(关键词 LIKE) / 创建时间范围过滤使用的高频列索引
+        Index("ix_inquiries_subject", "subject"),
+        Index("ix_inquiries_owner_name", "owner_name"),
+        Index("ix_inquiries_created_at", "created_at"),
+    )
     id = Column(String, primary_key=True)
     code = Column(String, unique=True, nullable=False, index=True)
     subject = Column(String, nullable=False)
@@ -168,6 +181,10 @@ class Quotation(Base):
     __tablename__ = "quotations"
     __table_args__ = (
         UniqueConstraint("inquiry_id", "supplier_id", name="uq_quotations_inquiry_id_supplier_id"),
+        Index("ix_quotations_status", "status"),
+        # Task 22：按供应商/创建时间筛选与稳定排序使用的高频列索引
+        Index("ix_quotations_supplier_id", "supplier_id"),
+        Index("ix_quotations_created_at", "created_at"),
     )
     id = Column(String, primary_key=True)
     inquiry_id = Column(String, ForeignKey("inquiries.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -214,6 +231,9 @@ class QuotationItem(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notifications_user_id", "user_id"),
+    )
     id = Column(String, primary_key=True)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     inquiry_id = Column(String, nullable=True)
@@ -316,10 +336,58 @@ class SupplierInvitation(Base):
     supplier = relationship("Supplier")
 
 
-class AIUsage(Base):
-    """AI 服务调用统计（P1-9 Task 14）
+class TaskRecord(Base):
+    """持久化任务状态（P1 可靠性）
 
-    每次 AI 调用记录一条：action / provider / model / tokens / 估算成本 / 归属用户。
+    每次 Celery 任务执行（含重试）都会更新对应记录；任务最终失败时写入
+    status=permanent_failure，可通过 POST /api/tasks/{id}/retry 重置重投。
+    idempotency_key 唯一，保证同一业务事件不重复执行。
+    """
+    __tablename__ = "task_records"
+    __table_args__ = (
+        Index("ix_task_records_status", "status"),
+    )
+    id = Column(String, primary_key=True)
+    task_id = Column(String, nullable=True)  # Celery task id（可空）
+    task_name = Column(String, nullable=False)
+    idempotency_key = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending/running/succeeded/failed/permanent_failure
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    business_event_id = Column(String, nullable=True, index=True)  # 关联 outbox_events.id
+    payload = Column(JSON, nullable=True)
+
+
+class OutboxEvent(Base):
+    """事务 outbox（P1 可靠性）
+
+    业务数据提交时（或紧随其后）写入一条 pending 事件，随后投递到 Celery 并标记
+    dispatched。若「DB 已提交但任务未入队」（进程重启/Redis 短暂断开），dispatcher
+    可扫描 pending 事件补齐投递，保证不丢失。idempotency_key 唯一，重复入队被跳过。
+    """
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        Index("ix_outbox_events_status", "status"),
+    )
+    id = Column(String, primary_key=True)
+    event_type = Column(String, nullable=False)
+    aggregate_id = Column(String, nullable=True, index=True)
+    payload = Column(JSON, nullable=True)
+    status = Column(String, nullable=False, default="pending")  # pending/dispatched/failed
+    idempotency_key = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    dispatched_at = Column(DateTime, nullable=True)
+    error = Column(Text, nullable=True)
+
+
+class AIUsage(Base):
+    """AI 服务调用统计（P1-9 Task 14 + P1 深化 Task 12/13）
+
+    每次 AI 调用记录一条：action / provider / model / tokens / 估算成本 / 归属用户 /
+    提示词版本（prompt_version）/ 是否降级（degraded）。
     用于成本与 Token 统计，可通过 GET /api/ai/stats 聚合查询。
     """
     __tablename__ = "ai_usage"
@@ -331,8 +399,28 @@ class AIUsage(Base):
     completion_tokens = Column(Integer, nullable=False, default=0)
     cost = Column(Numeric(18, 6), nullable=False, default=0)
     latency_ms = Column(Integer, nullable=True)
+    prompt_version = Column(String, nullable=True)  # 提示词版本号（P1 深化 Task 12）
+    degraded = Column(Boolean, nullable=False, default=False)  # 是否降级（远程失败回退本地）
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
+
+
+class AIFeedback(Base):
+    """AI 输出反馈（P1 深化 Task 13）
+
+    用户在 AI 结果上标记「有帮助 / 无帮助 / 纠正」，用于可解释性与效果改进。
+    usage_id 关联到 ai_usage（可为空，当反馈未关联具体调用时）。
+    feedback 取值：helpful / not_helpful / correct。
+    """
+    __tablename__ = "ai_feedback"
+    id = Column(String, primary_key=True)
+    usage_id = Column(String, ForeignKey("ai_usage.id"), nullable=True, index=True)
+    action = Column(String, nullable=True)  # 冗余 action，便于脱离 usage 统计
+    feedback = Column(String, nullable=False)  # helpful / not_helpful / correct
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    organization = Column(String, nullable=True)  # 冗余组织机构，便于按组织统计
 
 
 class UserTablePreference(Base):

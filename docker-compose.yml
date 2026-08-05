@@ -28,8 +28,25 @@ services:
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
       - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
+      # P0：真实病毒扫描（ClamAV）。生产必须使用 clamav，禁 noop（fail closed）。
+      - SCANNER_PROVIDER=${SCANNER_PROVIDER:-clamav}
+      - CLAMAV_HOST=${CLAMAV_HOST:-clamav}
+      - CLAMAV_PORT=${CLAMAV_PORT:-3310}
+      - CLAMAV_TIMEOUT_SECONDS=${CLAMAV_TIMEOUT_SECONDS:-30}
+      - SCAN_FAIL_OPEN=${SCAN_FAIL_OPEN:-false}
+      # P0：Redis（限流/幂等/缓存/token，多实例共享）。生产 REDIS_REQUIRED=true 时不可用将拒绝启动。
+      - REDIS_URL=redis://redis:6379/0
+      # P0：对象存储（S3/MinIO）。未配置 S3_* 时回退本地 UPLOAD_DIR；生产配置齐全但不可用将拒绝启动。
+      - S3_ENDPOINT=${S3_ENDPOINT:-http://minio:9000}
+      - S3_BUCKET=${S3_BUCKET:-procurement-attachments}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
     depends_on:
       postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     # 启动前先执行迁移（prod 禁用 create_all，必须由 Alembic 建表），再启动 uvicorn
     command: >
@@ -42,6 +59,68 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+
+  # P0：真实病毒扫描（ClamAV）。可选服务，可通过 SCANNER_PROVIDER=noop 关闭（仅开发）。
+  clamav:
+    image: clamav/clamav:stable
+    expose:
+      - "3310"
+    environment:
+      # 首次启动需下载病毒库，加快 freshclam 间隔
+      - CLAMD_STARTUP_TIMEOUT=${CLAMD_STARTUP_TIMEOUT:-1800}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 3310), timeout=5).close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  # P0：Redis（限流/幂等/缓存/token，多实例共享）。
+  redis:
+    image: redis:7-alpine
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # P0：对象存储（MinIO，S3 兼容）。可选服务：可通过置空 S3_* 环境变量禁用（后端回退本地 UPLOAD_DIR）。
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      - MINIO_ROOT_USER=${S3_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # P0：MinIO 存储桶初始化（一次性）。等待 minio 就绪后创建 S3_BUCKET（幂等，--ignore-existing）。
+  # 可选：置空 S3_BUCKET 或定位为可选时，该服务可同样被禁用（minio 未启用时后端走本地 UPLOAD_DIR）。
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin} &&
+      mc mb --ignore-existing --quiet local/${S3_BUCKET:-procurement-attachments}
+      "
+    restart: "no"
 
   frontend:
     build:
@@ -61,3 +140,4 @@ services:
 
 volumes:
   pgdata:
+  miniodata:

@@ -10,17 +10,17 @@ import json
 import random
 from datetime import datetime
 
-from fastapi import APIRouter, Body, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..database import get_db
 from .. import config
-from ..invitations import regenerate_invitation
+from ..invitations import regenerate_invitation, resend_invitation, InvitationError
 from ..delivery import (
-    ensure_invitations, deliver_pending_inquiry, delivery_summary,
+    ensure_invitations, delivery_summary,
     generate_deadline_reminders,
 )
 from ..models import (
@@ -48,6 +48,7 @@ router = APIRouter(prefix="/inquiries", tags=["inquiries"])
 # 状态枚举值（对齐前端 InquiryStatus）
 S_PENDING_APPROVAL = "PENDING_APPROVAL"
 S_PENDING_CONFIRM = "PENDING_CONFIRM"
+S_RETURNED = "RETURNED"
 S_INQUIRING = "INQUIRING"
 S_COMPLETED = "COMPLETED"
 S_CANCELLED = "CANCELLED"
@@ -204,6 +205,15 @@ def list_inquiries(
     """
     query = db.query(Inquiry)
     query = filter_visible_inquiries(query, user)
+    # P2 Task 22：selectinload 预加载集合关系，消除列表页 N+1
+    # （items / quotations(含 items) / logs / approval_nodes / invited_suppliers）
+    query = query.options(
+        selectinload(Inquiry.items),
+        selectinload(Inquiry.quotations).selectinload(Quotation.items),
+        selectinload(Inquiry.logs),
+        selectinload(Inquiry.approval_nodes),
+        selectinload(Inquiry.invited_suppliers),
+    )
 
     # 关键词搜索（code / subject / owner_name）
     if keyword:
@@ -228,7 +238,8 @@ def list_inquiries(
     order_col = _SORT_FIELDS.get(sort.split(":")[0]) if sort else Inquiry.updated_at
     direction = sort.split(":", 1)[1] if sort and ":" in sort else "desc"
     col = order_col.asc() if direction == "asc" else order_col.desc()
-    query = query.order_by(col)
+    # Task 7：id 作为稳定次排序键，避免分页边界重复/漏行
+    query = query.order_by(col, Inquiry.id)
 
     # 分页：未传分页参数则返回全量数组（向后兼容）
     if page is None and pageSize is None:
@@ -257,7 +268,13 @@ def list_quotations_by_inquiry(
     if inq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="询价单不存在")
     require_inquiry_access(user, inq)
-    rows = db.query(Quotation).filter(Quotation.inquiry_id == inquiry_id).all()
+    rows = (
+        db.query(Quotation)
+        .options(joinedload(Quotation.items))
+        .filter(Quotation.inquiry_id == inquiry_id)
+        .order_by(Quotation.created_at, Quotation.id)
+        .all()
+    )
     return [quotation_to_schema(q, db) for q in rows]
 
 
@@ -408,15 +425,15 @@ def delete_inquiry(
 @router.post("/{inquiry_id}/send", response_model=InquirySchema)
 def send_inquiry(
     inquiry_id: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(require_permission("INQUIRY_SEND")),
     body: VersionBody = Body(default=None),
 ):
     """发送询价（P1-8 Task 12）：校验状态机 → 为受邀供应商创建投递记录 →
-    触发异步投递任务 → 状态流转 INQUIRING。
+    通过持久化队列（outbox + Celery）触发异步投递 → 状态流转 INQUIRING。
 
     投递结果由 GET /deliveries 反映真实交付状态，不在此处谎报"已全部发送成功"。
+    队列入队幂等（同 inquiry 重复发送被跳过），eager 模式下同步执行保证测试不失真。
     """
     inq = db.query(Inquiry).filter(Inquiry.id == inquiry_id).first()
     if inq is None:
@@ -432,8 +449,9 @@ def send_inquiry(
     inq.updated_at = now_str()
     inq.version += 1
     db.commit()
-    # 触发异步投递（后台任务，独立 session；无渠道则投递记录保持 pending）
-    background_tasks.add_task(deliver_pending_inquiry, inquiry_id)
+    # 通过持久化队列投递邮件（独立事务 outbox；无渠道则投递记录保持 pending）
+    from ..queue_client import enqueue
+    enqueue("email.send", inquiry_id, {"inquiry_id": inquiry_id})
     db.refresh(inq)
     return inquiry_to_schema(inq, db)
 
@@ -566,20 +584,20 @@ def reject_inquiry(
     db: Session = Depends(get_db),
     user: User = Depends(require_permission("INQUIRY_APPROVE")),
 ):
-    """审批驳回：PENDING 节点转 REJECTED + 追加 REJECT 日志（status 沿用 handlers.ts 语义转 PENDING_CONFIRM）"""
+    """审批驳回：status→RETURNED（可重新编辑） + PENDING 节点转 REJECTED + 追加 REJECT 日志"""
     inq = db.query(Inquiry).filter(Inquiry.id == inquiry_id).first()
     if inq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="询价单不存在")
     require_inquiry_access(user, inq)
     _verify_version(inq, body.version)
-    assert_inquiry_transition(inq.status, S_PENDING_CONFIRM)
+    assert_inquiry_transition(inq.status, S_RETURNED)
     ts = now_str()
     for node in inq.approval_nodes:
         if node.status == APV_PENDING:
             node.status = APV_REJECTED
             node.comment = body.comment
             node.time = ts
-    inq.status = S_PENDING_CONFIRM
+    inq.status = S_RETURNED
     comment_suffix = f"：{body.comment}" if body.comment else ""
     _append_log(db, inq, user, LOG_REJECT, f"审批驳回{comment_suffix}", "已驳回")
     inq.updated_at = ts
@@ -651,11 +669,15 @@ def get_inquiry_deliveries(
 def resend_inquiry_delivery(
     inquiry_id: str,
     supplier_id: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(require_permission("INQUIRY_SEND")),
 ):
-    """重新发送给指定供应商（幂等：仅对非已提交供应商；重置为待发送并触发异步投递）。"""
+    """重新发送给指定供应商。
+
+    复用短期存储中仍有效的原始 token 重新投递；若明文 token 已丢失（Redis 重启/进程重启）
+    则自动重签新 token 并投递，保证重发的一定是有效链接。已撤销/已提交/已过期/询价已终结的
+    邀请重发返回结构化错误（409/410），不静默。
+    """
     inq = db.query(Inquiry).filter(Inquiry.id == inquiry_id).first()
     if inq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="询价单不存在")
@@ -666,12 +688,17 @@ def resend_inquiry_delivery(
     ).first()
     if inv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="该供应商的邀请不存在")
-    if inv.status == "submitted":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该供应商已提交报价，不能重发")
-    inv.delivery_status = "pending"
-    inv.delivery_error = None
-    db.commit()
-    background_tasks.add_task(deliver_pending_inquiry, inquiry_id)
+    try:
+        resend_invitation(db, inv, user.id)
+    except InvitationError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail={"error_type": e.error_type, "message": e.message},
+        )
+    # 通过持久化队列重投（显式唯一幂等键，保证每次重发都真正投递）
+    from ..queue_client import enqueue
+    enqueue("email.send", inquiry_id, {"inquiry_id": inquiry_id},
+            idempotency_key=f"resend:{inv.id}:{now_str()}")
     return _delivery_record_to_dict(inv, db)
 
 

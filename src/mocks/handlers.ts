@@ -6,6 +6,7 @@
  */
 import { http, HttpResponse } from 'msw';
 import dayjs from 'dayjs';
+import { paginate } from '@/api/searchApi';
 import { inquiries as mockInquiries } from '@/mock/inquiries';
 import { suppliers as mockSuppliers } from '@/mock/suppliers';
 import { materials as mockMaterials } from '@/mock/materials';
@@ -836,5 +837,171 @@ export const handlers = [
 
   http.delete(`${baseUrl}/portal/attachments/:attachmentId`, () => {
     return HttpResponse.json({ success: true });
+  }),
+
+  // ===== Task 19：全局搜索（服务端分页 + 参数校验）=====
+  http.get(`${baseUrl}/search`, ({ request }) => {
+    const url = new URL(request.url);
+    const keyword = url.searchParams.get('keyword') ?? '';
+    const scope = url.searchParams.get('scope');
+    const rawPage = Number(url.searchParams.get('page') ?? '1');
+    const rawSize = Number(url.searchParams.get('pageSize') ?? '20');
+
+    // 参数严格校验：keyword 必填且长度受限，page>=1，pageSize 1..50
+    if (!keyword.trim()) {
+      return HttpResponse.json(
+        { detail: { msg: 'keyword is required' }, fieldErrors: { keyword: 'keyword is required' } },
+        { status: 422 },
+      );
+    }
+    if (keyword.length > 100) {
+      return HttpResponse.json(
+        { detail: { msg: 'keyword too long' }, fieldErrors: { keyword: 'keyword too long' } },
+        { status: 422 },
+      );
+    }
+    if (!Number.isFinite(rawPage) || rawPage < 1) {
+      return HttpResponse.json(
+        { detail: { msg: 'page must be >= 1' }, fieldErrors: { page: 'page must be >= 1' } },
+        { status: 422 },
+      );
+    }
+    if (!Number.isFinite(rawSize) || rawSize < 1 || rawSize > 50) {
+      return HttpResponse.json(
+        {
+          detail: { msg: 'pageSize must be 1..50' },
+          fieldErrors: { pageSize: 'pageSize must be 1..50' },
+        },
+        { status: 422 },
+      );
+    }
+    const page = rawPage;
+    const pageSize = rawSize;
+    const kw = keyword.toLowerCase();
+
+    const matchInquiry = (i: Inquiry) =>
+      i.code.toLowerCase().includes(kw) || i.subject.toLowerCase().includes(kw);
+    const matchSupplier = (s: Supplier) =>
+      s.name.toLowerCase().includes(kw) || s.code.toLowerCase().includes(kw);
+    const matchMaterial = (m: Material) =>
+      m.name.toLowerCase().includes(kw) ||
+      m.code.toLowerCase().includes(kw) ||
+      m.category.toLowerCase().includes(kw);
+    const matchQuotation = (q: Quotation) =>
+      q.supplierName.toLowerCase().includes(kw) || q.inquiryId.toLowerCase().includes(kw);
+
+    const empty = { items: [], total: 0, page, pageSize };
+    const result = {
+      inquiries:
+        !scope || scope === 'inquiry'
+          ? paginate(inquiries.filter(matchInquiry), page, pageSize)
+          : empty,
+      suppliers:
+        !scope || scope === 'supplier'
+          ? paginate(suppliers.filter(matchSupplier), page, pageSize)
+          : empty,
+      materials:
+        !scope || scope === 'material'
+          ? paginate(materials.filter(matchMaterial), page, pageSize)
+          : empty,
+      quotations:
+        !scope || scope === 'quotation'
+          ? paginate(quotations.filter(matchQuotation), page, pageSize)
+          : empty,
+    };
+    return HttpResponse.json(result);
+  }),
+
+  // ===== Task 19：批量操作（发送 / 提醒 / 导出 / 负责人调整）=====
+  http.post(`${baseUrl}/inquiries/batch/send`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { ids?: string[] };
+    const ids = Array.isArray(body.ids) ? body.ids : [];
+    const results = ids.map((id) => {
+      const inq = inquiries.find((i) => i.id === id);
+      if (!inq) return { id, success: false, reason: 'not_found' };
+      if (inq.status !== InquiryStatus.DRAFT) {
+        return { id, success: false, skipped: true, reason: 'status_not_sendable' };
+      }
+      inquiries = inquiries.map((i) =>
+        i.id === id
+          ? {
+              ...i,
+              status: InquiryStatus.INQUIRING,
+              updatedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+            }
+          : i,
+      );
+      return { id, success: true };
+    });
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success && !r.skipped).length;
+    const skipped = results.filter((r) => r.skipped).length;
+    return HttpResponse.json({ total: results.length, succeeded, failed, skipped, results });
+  }),
+
+  http.post(`${baseUrl}/inquiries/batch/remind`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { ids?: string[] };
+    const ids = Array.isArray(body.ids) ? body.ids : [];
+    const results = ids.map((id) => {
+      const inq = inquiries.find((i) => i.id === id);
+      if (!inq) return { id, success: false, reason: 'not_found' };
+      return { id, success: true };
+    });
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+    return HttpResponse.json({ total: results.length, succeeded, failed, skipped: 0, results });
+  }),
+
+  http.post(`${baseUrl}/inquiries/batch/export`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { ids?: string[]; format?: string };
+    const ids = Array.isArray(body.ids) ? body.ids : [];
+    const format = body.format ?? 'xlsx';
+    const results = ids.map((id) => {
+      const inq = inquiries.find((i) => i.id === id);
+      if (!inq) return { id, success: false, reason: 'not_found' };
+      // 导出任务入队，返回任务 id 与逐条结果
+      return { id, success: true, exportUrl: `${baseUrl}/inquiries/${id}/export?format=${format}` };
+    });
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+    return HttpResponse.json({
+      total: results.length,
+      succeeded,
+      failed,
+      skipped: 0,
+      results,
+      taskId: `task-export-${dayjs().valueOf()}`,
+      queued: true,
+    });
+  }),
+
+  http.post(`${baseUrl}/inquiries/batch/assign`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      ids?: string[];
+      ownerId?: string;
+      ownerName?: string;
+    };
+    const ids = Array.isArray(body.ids) ? body.ids : [];
+    const ownerId = body.ownerId ?? '';
+    const ownerName = body.ownerName ?? '';
+    if (!ownerId || !ownerName) {
+      return HttpResponse.json(
+        { detail: { msg: 'owner required' }, fieldErrors: { ownerId: 'owner required' } },
+        { status: 422 },
+      );
+    }
+    const results = ids.map((id) => {
+      const inq = inquiries.find((i) => i.id === id);
+      if (!inq) return { id, success: false, reason: 'not_found' };
+      inquiries = inquiries.map((i) =>
+        i.id === id
+          ? { ...i, ownerId, ownerName, updatedAt: dayjs().format('YYYY-MM-DD HH:mm:ss') }
+          : i,
+      );
+      return { id, success: true };
+    });
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+    return HttpResponse.json({ total: results.length, succeeded, failed, skipped: 0, results });
   }),
 ];

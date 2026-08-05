@@ -16,10 +16,10 @@ import time
 from typing import Any, Optional
 
 from ..config import (
-    AI_API_KEY, AI_BASE_URL, AI_CIRCUIT_COOLDOWN_SECONDS, AI_CIRCUIT_ENABLED,
+    AI_API_KEY, AI_BASE_URL, AI_BUDGET_MAX_COST, AI_CIRCUIT_COOLDOWN_SECONDS, AI_CIRCUIT_ENABLED,
     AI_CIRCUIT_FAILURE_THRESHOLD, AI_COST_PER_1K_COMPLETION_TOKENS,
     AI_COST_PER_1K_PROMPT_TOKENS, AI_MAX_CONCURRENCY, AI_MAX_RETRIES,
-    AI_MODEL, AI_PROVIDER, AI_TIMEOUT_SECONDS,
+    AI_MODEL, AI_PROVIDER, AI_STRUCTURED_OUTPUT, AI_TIMEOUT_SECONDS,
 )
 from .base import AIProvider, AIProviderError, ProviderResult
 from .local import LocalRuleProvider
@@ -52,6 +52,8 @@ def _build_provider() -> AIProvider:
             circuit_enabled=AI_CIRCUIT_ENABLED,
             cost_per_1k_prompt=AI_COST_PER_1K_PROMPT_TOKENS,
             cost_per_1k_completion=AI_COST_PER_1K_COMPLETION_TOKENS,
+            budget_max_cost=AI_BUDGET_MAX_COST,
+            structured_output=AI_STRUCTURED_OUTPUT,
         )
     return LocalRuleProvider()
 
@@ -75,6 +77,11 @@ def reset_provider() -> None:
     """清空测试注入，回到默认工厂。"""
     global _provider_override
     _provider_override = None
+
+
+def get_ai_provider() -> AIProvider:
+    """FastAPI 依赖注入入口：返回当前 Provider（测试可用 set_provider 覆盖）。"""
+    return get_provider()
 
 
 def _audit(action: str, user_id: str, ok: bool, result: ProviderResult, note: str = "") -> None:
@@ -118,14 +125,21 @@ async def _call_remote(provider: AIProvider, action: str, args: dict) -> Provide
     )
 
 
-async def execute(action: str, args: dict, user_id: str) -> ProviderResult:
-    """统一执行入口：远程优先，失败/熔断回退本地规则，并记录审计日志。"""
+async def execute(
+    action: str, args: dict, user_id: str, provider: Optional[AIProvider] = None
+) -> ProviderResult:
+    """统一执行入口：远程优先，失败/熔断/预算耗尽回退本地规则，并记录审计日志。
+
+    provider 可通过依赖注入传入（测试/替换用）；缺省用全局工厂。
+    """
     start = time.time()
-    provider = get_provider()
+    if provider is None:
+        provider = get_provider()
 
     if isinstance(provider, RemoteLLMProvider):
         if not provider.circuit.allow_request():
             result = await _call_local(action, args)
+            result.degraded = True
             result.latency_ms = int((time.time() - start) * 1000)
             _audit(action, user_id, ok=False, result=result, note="circuit_open_fallback")
             return result
@@ -138,6 +152,7 @@ async def execute(action: str, args: dict, user_id: str) -> ProviderResult:
         except Exception as exc:  # noqa: BLE001 - 触发回退本地
             provider.circuit.record_failure()
             result = await _call_local(action, args)
+            result.degraded = True
             result.latency_ms = int((time.time() - start) * 1000)
             _audit(action, user_id, ok=False, result=result, note=f"remote_fallback:{type(exc).__name__}")
             return result

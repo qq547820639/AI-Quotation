@@ -9,6 +9,7 @@
 - 挂载 7 个路由模块（共 38 端点）
 """
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -27,12 +28,20 @@ from .config import (
     HSTS_MAX_AGE,
     REFERRER_POLICY,
     PERMISSIONS_POLICY,
+    REDIS_URL,
 )
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401  触发所有 ORM 模型注册到 Base.metadata
+from .models import AIUsage, Attachment, OutboxEvent, TaskRecord
+from .config_validation import assert_production_config
 from .logging import get_request_id, new_request_id, set_request_id, setup_logging
+from . import metrics as metrics_mod
+from .redis_client import get_store
 from .seed import init_db
-from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics, portal, ai, users, events
+from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics, portal, ai, users, events, tasks
+
+# 慢请求阈值（毫秒）：超时记录结构化 slow_request 日志（Task 22 慢查询观测）
+SLOW_REQUEST_THRESHOLD_MS = float(os.environ.get("SLOW_REQUEST_THRESHOLD_MS", "1000"))
 
 # 结构化日志配置（P5.3）
 setup_logging()
@@ -41,6 +50,9 @@ logger = logging.getLogger("procurement")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 生产环境启动前强制校验配置：不满足（不安全密钥/无 clamav/Redis 不可用/S3 客户端不可用）
+    # 则抛 RuntimeError 拒绝启动，禁止生产静默降级到内存实现或本地附件存储。
+    assert_production_config()
     # 启动：仅 dev/test 自动建表（prod 依赖 Alembic 迁移）
     if DB_AUTO_CREATE:
         Base.metadata.create_all(bind=engine)
@@ -49,6 +61,14 @@ async def lifespan(app: FastAPI):
         init_db(db)
     finally:
         db.close()
+    # 启动钩子：补齐未 dispatched 的 outbox 事件（broker 短暂断开/上一次进程重启后未入队的任务）
+    try:
+        from .queue_client import dispatch_outbox
+        dispatched = dispatch_outbox()
+        if dispatched:
+            logger.info("outbox 启动补齐投递", extra={"extra_fields": {"dispatched": dispatched}})
+    except Exception:  # noqa: BLE001 - outbox 补齐失败不阻塞启动
+        logger.exception("outbox_dispatch_on_startup_failed")
     logger.info("FastAPI 启动完成，38 端点就绪")
     yield
 
@@ -71,18 +91,28 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """请求日志中间件：生成 request_id，注入响应头，记录结构化访问日志（脱敏）"""
+    """请求日志中间件：生成 request_id，注入响应头，记录结构化访问日志（脱敏）并累计指标"""
     start = time.time()
     request_id = new_request_id()
     set_request_id(request_id)
     request.state.request_id = request_id
+    metrics_mod.request_total()
+    status_code = 500
     try:
         response = await call_next(request)
+        status_code = response.status_code
     except Exception:
-        # 异常交由全局异常处理器记录与返回，这里只负责记录耗时异常
+        # 未捕获异常：累计错误指标，交由全局异常处理器记录与返回
+        metrics_mod.request_error_total()
         raise
+    if status_code >= 400:
+        metrics_mod.request_error_total()
     duration_ms = (time.time() - start) * 1000
+    metrics_mod.record_request_duration_ms(duration_ms)
     response.headers["X-Request-Id"] = request_id
+    # 从 request.state 读取认证上下文（若已由 get_current_user 注入）；拿不到则留空
+    user_id = getattr(request.state, "user_id", "") or ""
+    organization = getattr(request.state, "organization", "") or ""
     logger.info(
         "http_request",
         extra={
@@ -90,11 +120,30 @@ async def log_requests(request: Request, call_next):
                 "request_id": request_id,
                 "method": request.method,
                 "path": request.url.path,
-                "status": response.status_code,
+                "status": status_code,
                 "duration_ms": round(duration_ms, 1),
+                "organization_id": organization,
+                "user_id": user_id,
             }
         },
     )
+    # Task 22：慢请求结构化日志（超阈值），用于定位后端慢查询/慢接口
+    if duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+        logger.warning(
+            "slow_request",
+            extra={
+                "extra_fields": {
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": status_code,
+                    "duration_ms": round(duration_ms, 1),
+                    "threshold_ms": SLOW_REQUEST_THRESHOLD_MS,
+                    "organization_id": organization,
+                    "user_id": user_id,
+                }
+            },
+        )
     return response
 
 
@@ -143,24 +192,64 @@ def _error_type_for_status(status_code: int) -> str:
     return "internal_error"
 
 
+def _extract_code_and_message(detail, status_code: int) -> tuple[str, str]:
+    """从 HTTPException.detail 中提取机器错误码与用户可读消息。
+
+    - detail 为 dict（结构化，如 {"error_type": ..., "message": ...}）：优先取出。
+    - detail 为 str：作为可读消息，错误码由状态码映射。
+    """
+    if isinstance(detail, dict):
+        code = detail.get("error_type") or detail.get("code") or _error_type_for_status(status_code)
+        message = detail.get("message") or detail.get("msg") or "请求失败"
+        return str(code), str(message)
+    if isinstance(detail, str):
+        return _error_type_for_status(status_code), detail
+    return _error_type_for_status(status_code), "请求失败"
+
+
+def _field_errors_from_errors(errors: list) -> dict:
+    """将 Pydantic 校验错误列表聚合为 {字段路径: 用户可读消息}。"""
+    field_errors: dict = {}
+    for err in errors:
+        loc = err.get("loc", [])
+        # 去掉开头的 "body" 定位段，取字段名
+        field = ".".join(str(x) for x in loc if x != "body")
+        if not field:
+            field = "_"
+        msg = err.get("msg") or "参数校验失败"
+        field_errors[field] = msg
+    return field_errors
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """HTTPException 统一处理：保留原状态码与 detail，附加 request_id / error_type"""
+    """HTTPException 统一处理：统一错误格式（code/message/retryable/request_id/冲突详情）。
+
+    保留既有 detail / error_type 字段以向后兼容；新增结构化 code / message / retryable。
+    """
     rid = _request_id(request)
+    code, message = _extract_code_and_message(exc.detail, exc.status_code)
+    content: dict = {
+        "detail": exc.detail,
+        "request_id": rid,
+        "error_type": _error_type_for_status(exc.status_code),
+        "code": code,
+        "message": message,
+        "retryable": exc.status_code >= 500,
+    }
+    # Task 24：冲突详情（409）独立暴露，便于前端展示可恢复冲突信息
+    if exc.status_code == 409:
+        content["conflict"] = exc.detail if isinstance(exc.detail, dict) else {"message": message}
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "detail": exc.detail,
-            "request_id": rid,
-            "error_type": _error_type_for_status(exc.status_code),
-        },
+        content=content,
         headers={"X-Request-Id": rid},
     )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """请求体校验失败（422）：结构化返回，detail 保持默认错误列表"""
+    """请求体校验失败（422）：结构化返回，detail 保持默认错误列表 + 字段级 fieldErrors"""
     rid = _request_id(request)
     errors = exc.errors()
     # Pydantic v2 的 ctx.error 可能是非可序列化对象（如 ValueError），转为字符串
@@ -174,6 +263,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "detail": errors,
             "request_id": rid,
             "error_type": "validation_error",
+            "code": "validation_error",
+            "message": "参数校验失败",
+            "retryable": False,
+            "fieldErrors": _field_errors_from_errors(errors),
         },
         headers={"X-Request-Id": rid},
     )
@@ -216,11 +309,54 @@ app.include_router(portal.router, prefix=API_PREFIX)
 app.include_router(ai.router, prefix=API_PREFIX)  # AI 服务（P1-9 Task 14）
 app.include_router(users.router, prefix=API_PREFIX)  # 用户级表格偏好（P2-12 Task 17）
 app.include_router(events.router, prefix=API_PREFIX)  # SSE 实时事件（P2-12 Task 17）
+app.include_router(tasks.router, prefix=API_PREFIX)  # 持久化任务队列管理（P1 可靠性）
 
 
 @app.get("/")
 def root():
     return {"name": "企业采购自动询价 Web 系统 API", "docs": "/docs"}
+
+
+@app.get("/api/metrics")
+def metrics_endpoint():
+    """轻量级进程内指标（JSON）：request_total / request_error_total / 请求延迟直方图 /
+    队列积压 / 任务失败 / AI 调用 / 扫描失败等。
+
+    不依赖 prometheus_client，避免新增依赖；供运维/监控抓取。
+    """
+    _refresh_db_derived_metrics()
+    return metrics_mod.get_metrics()
+
+
+def _refresh_db_derived_metrics() -> None:
+    """从 DB 计算瞬时指标并写入进程内 metrics（事务任务/队列可靠性派生统计）。
+
+    - queue_backlog_gauge：pending 任务 + pending outbox 事件数（队列积压）
+    - task_fail_gauge：status 为 failed / permanent_failure 的任务数（任务失败）
+    - ai_call_gauge：ai_usage 记录数（AI 调用）
+    - scan_fail_gauge：attachments scan_status 为 error / infected 的数量（扫描失败）
+
+    DB 瞬时不可用时保留上次已写入的瞬时值并记录 warning（不使 /api/metrics 因 DB 故障返回 500）。
+    """
+    try:
+        db = SessionLocal()
+        try:
+            pending_tasks = db.query(TaskRecord).filter(TaskRecord.status == "pending").count()
+            pending_outbox = db.query(OutboxEvent).filter(OutboxEvent.status == "pending").count()
+            metrics_mod.set_metric("queue_backlog_gauge", pending_tasks + pending_outbox)
+            failed_tasks = db.query(TaskRecord).filter(
+                TaskRecord.status.in_(["failed", "permanent_failure"])
+            ).count()
+            metrics_mod.set_metric("task_fail_gauge", failed_tasks)
+            metrics_mod.set_metric("ai_call_gauge", db.query(AIUsage).count())
+            scan_fail = db.query(Attachment).filter(
+                Attachment.scan_status.in_(["error", "infected"])
+            ).count()
+            metrics_mod.set_metric("scan_fail_gauge", scan_fail)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - metrics 端点韧性：DB 故障不阻断指标抓取
+        logger.warning("metrics_db_derived_refresh_failed")
 
 
 @app.get("/api/health")
@@ -251,7 +387,7 @@ def health_check():
 
 @app.get("/api/ready")
 def ready_check():
-    """Readiness 探针：DB 连通 + 关键表（users/inquiries）可查询才算就绪，否则返回 503。
+    """Readiness 探针：DB 连通 + 关键表（users/inquiries）可查询 +（若配置）Redis 连通才算就绪，否则返回 503。
 
     用于编排依赖（如 compose 中 frontend 等待 backend 就绪、负载均衡摘除流量）。
     """
@@ -267,4 +403,15 @@ def ready_check():
             content={"status": "not_ready", "db": "disconnected"},
         )
     db.close()
-    return {"status": "ready", "db": "connected"}
+
+    # 若配置了 Redis，则必须可用才视为就绪；未配置（dev/test 内存回退）不阻塞就绪。
+    if REDIS_URL:
+        try:
+            get_store().ping()
+        except Exception:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "db": "connected", "redis": "disconnected"},
+            )
+
+    return {"status": "ready", "db": "connected", "redis": "connected" if REDIS_URL else "not_configured"}

@@ -106,7 +106,13 @@ describe('重试策略：非幂等请求不自动重试', () => {
     client.defaults.adapter = async (config) => {
       count += 1;
       throw Object.assign(new Error('HTTP 500'), {
-        response: { status: 500, data: { message: '服务器内部错误' }, statusText: '', headers: {}, config },
+        response: {
+          status: 500,
+          data: { message: '服务器内部错误' },
+          statusText: '',
+          headers: {},
+          config,
+        },
       });
     };
     await expect(client.post('/submit', {})).rejects.toThrow();
@@ -118,9 +124,11 @@ describe('重试策略：非幂等请求不自动重试', () => {
 
 describe('parseApiError 统一错误解析', () => {
   it('401 → UNAUTHORIZED，文案国际化', () => {
-    const err = parseApiError(Object.assign(new Error('401'), {
-      response: { status: 401, data: {}, statusText: '', headers: {}, config: {} },
-    }));
+    const err = parseApiError(
+      Object.assign(new Error('401'), {
+        response: { status: 401, data: {}, statusText: '', headers: {}, config: {} },
+      }),
+    );
     expect(err).toBeInstanceOf(ApiError);
     expect(err.code).toBe(ERROR_CODES.UNAUTHORIZED);
     expect(err.message).toBe(i18n.t('errors.unauthorized'));
@@ -128,40 +136,68 @@ describe('parseApiError 统一错误解析', () => {
   });
 
   it('403 → FORBIDDEN', () => {
-    const err = parseApiError(Object.assign(new Error('403'), {
-      response: { status: 403, data: {}, statusText: '', headers: {}, config: {} },
-    }));
+    const err = parseApiError(
+      Object.assign(new Error('403'), {
+        response: { status: 403, data: {}, statusText: '', headers: {}, config: {} },
+      }),
+    );
     expect(err.code).toBe(ERROR_CODES.FORBIDDEN);
     expect(err.message).toBe(i18n.t('errors.forbidden'));
   });
 
   it('409 → CONFLICT，提示数据冲突', () => {
-    const err = parseApiError(Object.assign(new Error('409'), {
-      response: { status: 409, data: {}, statusText: '', headers: {}, config: {} },
-    }));
+    const err = parseApiError(
+      Object.assign(new Error('409'), {
+        response: { status: 409, data: {}, statusText: '', headers: {}, config: {} },
+      }),
+    );
     expect(err.code).toBe(ERROR_CODES.CONFLICT);
     expect(err.message).toBe(i18n.t('errors.conflict'));
   });
 
   it('422 → VALIDATION，携带 fieldErrors', () => {
-    const err = parseApiError(Object.assign(new Error('422'), {
-      response: { status: 422, data: { fieldErrors: { name: '必填' } }, statusText: '', headers: {}, config: {} },
-    }));
+    const err = parseApiError(
+      Object.assign(new Error('422'), {
+        response: {
+          status: 422,
+          data: { fieldErrors: { name: '必填' } },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
     expect(err.code).toBe(ERROR_CODES.VALIDATION);
     expect(err.fieldErrors).toEqual({ name: '必填' });
   });
 
   it('业务错误码 → 映射为 i18n 文案', () => {
-    const err = parseApiError(Object.assign(new Error('409'), {
-      response: { status: 409, data: { code: 'duplicate_code' }, statusText: '', headers: {}, config: {} },
-    }));
+    const err = parseApiError(
+      Object.assign(new Error('409'), {
+        response: {
+          status: 409,
+          data: { code: 'duplicate_code' },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
     expect(err.message).toBe(i18n.t('errors.duplicateCode'));
   });
 
   it('5xx → retryable=true', () => {
-    const err = parseApiError(Object.assign(new Error('500'), {
-      response: { status: 500, data: { message: '服务器内部错误' }, statusText: '', headers: {}, config: {} },
-    }));
+    const err = parseApiError(
+      Object.assign(new Error('500'), {
+        response: {
+          status: 500,
+          data: { message: '服务器内部错误' },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
     expect(err.retryable).toBe(true);
   });
 
@@ -176,6 +212,109 @@ describe('parseApiError 统一错误解析', () => {
     const err = parseApiError(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }));
     expect(err.code).toBe(ERROR_CODES.TIMEOUT);
     expect(err.message).toBe(i18n.t('errors.timeout'));
+  });
+});
+
+describe('parseApiError 消费后端结构化错误（Task 24）', () => {
+  it('后端显式 retryable=false 覆盖状态码推断（即使 500 也不可重试）', () => {
+    const err = parseApiError(
+      Object.assign(new Error('500'), {
+        response: {
+          status: 500,
+          data: { code: 'internal_error', message: '业务拒绝', retryable: false },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
+    expect(err.retryable).toBe(false);
+    expect(err.code).toBe('internal_error');
+  });
+
+  it('后端 message 作为用户可读文案（business 错误）', () => {
+    const err = parseApiError(
+      Object.assign(new Error('400'), {
+        response: {
+          status: 400,
+          data: { code: 'material_locked', message: '物料已锁定，无法修改', retryable: false },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
+    expect(err.code).toBe('material_locked');
+    expect(err.message).toBe('物料已锁定，无法修改');
+  });
+
+  it('request_id 从 body 或 X-Request-Id 头读取', () => {
+    const fromBody = parseApiError(
+      Object.assign(new Error('409'), {
+        response: {
+          status: 409,
+          data: { code: 'conflict', request_id: 'req-abc-123', retryable: false },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
+    expect(fromBody.requestId).toBe('req-abc-123');
+    const fromHeader = parseApiError(
+      Object.assign(new Error('409'), {
+        response: {
+          status: 409,
+          data: { code: 'conflict', retryable: false },
+          statusText: '',
+          headers: { 'x-request-id': 'req-header-456' },
+          config: {},
+        },
+      }),
+    );
+    expect(fromHeader.requestId).toBe('req-header-456');
+  });
+
+  it('409 消费后端 message 与 conflict 详情（可恢复冲突提示）', () => {
+    const err = parseApiError(
+      Object.assign(new Error('409'), {
+        response: {
+          status: 409,
+          data: {
+            code: 'conflict',
+            message: '数据已被他人修改',
+            retryable: false,
+            conflict: { currentVersion: 3, expectedVersion: 1 },
+          },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
+    expect(err.code).toBe(ERROR_CODES.CONFLICT);
+    expect(err.message).toBe('数据已被他人修改');
+    expect(err.conflict).toEqual({ currentVersion: 3, expectedVersion: 1 });
+  });
+
+  it('422 消费后端 fieldErrors', () => {
+    const err = parseApiError(
+      Object.assign(new Error('422'), {
+        response: {
+          status: 422,
+          data: {
+            code: 'validation_error',
+            message: '参数校验失败',
+            retryable: false,
+            fieldErrors: { subject: '标题不能为空' },
+          },
+          statusText: '',
+          headers: {},
+          config: {},
+        },
+      }),
+    );
+    expect(err.fieldErrors).toEqual({ subject: '标题不能为空' });
   });
 });
 
@@ -197,12 +336,26 @@ describe('重复请求合并（Task 8.2）', () => {
 
   it('并发相同 GET 合并为同一请求，只调用一次基础 adapter', async () => {
     const seen: string[] = [];
-    const base = hangingAdapter((c) => seen.push((c.url ?? '') + ':' + JSON.stringify(c.params ?? {})));
+    const base = hangingAdapter((c) =>
+      seen.push((c.url ?? '') + ':' + JSON.stringify(c.params ?? {})),
+    );
     const dedup = createDedupAdapter(base);
     const [a, b, c] = await Promise.all([
-      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
-      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
-      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
+      dedup({
+        method: 'GET',
+        url: '/materials',
+        params: { page: 1 },
+      } as InternalAxiosRequestConfig),
+      dedup({
+        method: 'GET',
+        url: '/materials',
+        params: { page: 1 },
+      } as InternalAxiosRequestConfig),
+      dedup({
+        method: 'GET',
+        url: '/materials',
+        params: { page: 1 },
+      } as InternalAxiosRequestConfig),
     ]);
     expect(seen).toHaveLength(1);
     expect(a.data).toEqual({ ok: true });
@@ -215,8 +368,16 @@ describe('重复请求合并（Task 8.2）', () => {
     const base = hangingAdapter((c) => seen.push((c.url ?? '') + ':' + (c.method ?? '')));
     const dedup = createDedupAdapter(base);
     await Promise.all([
-      dedup({ method: 'GET', url: '/materials', params: { page: 1 } } as InternalAxiosRequestConfig),
-      dedup({ method: 'GET', url: '/materials', params: { page: 2 } } as InternalAxiosRequestConfig),
+      dedup({
+        method: 'GET',
+        url: '/materials',
+        params: { page: 1 },
+      } as InternalAxiosRequestConfig),
+      dedup({
+        method: 'GET',
+        url: '/materials',
+        params: { page: 2 },
+      } as InternalAxiosRequestConfig),
       dedup({ method: 'POST', url: '/materials' } as InternalAxiosRequestConfig),
     ]);
     // GET 不同参数 → 2 次；POST 非幂等 → 1 次
@@ -229,6 +390,27 @@ describe('重复请求合并（Task 8.2）', () => {
     const dedup = createDedupAdapter(base);
     await dedup({ method: 'GET', url: '/materials' } as InternalAxiosRequestConfig);
     await dedup({ method: 'GET', url: '/materials' } as InternalAxiosRequestConfig);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('携带 signal 的 GET 跳过去重（Task 23：允许请求取消，避免旧请求覆盖新结果）', async () => {
+    const seen: string[] = [];
+    const base = hangingAdapter((c) => seen.push(c.url ?? ''));
+    const dedup = createDedupAdapter(base);
+    const controller = new AbortController();
+    await Promise.all([
+      dedup({
+        method: 'GET',
+        url: '/materials',
+        signal: controller.signal,
+      } as unknown as InternalAxiosRequestConfig),
+      dedup({
+        method: 'GET',
+        url: '/materials',
+        signal: controller.signal,
+      } as unknown as InternalAxiosRequestConfig),
+    ]);
+    // 两个带 signal 的请求都独立发起（可分别取消），不合并
     expect(seen).toHaveLength(2);
   });
 });

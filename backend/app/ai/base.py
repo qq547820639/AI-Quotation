@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 
@@ -37,6 +38,18 @@ class ProviderResult:
     anomalyCount: Optional[int] = None
     # compare-conclusion
     conclusion: Optional[str] = None
+    # 可解释性（P1 深化 Task 13）
+    prompt_version: Optional[str] = None  # 提示词版本号
+    data_basis: Optional[str] = None  # 使用的数据依据说明
+    references: list = field(default_factory=list)  # 关联的报价行/供应商
+    anomalies: list = field(default_factory=list)  # 命中的异常字段
+    risk: Optional[str] = None  # 风险说明
+    degraded: bool = False  # 是否降级（远程失败回退本地）
+    generated_at: Optional[str] = None  # 生成时间（ISO）
+
+    def __post_init__(self) -> None:
+        if self.generated_at is None:
+            self.generated_at = datetime.now(timezone.utc).isoformat()
 
     def as_extra(self) -> dict[str, Any]:
         """供审计日志 extra_fields 使用的统计字段。"""
@@ -48,6 +61,8 @@ class ProviderResult:
             "ai_completion_tokens": self.completion_tokens,
             "ai_cost": round(self.cost, 6),
             "ai_latency_ms": self.latency_ms,
+            "ai_prompt_version": self.prompt_version,
+            "ai_degraded": self.degraded,
         }
 
 

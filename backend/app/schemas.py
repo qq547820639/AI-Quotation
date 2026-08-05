@@ -330,6 +330,13 @@ class LoginParams(BaseModel):
     password: Optional[str] = None  # 生产模式必填；演示模式可省略
 
 
+class ChangePasswordParams(BaseModel):
+    """修改密码请求体：须提供当前密码与两次新密码"""
+    currentPassword: str
+    newPassword: str
+    confirmPassword: Optional[str] = None
+
+
 class LoginResult(BaseModel):
     user: UserSchema
     token: str
@@ -361,6 +368,14 @@ class SessionInfo(BaseModel):
 class PaginatedInquiriesSchema(BaseModel):
     """询价列表服务端分页响应（P2-12 Task 17）"""
     items: List[InquirySchema]
+    total: int
+    page: int
+    pageSize: int
+
+
+class PaginatedQuotationsSchema(BaseModel):
+    """报价列表服务端分页响应（P2 Task 22：分页结构与其他列表统一）"""
+    items: List[QuotationSchema]
     total: int
     page: int
     pageSize: int

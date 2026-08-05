@@ -4,9 +4,13 @@
  */
 import { InquiryStatus } from '@/types';
 
-/** 仅草稿/待发送状态可编辑 */
+/** 草稿/待发送/已驳回可编辑（驳回后可重新编辑并再次提交审批） */
 export function isEditable(status: InquiryStatus): boolean {
-  return status === InquiryStatus.DRAFT || status === InquiryStatus.PENDING_SEND;
+  return (
+    status === InquiryStatus.DRAFT ||
+    status === InquiryStatus.PENDING_SEND ||
+    status === InquiryStatus.RETURNED
+  );
 }
 
 /** 非草稿/已完成/已取消状态可取消 */
