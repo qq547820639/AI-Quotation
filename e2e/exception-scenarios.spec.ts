@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { DEMO_PASSWORD } from './helpers';
 
 /**
  * E2E：异常场景（Task 11）
@@ -15,7 +16,7 @@ const PURCHASER = '李明辉'; // u-1 采购人员，无 INQUIRY_APPROVE / SETTI
 const SUP1 = '上海恒远工业设备有限公司'; // sup-1，初始 COOPERATING
 
 /** 登录（选中用户 + 任意密码） */
-async function login(page: Page, name: string, password = '123456') {
+async function login(page: Page, name: string, password = DEMO_PASSWORD) {
   await page.goto('/login');
   await page.locator('.ant-select-selector').click();
   await page.locator('.ant-select-item-option').filter({ hasText: name }).click();

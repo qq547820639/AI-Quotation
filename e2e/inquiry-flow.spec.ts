@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEMO_PASSWORD } from './helpers';
 
 /**
  * E2E：询价全流程（G4 重写：强化断言 + 新增创建页用例）
@@ -14,7 +15,7 @@ test.describe('询价全流程', () => {
     await page.goto('/login');
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
   });

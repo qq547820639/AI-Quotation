@@ -259,6 +259,9 @@ jobs:
           curl -sf http://localhost:80
       - name: Run Playwright E2E (real frontend/backend integration)
         timeout-minutes: 30
+        env:
+          # E2E 登录必须与后端种子用户密码一致（compose 已注入强 DEMO_USER_PASSWORD）。
+          DEMO_USER_PASSWORD: ${{ format('ci-e2e-{0}-strong-password', github.run_id) }}
         run: npx playwright test --reporter=html,list
       - name: Upload Playwright report on failure
         if: failure()

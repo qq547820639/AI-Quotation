@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEMO_PASSWORD } from './helpers';
 
 /**
  * E2E：国际化与主题切换（G4 重写：消除空跑与恒真式，具体文案断言）
@@ -10,7 +11,7 @@ test.describe('i18n 与主题', () => {
     await page.goto('/login');
     await page.locator('.ant-select-selector').click();
     await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill('123456');
+    await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await expect(page).toHaveURL(/\/dashboard/);
   });

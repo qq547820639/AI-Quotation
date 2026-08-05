@@ -9,8 +9,14 @@ import { expect, type Page } from '@playwright/test';
 export const SUPPLIER_A = '苏州联创自动化科技有限公司'; // sup-2
 export const SUPPLIER_B = '杭州启明供应链有限公司'; // sup-5
 
+/**
+ * 演示账号密码。生产/CI 形态下种子用户的密码由 DEMO_USER_PASSWORD 注入（强随机值），
+ * 本地开发默认 123456。E2E 必须使用与后端种子一致的值，否则登录断言会失败。
+ */
+export const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || '123456';
+
 /** 登录（选中用户 + 任意密码），登录本身直接断言跳转 */
-export async function login(page: Page, name: string, password = '123456') {
+export async function login(page: Page, name: string, password = DEMO_PASSWORD) {
   await page.goto('/login');
   await page.locator('.ant-select-selector').click();
   await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
