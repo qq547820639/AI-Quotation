@@ -1,5 +1,8 @@
 # 后端：Python 3.11 + uvicorn
-FROM python:3.11-slim
+# 基础镜像固定为 Debian 12 bookworm（LTS 稳定/安全支持线）。不要退化为 python:3.11-slim ——
+# 该浮动 tag 现指向全新的 Debian 13 trixie，其大量 OS 包存在尚未被上游修复的
+# HIGH/CRITICAL CVE（apt upgrade 也无新版本可升），会被 Trivy 镜像扫描阻断门禁。
+FROM python:3.11-slim-bookworm
 WORKDIR /app
 # 打满基础镜像的 OS 安全补丁，降低 Trivy 镜像扫描的 HIGH/CRITICAL OS 包 CVE 数量。
 # 基础镜像为浮动 tag，上游会不定期更新；显式 apt upgrade 确保构建时使用最新已修复包。

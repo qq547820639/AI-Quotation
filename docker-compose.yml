@@ -108,8 +108,8 @@ services:
       test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 3310), timeout=10).close()"]
       interval: 15s
       timeout: 10s
-      retries: 40
-      start_period: 480s
+      retries: 60
+      start_period: 1200s
     restart: unless-stopped
 
   # P0：Redis（限流/幂等/缓存/token，多实例共享）。
