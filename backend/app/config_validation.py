@@ -31,7 +31,8 @@ _MIN_SECRET_KEY_LENGTH = 32
 
 # 生产环境禁止使用演示模式（APP_DEMO_MODE=true 时快捷登录，不校验密码）
 # 种子逻辑（seed.py）以 DEMO_USER_PASSWORD 哈希创建/回填用户密码，生产必须替换默认演示密码。
-_DEFAULT_DEMO_PASSWORD = "123456"
+# nosec B105：该常量仅用于检测"生产仍使用默认演示密码"并拒绝启动，不是被使用的真实密码。
+_DEFAULT_DEMO_PASSWORD = "123456"  # nosec B105
 
 # 仅包含本地开发默认项（localhost/127.0.0.1）的 CORS 白名单在产线视为未配置
 _LOCAL_HOST_MARKERS = ("localhost", "127.0.0.1")
@@ -113,7 +114,8 @@ def _public_url_ok() -> tuple[bool, str | None]:
         return False, f"生产环境 PUBLIC_APP_URL 必须为 HTTPS（当前为 {scheme}）"
     host = url.split("://", 1)[1].split("/", 1)[0]
     hostname = host.split(":")[0].lower()
-    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+    # nosec B104：此处仅做主机名字符串比对，并非绑定所有网卡；绑定行为由 uvicorn 配置控制。
+    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):  # nosec B104
         return False, "生产环境 PUBLIC_APP_URL 禁止使用 localhost/本机回环地址"
     return True, None
 

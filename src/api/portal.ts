@@ -201,11 +201,17 @@ export interface PortalAttachment {
   url: string;
   size: number;
   uploadTime: string;
+  /** 附件安全扫描状态（缺失/旧数据时为 undefined） */
+  scanStatus?: 'pending' | 'scanning' | 'clean' | 'infected' | 'error';
+  /** 扫描结果说明（已脱敏） */
+  scanResult?: string;
 }
 
 export interface SaveQuotationDraftPayload {
   items: Array<{
     inquiryItemId: string;
+    /** 服务端报价明细 ID（保存草稿后回填，可空） */
+    id?: string;
     unitPrice: number;
     taxRate: number;
     moq: number | null;

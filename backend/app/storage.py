@@ -6,12 +6,15 @@
 - S3Storage：S3 兼容对象存储（通过 boto3，环境变量配置）
 - 工厂函数 get_storage() 根据环境变量自动选择
 """
+import logging
 import os
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Tuple
 from .config import UPLOAD_DIR, ALLOWED_UPLOAD_EXTENSIONS, S3_REQUIRED
+
+logger = logging.getLogger(__name__)
 
 # S3 配置：环境变量
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
@@ -132,7 +135,7 @@ class LocalStorage(Storage):
                     candidate.unlink()
                     deleted = True
                 except Exception:
-                    pass
+                    logger.warning("删除本地附件文件失败: %s", candidate, exc_info=True)
         return deleted
 
     def read(self, attachment_id: str) -> Optional[bytes]:
@@ -209,11 +212,11 @@ class S3Storage(Storage):
                 ),
             )
         except ImportError:
-            # boto3 未安装，回退到不初始化
-            pass
+            # boto3 未安装，回退到不初始化，后续 fail-closed
+            logger.warning("boto3 未安装，S3 存储不可用")
         except Exception:
             # 配置错误，不初始化，后续 fail-closed
-            pass
+            logger.warning("S3 客户端初始化失败，后续 fail-closed", exc_info=True)
         self._initialized = True
 
     @staticmethod
@@ -311,7 +314,7 @@ class S3Storage(Storage):
                 self._client.delete_object(Bucket=self.bucket, Key=key)
                 deleted_any = True
             except Exception:
-                pass
+                logger.debug("删除 S3 对象失败（尝试扩展名 %s）: %s", ext, attachment_id, exc_info=True)
         return deleted_any
 
     def read(self, attachment_id: str) -> Optional[bytes]:
@@ -324,6 +327,7 @@ class S3Storage(Storage):
                 resp = self._client.get_object(Bucket=self.bucket, Key=key)
                 return resp["Body"].read()
             except Exception:
+                logger.debug("读取 S3 对象失败（尝试扩展名 %s）: %s", ext, attachment_id, exc_info=True)
                 continue
         return None
 

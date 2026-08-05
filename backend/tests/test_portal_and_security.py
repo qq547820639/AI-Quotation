@@ -438,3 +438,61 @@ def test_attachment_pending_and_error_not_downloadable(client):
     for st, aid in ids.items():
         dl = client.get(f"/api/portal/attachments/{aid}/download", headers=H5)
         assert dl.status_code == 403, f"{st} 状态应禁止下载"
+
+
+def test_quotation_item_attachment_id_contract(client):
+    """P0 T2：报价明细附件 ID 契约。
+
+    - 草稿返回的每条明细同时携带 quotationItemId（id）与 inquiryItemId
+    - owner_type=quotation_item 上传必须传真实 quotationItemId
+    - 用 inquiryItemId 冒充 quotationItemId 必须被拒绝（403/404）
+    - 跨供应商（另一邀请）用同一 quotationItemId 上传必须被拒绝
+    """
+    # 用 H5（inq-3/sup-5，保持有效未提交）承载主流程；H3（inq-3/sup-2，同询价不同供应商）用于跨供应商越权。
+    # 注意：不能复用 H4 —— 同模块早前 test_save_draft_and_submit_recomputes_amount 已提交其邀请，此测试会收到 410。
+    # 1) 保存草稿，确认明细同时返回两个 ID
+    draft = client.put("/api/portal/quotations/draft", headers=H5, json={
+        "items": [{"inquiryItemId": "item-inq-3-1", "unitPrice": 4000, "taxRate": 0.13, "deliveryDays": 10}]})
+    assert draft.status_code == 200
+    d = draft.json()
+    assert d["status"] == "DRAFT"
+    assert len(d["items"]) == 1
+    item = d["items"][0]
+    assert item["id"], "草稿明细应返回 quotationItemId(id)"
+    assert item["inquiryItemId"] == "item-inq-3-1"
+    qitem_id = item["id"]
+    assert qitem_id != "item-inq-3-1", "quotationItemId 不得等于 inquiryItemId"
+
+    # 2) 用真实 quotationItemId 上传 quotation_item 附件 → 成功
+    files = {"file": ("spec.pdf", b"%PDF-1.4 test", "application/pdf")}
+    ok = client.post(
+        f"/api/portal/attachments?owner_type=quotation_item&owner_id={qitem_id}",
+        headers=H5, files=files)
+    assert ok.status_code == 200, ok.text
+    att = ok.json()
+    assert att["id"]
+    # 上传后即返回扫描状态字段（P0 T3 契约）
+    assert "scanStatus" in att
+    assert "scanResult" in att
+
+    # 3) 用 inquiryItemId 冒充 quotationItemId → 必须拒绝
+    bad = client.post(
+        f"/api/portal/attachments?owner_type=quotation_item&owner_id=item-inq-3-1",
+        headers=H5, files=files)
+    assert bad.status_code in (403, 404), f"用 inquiryItemId 冒充应被拒绝，实际 {bad.status_code}"
+
+    # 4) 跨供应商（不同邀请）用该 quotationItemId 上传 → 必须拒绝
+    cross = client.post(
+        f"/api/portal/attachments?owner_type=quotation_item&owner_id={qitem_id}",
+        headers=H3, files=files)
+    assert cross.status_code in (403, 404), f"跨供应商越权应被拒绝，实际 {cross.status_code}"
+
+    # 5) 无效 owner id → 必须拒绝
+    invalid = client.post(
+        "/api/portal/attachments?owner_type=quotation_item&owner_id=not-exist",
+        headers=H5, files=files)
+    assert invalid.status_code in (403, 404)
+
+    # 6) 删除附件（仅归属该邀请）
+    rm = client.delete(f"/api/portal/attachments/{att['id']}", headers=H5)
+    assert rm.status_code == 200

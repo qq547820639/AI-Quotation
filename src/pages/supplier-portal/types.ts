@@ -11,11 +11,20 @@ export interface PortalAttachment {
   url: string;
   size: number;
   uploadTime: string;
+  /** 附件安全扫描状态（缺失/旧数据时为 undefined）：pending/scanning/clean/infected/error */
+  scanStatus?: PortalScanStatus;
+  /** 扫描结果说明（面向用户，已脱敏，不暴露内部细节） */
+  scanResult?: string;
 }
+
+/** 附件安全扫描状态 */
+export type PortalScanStatus = 'pending' | 'scanning' | 'clean' | 'infected' | 'error';
 
 /** 报价明细表单值 */
 export interface QuotationFormItem {
   inquiryItemId: string;
+  /** 服务端报价明细 ID；未保存草稿前为 undefined（上传前需先保存草稿取得该 ID） */
+  quotationItemId?: string;
   unitPrice: number | undefined;
   taxRate: number;
   moq: number | undefined;
@@ -61,6 +70,7 @@ export const DELIVERY_DAYS_OPTIONS = [7, 10, 15, 20, 30, 45, 60];
 export function createEmptyItem(inquiryItem: PortalInquiryItem): QuotationFormItem {
   return {
     inquiryItemId: inquiryItem.id,
+    quotationItemId: undefined,
     unitPrice: undefined,
     taxRate: 0.13,
     moq: undefined,

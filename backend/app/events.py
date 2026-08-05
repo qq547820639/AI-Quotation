@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 from fastapi import Request
+
+logger = logging.getLogger(__name__)
 
 # 每个连接一个 asyncio.Queue；dict 无锁（事件循环内单线程访问）
 _subscribers: dict[int, asyncio.Queue] = {}
@@ -31,7 +34,7 @@ def publish(event_type: str, data: dict[str, Any] | None = None) -> None:
         try:
             q.put_nowait(payload)
         except Exception:  # noqa: BLE001 - 队列满/关闭时跳过该连接
-            pass
+            logger.debug("SSE 订阅队列已满或已关闭，跳过该连接", exc_info=True)
 
 
 def subscribe() -> int:

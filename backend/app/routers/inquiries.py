@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Optional
 
 import json
-import random
+import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
@@ -98,7 +98,7 @@ def _generate_inquiry_code(db: Session) -> str:
     """
     base = datetime.now().strftime("%Y%m%d")
     for _ in range(50):
-        code = f"INQ{base}{random.randint(1, 999):03d}"
+        code = f"INQ{base}{secrets.randbelow(999) + 1:03d}"
         if db.query(Inquiry).filter(Inquiry.code == code).first() is None:
             return code
     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -20,7 +20,8 @@ from .serializers import gen_id
 
 # 原始 token 存放于短期存储（Redis/内存回退），key 前缀，TTL 与邀请有效期一致。
 # 数据库只存哈希；原始 token 仅用于投递邮件链接与内部"获取邀请链接"端点，不落库。
-RAW_TOKEN_KEY_PREFIX = "procurement:inv:raw:"
+# nosec B105：这是 Redis 键名前缀，非密码/凭据。
+RAW_TOKEN_KEY_PREFIX = "procurement:inv:raw:"  # nosec B105
 
 # 邀请状态枚举
 INV_PENDING = "pending"

@@ -65,8 +65,10 @@ import {
   PAYMENT_TERMS_OPTIONS,
   TAX_RATE_OPTIONS,
   type QuotationFormItem,
+  type PortalAttachment,
   type SaveState,
 } from './types';
+import ScanStatusBadge from './ScanStatusBadge';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -110,6 +112,10 @@ export default function SupplierPortalPage() {
   const [receipt, setReceipt] = useState<QuotationSubmitReceipt | null>(null);
 
   const [formItems, setFormItems] = useState<QuotationFormItem[]>([]);
+  const formItemsRef = useRef<QuotationFormItem[]>([]);
+  useEffect(() => {
+    formItemsRef.current = formItems;
+  }, [formItems]);
   const [remark, setRemark] = useState('');
   const [errors, setErrors] = useState<Record<string, Set<string>>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -168,6 +174,7 @@ export default function SupplierPortalPage() {
           if (idx >= 0) {
             items[idx] = {
               inquiryItemId: qItem.inquiryItemId,
+              quotationItemId: qItem.id,
               unitPrice: qItem.unitPrice,
               taxRate: qItem.taxRate,
               moq: qItem.moq ?? undefined,
@@ -320,6 +327,7 @@ export default function SupplierPortalPage() {
     () => ({
       items: formItems.map((f) => ({
         inquiryItemId: f.inquiryItemId,
+        id: f.quotationItemId,
         unitPrice: f.unitPrice ?? 0,
         taxRate: f.taxRate,
         moq: f.moq ?? null,
@@ -412,6 +420,16 @@ export default function SupplierPortalPage() {
     if (Object.keys(nextErrors).length > 0) {
       setAttemptedSubmit(true);
       notifyError(t('supplierPortal.validateError'));
+      return false;
+    }
+    // P0 T3：提交前检查附件安全状态；存在 infected/error 时阻止提交并说明具体附件
+    const unsafe = formItems.flatMap((item) =>
+      (item.attachments || [])
+        .filter((a) => a.scanStatus === 'infected' || a.scanStatus === 'error')
+        .map((a) => a.name),
+    );
+    if (unsafe.length > 0) {
+      notifyError(`${t('supplierPortal.scanUnsafeBlockSubmit')} ${unsafe.join(', ')}`);
       return false;
     }
     return true;
@@ -710,6 +728,32 @@ export default function SupplierPortalPage() {
     return true;
   };
 
+  /** 确保当前明细已获得服务端 quotationItemId（无草稿时先保存草稿并回填 ID），返回目标明细的最新 ID */
+  const ensureQuotationItemIds = async (record: QuotationFormItem): Promise<string | null> => {
+    // 先看当前表单里是否已有该明细的 quotationItemId（可能在其他操作中已回填）
+    const existing = formItemsRef.current.find((f) => f.inquiryItemId === record.inquiryItemId);
+    if (existing?.quotationItemId) return existing.quotationItemId;
+    try {
+      const saved = await portalApi.saveQuotationDraft(invitationToken, buildPayload());
+      let newId: string | null = null;
+      // 保存成功后用返回的明细 id 回填表单
+      setFormItems((prev) =>
+        prev.map((f) => {
+          const q = saved.items.find((d) => d.inquiryItemId === f.inquiryItemId);
+          if (q && f.inquiryItemId === record.inquiryItemId) newId = q.id;
+          return q ? { ...f, quotationItemId: q.id } : f;
+        }),
+      );
+      lastSavedSignatureRef.current = computeSignature(formItems, remark);
+      setDirty(false);
+      setSaveState('saved');
+      return newId;
+    } catch (e) {
+      notifyError(getErrorMessage(e));
+      return null;
+    }
+  };
+
   /** 上传附件（真实上传，支持进度回调） */
   const uploadQuotationAttachment = async (
     record: QuotationFormItem,
@@ -718,8 +762,13 @@ export default function SupplierPortalPage() {
   ): Promise<boolean> => {
     if (!validateUploadFile(file)) return false;
     try {
-      // 优先使用草稿中的报价明细 id，否则退回询价明细 id
-      const ownerId = record.inquiryItemId;
+      // 必须传真实 quotationItemId，禁止用 inquiryItemId 冒充
+      let ownerId: string | null | undefined = record.quotationItemId;
+      // 尚未生成报价明细时，先可靠保存草稿取得服务端 quotationItemId 再上传
+      if (!ownerId) {
+        ownerId = await ensureQuotationItemIds(record);
+      }
+      if (!ownerId) return false;
       const data = await portalApi.uploadAttachment(
         invitationToken,
         'quotation_item',
@@ -727,12 +776,14 @@ export default function SupplierPortalPage() {
         file,
         onProgress,
       );
-      const attachment = {
+      const attachment: PortalAttachment = {
         id: data.id,
         name: data.name,
         url: data.url,
         size: data.size,
         uploadTime: data.uploadTime,
+        scanStatus: data.scanStatus,
+        scanResult: data.scanResult,
       };
       updateField(record.inquiryItemId, 'attachments', [...record.attachments, attachment]);
       return true;
@@ -1216,6 +1267,11 @@ export default function SupplierPortalPage() {
           }}
           onPreview={(file) => {
             // 下载端点需携带邀请 token（query 参数）
+            const att = record.attachments.find((a) => a.id === file.uid);
+            if (att && (att.scanStatus === 'infected' || att.scanStatus === 'error')) {
+              notifyError(t('supplierPortal.scanInfectedDesc'));
+              return;
+            }
             const base = file.url || '';
             const sep = base.includes('?') ? '&' : '?';
             window.open(
@@ -1246,6 +1302,15 @@ export default function SupplierPortalPage() {
                       }
                     }}
                   />
+                </Space>
+              );
+            }
+            const att = record.attachments.find((a) => a.id === file.uid);
+            if (att?.scanStatus) {
+              return (
+                <Space size={4}>
+                  {originNode}
+                  <ScanStatusBadge status={att.scanStatus} scanResult={att.scanResult} />
                 </Space>
               );
             }
@@ -1458,6 +1523,11 @@ export default function SupplierPortalPage() {
               }
             }}
             onPreview={(file) => {
+              const att = record.attachments.find((a) => a.id === file.uid);
+              if (att && (att.scanStatus === 'infected' || att.scanStatus === 'error')) {
+                notifyError(t('supplierPortal.scanInfectedDesc'));
+                return;
+              }
               const base = file.url || '';
               const sep = base.includes('?') ? '&' : '?';
               window.open(
@@ -1468,6 +1538,18 @@ export default function SupplierPortalPage() {
             }}
             onRemove={(file) => {
               void deleteQuotationAttachment(record, file.uid);
+            }}
+            itemRender={(originNode, file) => {
+              const att = record.attachments.find((a) => a.id === file.uid);
+              if (att?.scanStatus) {
+                return (
+                  <Space size={4}>
+                    {originNode}
+                    <ScanStatusBadge status={att.scanStatus} scanResult={att.scanResult} />
+                  </Space>
+                );
+              }
+              return originNode;
             }}
             multiple
           >
