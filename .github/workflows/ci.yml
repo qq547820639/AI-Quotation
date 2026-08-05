@@ -140,7 +140,10 @@ jobs:
         run: node scripts/audit-exceptions.mjs
       - name: Image scan (Trivy)
         run: |
-          docker build -t procurement-backend . -f backend/Dockerfile
+          # 后端 Dockerfile 从上下文根复制 requirements.txt，构建上下文必须是 backend/（与
+          # docker-compose 的 build: ./backend 一致）；此前用仓库根 "." 作上下文导致
+          # COPY requirements.txt 找不到文件、构建失败（非真实漏洞）。
+          docker build -t procurement-backend -f backend/Dockerfile backend
           docker build -t procurement-frontend . -f Dockerfile.frontend
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-backend.json procurement-backend
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-frontend.json procurement-frontend

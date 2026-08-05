@@ -1,5 +1,7 @@
 # 前端多阶段构建：Node 构建 → Nginx 运行
-FROM node:20-alpine AS builder
+# node:20 已于 2025-04 停止维护（EOL），存在持续累计的 HIGH/CRITICAL 基础镜像 CVE；
+# 升级到与 CI 运行一致的 node:24（LTS 维护线），构建产物运行在独立的 nginx:alpine 运行态。
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

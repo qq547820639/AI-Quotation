@@ -15,6 +15,11 @@ x-backend-env: &backend-env
   - DB_AUTO_CREATE=false
   - APP_DEMO_MODE=${APP_DEMO_MODE:-false}
   - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+  # 生产启动守卫（config_validation）要求 DEMO_USER_PASSWORD 非默认、CORS_ORIGINS 含非本地白名单。
+  # 必须在此透传给后端容器，否则 CI/部署注入的强密码与白名单不会生效，后端会因使用应用默认
+  # （123456 / 仅 localhost）而拒绝启动（previously docker-e2e 失败根因）。
+  - DEMO_USER_PASSWORD=${DEMO_USER_PASSWORD:-123456}
+  - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost:80}
   - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
   - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
   # P0：真实病毒扫描（ClamAV）。生产必须使用 clamav，禁 noop（fail closed）。
