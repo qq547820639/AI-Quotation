@@ -31,7 +31,12 @@ function hasIdempotencyKey(config: unknown): boolean {
   const headers = (config as { headers?: unknown })?.headers;
   if (!headers) return false;
   const h = headers as Record<string, unknown> & { get?: (k: string) => unknown };
-  const key = h['Idempotency-Key'] ?? h['idempotency-key'] ?? (typeof h.get === 'function' ? h.get('Idempotency-Key') ?? h.get('idempotency-key') : undefined);
+  const key =
+    h['Idempotency-Key'] ??
+    h['idempotency-key'] ??
+    (typeof h.get === 'function'
+      ? (h.get('Idempotency-Key') ?? h.get('idempotency-key'))
+      : undefined);
   return typeof key === 'string' && key.length > 0;
 }
 
@@ -80,11 +85,28 @@ export function createDedupAdapter(baseAdapter: AdapterFn): AdapterFn {
   };
 }
 
-// 在 axios-retry 包装的 adapter 之上再包一层去重
-const originalAdapter = client.defaults.adapter as unknown as AdapterFn | undefined;
-client.defaults.adapter = createDedupAdapter(
-  originalAdapter ?? (() => Promise.reject(new Error('no adapter'))),
-);
+/**
+ * 解析 axios 的默认 adapter 为单一函数。
+ * axios 1.19+ 中 `defaults.adapter` 是适配器名数组（如 ['xhr','http','fetch']），
+ * 直接当作函数调用会抛 "t is not a function"。这里用 axios.getAdapter 解析出当前环境
+ * 实际可用的 adapter 函数，再交给去重包装。
+ */
+function resolveBaseAdapter(): AdapterFn {
+  const configured = client.defaults.adapter;
+  if (typeof configured === 'function') return configured;
+  if (Array.isArray(configured)) {
+    try {
+      return axios.getAdapter(configured) as AdapterFn;
+    } catch {
+      /* 解析失败时回退到无 adapter，由 axios 报错 */
+    }
+  }
+  return () => Promise.reject(new Error('no adapter'));
+}
+
+// 在 axios-retry 之外再包一层去重（先解析 adapter 数组为函数，避免类型错误）
+const baseAdapter = resolveBaseAdapter();
+client.defaults.adapter = createDedupAdapter(baseAdapter);
 
 // 请求拦截器：注入认证 token
 client.interceptors.request.use(

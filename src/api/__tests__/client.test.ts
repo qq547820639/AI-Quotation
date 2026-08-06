@@ -97,6 +97,30 @@ describe('client 请求拦截器', () => {
   });
 });
 
+describe('client 默认 adapter 解析（回归：axios 1.19 defaults.adapter 为数组）', () => {
+  it('模块初始化后 client.defaults.adapter 是函数而非适配器名数组', () => {
+    // 回归：axios 1.19+ 的 defaults.adapter 是 ['xhr','http','fetch'] 数组，
+    // 若直接交给 createDedupAdapter 会被当作函数调用导致 "t is not a function"。
+    expect(typeof client.defaults.adapter).toBe('function');
+  });
+
+  it('调用去重后的默认 adapter 返回 Promise（不再抛 "not a function"）', async () => {
+    // 回归：若 defaults.adapter 仍是数组，createDedupAdapter 会把它当函数调用，
+    // 同步抛 TypeError: t is not a function。这里验证调用不抛类型错误且返回 Promise。
+    localStorage.removeItem('procurement_token');
+    const adapter = client.defaults.adapter as (
+      c: InternalAxiosRequestConfig,
+    ) => Promise<AxiosResponse>;
+    const result = adapter({
+      method: 'GET',
+      url: '/regression-check',
+    } as InternalAxiosRequestConfig);
+    expect(typeof result?.then).toBe('function');
+    // jsdom 中真实网络请求可能失败，仅吞掉错误，重点是上面不抛类型错误
+    await result.catch(() => {});
+  });
+});
+
 describe('重试策略：非幂等请求不自动重试', () => {
   it('POST 5xx 不重复发送（仅一次）', async () => {
     let count = 0;
