@@ -16,7 +16,7 @@ from .models import (
     Quotation, QuotationItem, AppSettings, SupplierInvitation,
 )
 from .auth import hash_password
-from .config import APP_ENV, APP_DEMO_MODE, DEMO_USER_PASSWORD, INVITATION_TOKEN_TTL_HOURS
+from .config import APP_ENV, APP_DEMO_MODE, SEED_DEMO_DATA, DEMO_USER_PASSWORD, INVITATION_TOKEN_TTL_HOURS
 from .invitations import hash_invitation_token
 from .serializers import gen_id
 
@@ -462,11 +462,13 @@ def _seed_invitations(db: Session):
 # ============ 初始化 ============
 
 def demo_seeding_allowed() -> bool:
-    """演示种子是否允许：仅 dev/test，或显式开启 demo 模式。
+    """演示种子是否允许：dev/test、显式 demo 模式，或显式 SEED_DEMO_DATA。
 
-    生产（APP_ENV=prod 且未显式 APP_DEMO_MODE）返回 False，防止把演示业务数据写入生产库。
+    生产（APP_ENV=prod 且未显式 APP_DEMO_MODE/SEED_DEMO_DATA）返回 False，防止把演示
+    业务数据写入生产库。SEED_DEMO_DATA 与 APP_DEMO_MODE 解耦：前者只注入真实密码哈希
+    的种子用户（不开启快捷登录），供生产/CI 形态 E2E 使用；后者并行开启快捷登录。
     """
-    return APP_ENV in ("dev", "test") or APP_DEMO_MODE
+    return APP_ENV in ("dev", "test") or APP_DEMO_MODE or SEED_DEMO_DATA
 
 
 def ensure_app_settings(db: Session) -> None:

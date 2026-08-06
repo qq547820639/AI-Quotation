@@ -217,6 +217,19 @@ def test_prod_demo_mode_forbidden(monkeypatch):
     assert any("APP_DEMO_MODE" in e for e in errors)
 
 
+def test_prod_seed_demo_data_allowed(monkeypatch):
+    """prod + SEED_DEMO_DATA=true（且 APP_DEMO_MODE=false）→ 不报错。
+
+    验证 SEED_DEMO_DATA 与快捷登录解耦：它只允许注入真实密码哈希的种子数据，
+    不触发 config_validation 对演示快捷登录的禁止，生产/CI 形态 E2E 可安全使用。
+    """
+    _set_prod(monkeypatch, APP_DEMO_MODE=False)
+    monkeypatch.setattr(config, "SEED_DEMO_DATA", True)
+    monkeypatch.setattr(config_validation, "get_store", lambda: _fake_store(True))
+    errors = config_validation.validate_production_config()
+    assert errors == []
+
+
 def test_prod_default_demo_password_forbidden(monkeypatch):
     """prod + DEMO_USER_PASSWORD 仍为默认演示密码 → 报错"""
     _set_prod(monkeypatch, DEMO_USER_PASSWORD="123456")

@@ -19,6 +19,10 @@ x-backend-env: &backend-env
   # 必须在此透传给后端容器，否则 CI/部署注入的强密码与白名单不会生效，后端会因使用应用默认
   # （123456 / 仅 localhost）而拒绝启动（previously docker-e2e 失败根因）。
   - DEMO_USER_PASSWORD=${DEMO_USER_PASSWORD:-123456}
+  # 生产/CI 形态 E2E 专用：与快捷登录（APP_DEMO_MODE）解耦，仅注入用 DEMO_USER_PASSWORD
+  # 哈希的种子用户（真实密码校验）。默认 false；显式 SEED_DEMO_DATA=true 时允许在
+  # APP_ENV=prod 下注入演示种子，供 CI E2E 以内置账号真实登录。
+  - SEED_DEMO_DATA=${SEED_DEMO_DATA:-false}
   - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost:80}
   - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
   - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}

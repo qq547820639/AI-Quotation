@@ -21,7 +21,6 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import text
 
 from .config import (
-    APP_ENV,
     CORS_ORIGINS,
     DB_AUTO_CREATE,
     CSP_DEFAULT,
@@ -46,7 +45,7 @@ from .logging import get_request_id, new_request_id, set_request_id, setup_loggi
 from .auth import require_admin
 from . import metrics as metrics_mod
 from .redis_client import get_store
-from .seed import ensure_app_settings, init_db
+from .seed import ensure_app_settings, init_db, demo_seeding_allowed
 from .scanner import check_scanner_available
 from .storage import get_storage, S3Storage
 from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics, portal, ai, users, events, tasks
@@ -69,8 +68,9 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        if APP_ENV != "prod":
-            # dev/test：注入演示种子数据（幂等；生产由 Alembic 建表 + bootstrap-admin 引导）
+        if demo_seeding_allowed():
+            # dev/test、显式 APP_DEMO_MODE，或显式 SEED_DEMO_DATA（生产/CI E2E 用，
+            # 只注入真实密码哈希的种子用户，不开启快捷登录）：注入演示种子数据（幂等）。
             init_db(db)
         else:
             # 生产：仅确保 AppSettings 配置单行，绝不注入/绝不回填演示数据

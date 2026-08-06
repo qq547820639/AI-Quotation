@@ -68,6 +68,13 @@ CORS_ORIGINS = parse_cors_origins(os.environ.get("CORS_ORIGINS"))
 # 生产环境必须留空或设为 false，走真实密码校验。
 APP_DEMO_MODE = os.environ.get("APP_DEMO_MODE", "false").lower() in ("1", "true", "yes")
 
+# 演示数据种子开关（与 APP_DEMO_MODE 解耦）：仅当显式开启时才允许在任意环境（含生产
+# APP_ENV=prod）注入演示种子数据。与 APP_DEMO_MODE 的区别：本开关只注入用
+# DEMO_USER_PASSWORD 哈希的种子用户（真实密码校验），绝不开启"快捷登录"。生产/CI
+# 形态 E2E 可通过 SEED_DEMO_DATA=true + 强 DEMO_USER_PASSWORD 获得可用种子账号，
+# 同时仍满足 config_validation 的强密码要求且不触发快捷登录。
+SEED_DEMO_DATA = os.environ.get("SEED_DEMO_DATA", "false").lower() in ("1", "true", "yes")
+
 # 兼容旧配置：历史 token 有效期（秒），默认 24 小时（新代码使用 ACCESS_TOKEN_TTL_SECONDS）
 TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL", "86400"))
 

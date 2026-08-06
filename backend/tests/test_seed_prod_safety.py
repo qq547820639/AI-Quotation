@@ -18,9 +18,10 @@ from app.database import Base
 
 @pytest.fixture
 def prod_db(monkeypatch):
-    """模拟生产环境（APP_ENV=prod、非 demo 模式）+ 全新空库。"""
+    """模拟生产环境（APP_ENV=prod、非 demo 模式、未显式 SEED_DEMO_DATA）+ 全新空库。"""
     monkeypatch.setattr("app.seed.APP_ENV", "prod")
     monkeypatch.setattr("app.seed.APP_DEMO_MODE", False)
+    monkeypatch.setattr("app.seed.SEED_DEMO_DATA", False)
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
@@ -41,6 +42,34 @@ def test_seed_demo_refuses_in_prod(prod_db):
     assert db.query(Supplier).count() == 0
     assert db.query(Material).count() == 0
     assert db.query(Inquiry).count() == 0
+
+
+def test_seed_demo_allowed_in_prod_with_seed_demo_data(prod_db, monkeypatch):
+    """生产 + 显式 SEED_DEMO_DATA=true：允许注入演示种子（真实密码哈希），不触发快捷登录。
+
+    覆盖生产/CI 形态 E2E 的引导路径：SEED_DEMO_DATA 与 APP_DEMO_MODE 解耦，
+    即使在 APP_ENV=prod 且 APP_DEMO_MODE=False 时也能获得可用种子账号。
+    """
+    monkeypatch.setattr("app.seed.SEED_DEMO_DATA", True)
+    assert seed.demo_seeding_allowed() is True
+    db, _ = prod_db
+    seed.seed_demo(db)
+    assert db.query(User).count() > 0
+    assert db.query(Supplier).count() > 0
+    assert db.query(Material).count() > 0
+    assert db.query(Inquiry).count() > 0
+    # 种子用户必须真实密码哈希（非快捷登录），否则生产登录校验无法通过
+    for u in db.query(User).all():
+        assert u.password_hash is not None
+
+
+def test_seed_demo_still_forbidden_in_prod_without_seed_demo_data(prod_db):
+    """生产 + 未显式 SEED_DEMO_DATA 且非 demo 模式：即使 APP_ENV=prod 也必须拒绝。"""
+    db, _ = prod_db
+    assert seed.demo_seeding_allowed() is False
+    with pytest.raises(RuntimeError):
+        seed.seed_demo(db)
+    assert db.query(User).count() == 0
 
 
 def test_bootstrap_admin_prod_only_admin(prod_db):

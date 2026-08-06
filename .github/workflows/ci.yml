@@ -223,6 +223,11 @@ jobs:
           SMTP_HOST: mailpit
           SMTP_PORT: 1025
           SMTP_FROM: ci@ai-quotation.local
+          # 生产形态 E2E 需要种子账号，但 APP_DEMO_MODE 会开启"快捷登录"且被生产配置校验
+          # 拒绝。SEED_DEMO_DATA 与快捷登录解耦：只注入用 DEMO_USER_PASSWORD 哈希的种子
+          # 用户（真实密码校验），在 APP_ENV=prod 下仍满足全部生产守卫（ClamAV/S3/Redis/
+          # 强密码/非本地 CORS），使 E2E 能以内置账号真实登录。
+          SEED_DEMO_DATA: true
         run: docker compose up -d --build
       - name: Wait for backend readiness (/api/ready validates DB+Redis+S3+ClamAV+Worker)
         run: |
