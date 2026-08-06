@@ -156,6 +156,10 @@ def test_alembic_head_schema_tables_constraints_indexes():
             tables = set(insp.get_table_names())
             for t in CORE_TABLES:
                 assert t in tables, f"upgrade head 后 PG 缺少表 {t}"
+            # 关键列契约（防止模型与迁移漂移，如 tokens.token_hash / session_id）
+            tokens_cols = {c["name"] for c in insp.get_columns("tokens")}
+            assert "token_hash" in tokens_cols, "tokens 表缺少 token_hash 列（模型仅存哈希）"
+            assert "session_id" in tokens_cols, "tokens 表缺少 session_id 列（会话级撤销）"
             # 唯一约束
             for tname, uqc in CORE_UNIQUE_CONSTRAINTS.items():
                 uq_names = {c["name"] for c in insp.get_unique_constraints(tname)}
