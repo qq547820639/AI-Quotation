@@ -368,5 +368,15 @@ def get_storage() -> Storage:
     return LocalStorage()
 
 
-# 全局单例
-storage = get_storage()
+# 全局惰性单例：首次使用时才初始化并缓存。
+# 不再在 import 期执行 get_storage()，避免「配置缺失/生产强制 S3」在 import 阶段即抛错，
+# 让配置校验统一收敛到 lifespan 的 assert_production_config()（可给出清晰、可诊断的启动失败信息）。
+_storage_singleton: "Storage | None" = None
+
+
+def get_storage_singleton() -> Storage:
+    """返回全局存储单例（惰性初始化并缓存）。"""
+    global _storage_singleton
+    if _storage_singleton is None:
+        _storage_singleton = get_storage()
+    return _storage_singleton

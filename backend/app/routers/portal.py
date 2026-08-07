@@ -29,7 +29,7 @@ from ..models import (
 from ..scanner import ScanStatus, get_scanner, run_scan
 from ..serializers import attachments_for, now_str, gen_id
 from ..state_machine import can_revise_submitted_quotation
-from ..storage import storage, sanitize_filename
+from ..storage import get_storage_singleton, sanitize_filename
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -538,7 +538,7 @@ async def portal_upload_attachment(
 
     # 使用随机 id 命名物理文件，不信任原始文件名
     attachment_id = gen_id("att")
-    ok, err = storage.save(attachment_id, data, filename)
+    ok, err = get_storage_singleton().save(attachment_id, data, filename)
     if not ok:
         audit_logger.warning(
             "attachment_storage_save_failed",
@@ -551,7 +551,7 @@ async def portal_upload_attachment(
     record = Attachment(
         id=attachment_id,
         name=filename,
-        url=storage.url_for(attachment_id, filename),
+        url=get_storage_singleton().url_for(attachment_id, filename),
         size=len(data),
         upload_time=upload_time,
         owner_type=owner_type,
@@ -603,7 +603,7 @@ def portal_delete_attachment(
     _verify_attachment_ownership(invitation, record.owner_type, record.owner_id, db)
 
     # 删除物理文件（通过存储抽象）
-    storage.delete(attachment_id)
+    get_storage_singleton().delete(attachment_id)
 
     owner = f"{record.owner_type}:{record.owner_id}"
     db.delete(record)
@@ -640,7 +640,7 @@ def portal_download_attachment(
             detail=f"附件未通过安全检查，禁止下载（状态: {record.scan_status}）",
         )
 
-    data = storage.read(attachment_id)
+    data = get_storage_singleton().read(attachment_id)
     if data is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件文件缺失")
 

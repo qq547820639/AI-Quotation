@@ -1,0 +1,57 @@
+# 开发 / 快速体验形态（无需任何 .env 配置即可一键启动）：
+#   docker compose -f docker-compose.dev.yml up -d --build
+# 访问 http://localhost（前端，nginx 反代 /api 到后端）
+#
+# 与生产 docker-compose.yml 的区别（这里刻意选宽松配置，便于本地快速跑通核心闭环）：
+#   - APP_ENV=dev：跳过生产 fail-closed 守卫（不强制强密钥 / clamav / S3 / Redis）。
+#   - 使用后端容器内 SQLite（DB_PATH=/app/data/procurement.db），无需启动 PostgreSQL。
+#   - CELERY_TASK_ALWAYS_EAGER=true：任务进程内同步执行，无需 Celery worker / broker。
+#   - SCANNER_PROVIDER=noop、NOTIFY_CHANNEL=log：附件仅静态校验、通知仅落日志。
+#   - SEED_DEMO_DATA=true：注入真实密码哈希的种子账号；统一密码见下方 DEMO_USER_PASSWORD。
+#
+# 生产部署请使用 docker-compose.yml，并先按 README「方式一」配置 .env 注入强密钥。
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=dev
+      # dev 下仍由 Alembic 迁移建表，与生产保持一致
+      - DB_AUTO_CREATE=false
+      - SEED_DEMO_DATA=true
+      # 统一演示密码：低于后端最小长度校验？不 —— APP_ENV=dev 不触发生产强密码守卫，
+      # 但为体验一致仍给一个足够强的值，避免误导。
+      - DEMO_USER_PASSWORD=dev-demo-pass-12345678
+      - SCANNER_PROVIDER=noop
+      - NOTIFY_CHANNEL=log
+      - CELERY_TASK_ALWAYS_EAGER=true
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:80
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8080"
+    healthcheck:
+      # dev 形态只依赖 DB，用 /api/health（进程存活 + DB 连通）即可判定健康
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

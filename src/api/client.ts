@@ -144,14 +144,56 @@ async function handleUnauthorized() {
   }
 }
 
+// Access Token 自动续期：短期 token（默认 15 分钟）过期后，用 HttpOnly Cookie 中的
+// refresh_token 换取新 token，避免用户被强制登出。单飞（single-flight）保证并发 401
+// 只触发一次刷新，其余请求等待同一 Promise 后重放。
+let refreshPromise: Promise<string> | null = null;
+
+function refreshAccessToken(): Promise<string> {
+  if (!refreshPromise) {
+    refreshPromise = client
+      .post<{ token: string }>('/auth/refresh', null, { withCredentials: true })
+      .then((r) => {
+        const token = r.data.token;
+        localStorage.setItem('procurement_token', token);
+        return token;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
 // 响应拦截器：统一错误处理
 client.interceptors.response.use(
   (response) => response,
   (error) => {
     const apiError = parseApiError(error);
 
-    // 401：完整退出并跳转登录页
+    // 401：优先尝试刷新 token 并重放原请求，失败才完整登出跳转登录页
     if (apiError.code === ERROR_CODES.UNAUTHORIZED) {
+      const config = error.config as
+        (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
+      const isRefreshRequest = config?.url?.includes('/auth/refresh');
+      const canAttemptRefresh = !isRefreshRequest && config && !config._retry;
+
+      if (canAttemptRefresh) {
+        return refreshAccessToken()
+          .then((newToken) => {
+            config.headers = config.headers ?? {};
+            config.headers.Authorization = `Bearer ${newToken}`;
+            config._retry = true;
+            return client(config);
+          })
+          .catch(() => {
+            // 刷新失败（refresh token 失效/过期）：完整登出
+            void handleUnauthorized();
+            return Promise.reject(apiError);
+          });
+      }
+
+      // refresh 请求自身或其他不可重试的 401：完整登出
       void handleUnauthorized();
       return Promise.reject(apiError);
     }

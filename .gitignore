@@ -32,6 +32,8 @@ vite.config.d.ts
 .env
 .env.*
 !.env.example
+# 开发默认值（无敏感信息，随仓库交付，确保 `npm run dev` 开箱即用演示模式）
+!.env.development
 
 # Python / 后端
 backend/.venv/

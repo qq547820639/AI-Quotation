@@ -25,7 +25,7 @@ from typing import Optional
 
 from . import config
 # 本地导入存储，避免模块级循环依赖（storage 只依赖 config）
-from .storage import storage
+from .storage import get_storage_singleton
 
 # ============ 状态常量 ============
 
@@ -390,7 +390,7 @@ def run_scan(record) -> str:
     返回：scan_status（clean / infected / error）。
     """
     try:
-        data = storage.read(record.id)
+        data = get_storage_singleton().read(record.id)
         if data is None:
             record.scan_status = ScanStatus.ERROR
             record.scan_result = "扫描失败：附件文件缺失"

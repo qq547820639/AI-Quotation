@@ -62,6 +62,8 @@ def test_settings_update_requires_admin(client, buyer_headers, admin_headers):
             "deadlineReminder": True, "deadlineReminderHours": 24,
             "quotationSubmitted": True, "approvalResult": True,
         },
+        "ai": {"provider": "local", "baseUrl": "", "model": "",
+               "apiKey": "", "hasApiKey": False, "structuredOutput": True},
     }
     # 采购人员 u-1：无 SETTINGS_MANAGE → 403
     resp = client.put("/api/settings", json=payload, headers=buyer_headers)
