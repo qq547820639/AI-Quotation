@@ -51,15 +51,34 @@
 | npm     | >= 9                          |
 | Python  | >= 3.11（仅本地后端开发需要） |
 
-### 方式一：Docker Compose 一键部署（推荐 🐳）
+### 方式一：Docker Compose 快速体验（推荐 🐳，零配置）
+
+使用 `docker-compose.dev.yml`（dev 形态：SQLite + 进程内任务队列 + noop 扫描器 + 演示种子数据），无需任何 `.env` 配置即可一键启动：
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.dev.yml up -d --build
 ```
 
 启动完成后访问 👉 **http://localhost**
 
-### 方式二：本地开发
+> 演示种子账号统一密码为 `dev-demo-pass-12345678`（可在 `docker-compose.dev.yml` 中通过 `DEMO_USER_PASSWORD` 覆盖）。该形态仅用于本地快速体验与开发调试，**不用于生产**。
+
+### 方式二：Docker Compose 生产部署
+
+生产形态（`docker-compose.yml`）启用强 fail-closed 守卫：后端在 `APP_ENV=prod` 下会校验强密钥、ClamAV、S3/MinIO、Redis、通知渠道等，配置不满足会**拒绝启动**。因此生产部署前必须先配置 `.env`：
+
+```bash
+# 1. 从示例创建 .env 并填入强密钥/白名单（详见 backend/.env.example）
+cp backend/.env.example .env
+#    至少修改：SECRET_KEY（≥32 位随机值）、DEMO_USER_PASSWORD、CORS_ORIGINS（生产域名）、
+#    NOTIFY_CHANNEL=email + SMTP_*（或视需求调整）
+# 2. 启动全套服务（postgres/redis/minio/clamav/celery/outbox/backend/frontend）
+docker compose up -d --build
+```
+
+> 注意：ClamAV 首次启动需下载病毒库（约 10–20 分钟），期间后端 `/api/ready` 返回 503，属正常现象；就绪后访问 👉 **http://localhost**。
+
+### 方式三：本地开发
 
 **1. 启动后端**
 
@@ -78,11 +97,11 @@ npm run dev      # 启动开发服务器（http://localhost:5173）
 
 ### 🔗 联调真实后端
 
-默认使用 MSW 本地 mock 数据。需要对接真实后端时：
+dev 默认使用 MSW 本地 mock + 演示模式（见 `.env.development`）。需要对接真实后端时，在项目根目录创建 `.env.development.local` 覆盖：
 
 ```bash
-# 在项目根目录创建 .env.development.local
 echo "VITE_ENABLE_MSW=false" > .env.development.local
+echo "VITE_DEMO_MODE=false" >> .env.development.local     # 退出演示模式，走真实密码认证
 echo "VITE_API_PROXY_TARGET=http://localhost:8080" >> .env.development.local
 npm run dev
 ```
@@ -107,15 +126,16 @@ npm run e2e         # E2E 测试（Playwright，需先启动 Docker）
 
 ## 🔐 环境变量
 
-| 变量                    | 说明                                                                        | 默认                       |
-| ----------------------- | --------------------------------------------------------------------------- | -------------------------- |
-| `VITE_API_BASE_URL`     | 后端 API 基地址                                                             | `/api`                     |
-| `VITE_ENABLE_MSW`       | 是否启用 MSW 本地 mock（`true` / `false`）                                  | `true`                     |
-| `VITE_API_PROXY_TARGET` | 关闭 MSW 时的代理目标（仅 dev）                                             | `http://localhost:8080`    |
-| `VITE_SENTRY_DSN`       | Sentry DSN（可选，留空则不启用）                                            | -                          |
-| `DATABASE_URL`          | 后端数据库连接串。含 `postgresql://` 走 PostgreSQL（生产），否则回退 SQLite | `sqlite:///<DB_PATH>`      |
-| `DB_PATH`               | 后端 SQLite 数据库路径（仅 SQLite 场景）                                    | `backend/procurement.db`   |
-| `SECRET_KEY`            | 后端签名/加密密钥（**生产必须通过环境变量注入**）                           | `dev-secret-key-change-me` |
+| 变量                    | 说明                                                                                                                             | 默认                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `VITE_API_BASE_URL`     | 后端 API 基地址                                                                                                                  | `/api`                     |
+| `VITE_ENABLE_MSW`       | 是否启用 MSW 本地 mock（`true` / `false`）。dev 默认开（见 `.env.development`）；生产构建由 `Dockerfile.frontend` 强制置 `false` | `true`（仅 dev）           |
+| `VITE_DEMO_MODE`        | 是否允许演示模式（快捷登录 / mock 回退）。dev 默认开（见 `.env.development`）                                                    | `true`（仅 dev）           |
+| `VITE_API_PROXY_TARGET` | 关闭 MSW 时的代理目标（仅 dev）                                                                                                  | `http://localhost:8080`    |
+| `VITE_SENTRY_DSN`       | Sentry DSN（可选，留空则不启用）                                                                                                 | -                          |
+| `DATABASE_URL`          | 后端数据库连接串。含 `postgresql://` 走 PostgreSQL（生产），否则回退 SQLite                                                      | `sqlite:///<DB_PATH>`      |
+| `DB_PATH`               | 后端 SQLite 数据库路径（仅 SQLite 场景）                                                                                         | `backend/procurement.db`   |
+| `SECRET_KEY`            | 后端签名/加密密钥（**生产必须通过环境变量注入**）                                                                                | `dev-secret-key-change-me` |
 
 > 🔐 **密钥不入库**：`SECRET_KEY`、`POSTGRES_PASSWORD`、JWT 密钥等所有敏感信息一律通过环境变量 / docker-compose `environment` 注入，**绝不写入源码或提交到仓库**。完整后端环境变量示例见 `backend/.env.example`。
 
