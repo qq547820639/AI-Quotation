@@ -19,6 +19,10 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       host: true,
+      // 忽略重型非源码目录，避免超出文件监听数上限（inotify ENOSPC）
+      watch: {
+        ignored: ['**/backend/**', '**/.venv/**', '**/.git/**', '**/dist/**', '**/node_modules/**'],
+      },
       // W7.5：MSW 启用时由 Service Worker 拦截请求，代理不生效；
       // MSW 关闭（联调真实后端）时，/api 代理到 VITE_API_PROXY_TARGET
       proxy: enableMsw
