@@ -18,7 +18,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { SaveOutlined, InfoCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { SaveOutlined, InfoCircleOutlined, SafetyCertificateOutlined, RobotOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/PageHeader';
 import Permission from '@/components/Permission';
@@ -63,6 +63,7 @@ export default function SettingsPage() {
     timeoutThresholdHours,
     notifications,
     approval,
+    ai,
     updateSettings,
   } = useSettingsStore();
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -89,6 +90,12 @@ export default function SettingsPage() {
   const handleSaveApproval = async () => {
     const result = await updateSettings({ approval });
     if (result.success) notifySuccess(i18n.t('settings.approval.saveSuccess'));
+    else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+  };
+
+  const handleSaveAI = async () => {
+    const result = await updateSettings({ ai });
+    if (result.success) notifySuccess(i18n.t('settings.ai.saveSuccess'));
     else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
   };
 
@@ -384,7 +391,105 @@ export default function SettingsPage() {
         </Space>
       </Card>
 
-      {/* 5. 关于 */}
+      {/* 5. AI 设置（P2-15） */}
+      <Card
+        title={
+          <Space>
+            <RobotOutlined style={{ color: 'var(--color-primary)' }} />
+            <span>{t('settings.ai.title')}</span>
+          </Space>
+        }
+        style={cardStyle}
+      >
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Row gutter={[24, 16]}>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.ai.provider')}
+              </div>
+              <Select
+                value={ai.provider}
+                onChange={(val) => updateSettings({ ai: { ...ai, provider: val } })}
+                style={{ width: '100%' }}
+                options={[
+                  { label: t('settings.ai.providerLocal'), value: 'local' },
+                  { label: t('settings.ai.providerRemote'), value: 'remote' },
+                ]}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.ai.baseUrl')}
+              </div>
+              <Input
+                value={ai.baseUrl}
+                onChange={(e) => updateSettings({ ai: { ...ai, baseUrl: e.target.value } })}
+                placeholder="https://ark.cn-beijing.volces.com/api/v3"
+                disabled={ai.provider !== 'remote'}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.ai.model')}
+              </div>
+              <Input
+                value={ai.model}
+                onChange={(e) => updateSettings({ ai: { ...ai, model: e.target.value } })}
+                placeholder="doubao-seed-2-1-pro-260628"
+                disabled={ai.provider !== 'remote'}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.ai.apiKey')}
+              </div>
+              <Input.Password
+                value={ai.apiKey}
+                onChange={(e) => updateSettings({ ai: { ...ai, apiKey: e.target.value } })}
+                placeholder={ai.hasApiKey ? t('settings.ai.apiKeyMasked') : t('settings.ai.apiKeyPlaceholder')}
+                autoComplete="new-password"
+                disabled={ai.provider !== 'remote'}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingTop: 18,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 14, color: 'var(--color-text)' }}>
+                    {t('settings.ai.structuredOutput')}
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('settings.ai.structuredOutputDesc')}
+                  </Text>
+                </div>
+                <Switch
+                  checked={ai.structuredOutput}
+                  onChange={(checked) =>
+                    updateSettings({ ai: { ...ai, structuredOutput: checked } })
+                  }
+                  disabled={ai.provider !== 'remote'}
+                />
+              </div>
+            </Col>
+          </Row>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {t('settings.ai.keyHint')}
+          </Text>
+          <div>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAI}>
+              {t('common.save')}
+            </Button>
+          </div>
+        </Space>
+      </Card>
+
+      {/* 6. 关于 */}
       <Card
         title={
           <Space>

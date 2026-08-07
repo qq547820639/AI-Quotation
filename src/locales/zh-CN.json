@@ -1424,6 +1424,21 @@
       "selectApprover": "请选择审批人",
       "saveSuccess": "审批设置已保存"
     },
+    "ai": {
+      "title": "AI 设置",
+      "provider": "AI 服务商",
+      "providerLocal": "本地规则引擎",
+      "providerRemote": "远程大模型（OpenAI 兼容）",
+      "baseUrl": "接口地址（Base URL）",
+      "model": "模型",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "请输入 API Key",
+      "apiKeyMasked": "已配置，输入新 Key 以替换",
+      "structuredOutput": "结构化输出",
+      "structuredOutputDesc": "约束模型返回合法 JSON，并用 Pydantic 严格校验",
+      "keyHint": "API Key 仅保存在服务端，回显时脱敏，不会发送到前端。",
+      "saveSuccess": "AI 设置已保存"
+    },
     "notification": {
       "title": "通知设置",
       "deadlineReminder": "截止时间提醒",

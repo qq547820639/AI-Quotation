@@ -317,9 +317,24 @@ class NotificationSettings(BaseModel):
     approvalResult: bool
 
 
+class AISettings(BaseModel):
+    """AI 服务配置（P2-15：设置页可配置）。
+
+    apiKey 回显时脱敏（仅尾 4 位），避免完整密钥离开服务端。hasApiKey 用于前端
+    判断是否已配置。提交时若 apiKey 为空或为脱敏形态（含 *），视为保持不变。
+    """
+    provider: str = "local"
+    baseUrl: str = ""
+    model: str = ""
+    apiKey: str = ""
+    hasApiKey: bool = False
+    structuredOutput: bool = True
+
+
 class AppSettingsSchema(BaseModel):
     approval: ApprovalSettings
     notification: NotificationSettings
+    ai: AISettings
     model_config = ConfigDict(from_attributes=True)
 
 

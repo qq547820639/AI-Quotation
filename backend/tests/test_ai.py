@@ -612,3 +612,77 @@ def test_feedback_endpoint(client, buyer_headers, admin_headers):
     assert r.json()["not_helpful"] == 0
     # 非管理员访问反馈汇总 → 403
     assert client.get("/api/ai/feedback-summary", headers=buyer_headers).status_code == 403
+
+
+# ============ P2-15：AI 设置页配置（DB 驱动 Provider / 密钥脱敏） ============
+
+def test_settings_ai_persistence_and_mask(client, admin_headers):
+    """设置页可配置 AI，API Key 回显脱敏（仅尾 4 位），不返回完整密钥。"""
+    body = client.get("/api/settings", headers=admin_headers).json()
+    body["ai"] = {
+        "provider": "remote",
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "model": "doubao-seed-2-1-pro-260628",
+        "apiKey": "ark-test-key-1234",
+        "structuredOutput": True,
+    }
+    r = client.put("/api/settings", json=body, headers=admin_headers)
+    assert r.status_code == 200
+    ai = r.json()["ai"]
+    assert ai["provider"] == "remote"
+    assert ai["baseUrl"].endswith("/api/v3")
+    assert ai["model"] == "doubao-seed-2-1-pro-260628"
+    assert ai["hasApiKey"] is True
+    assert ai["apiKey"].endswith("1234")
+    assert "*" in ai["apiKey"]
+    assert "ark-test-key-1234" not in ai["apiKey"]  # 绝不返回完整密钥
+
+    # 再次 GET 仍脱敏
+    ai2 = client.get("/api/settings", headers=admin_headers).json()["ai"]
+    assert ai2["hasApiKey"] is True and "*" in ai2["apiKey"]
+
+    # 提交脱敏值（不变更）→ 密钥保持不变
+    body["ai"]["apiKey"] = ai["apiKey"]  # 脱敏形态
+    r2 = client.put("/api/settings", json=body, headers=admin_headers)
+    assert r2.status_code == 200
+    assert r2.json()["ai"]["hasApiKey"] is True
+
+
+def test_ai_provider_respects_db_settings():
+    """Provider 依据设置页（DB）配置构建：remote+key → 远程；无 key → 本地。"""
+    from app.database import SessionLocal
+    from app.models import AppSettings
+    from app.routers.ai import get_ai_provider
+    from app.ai.remote import RemoteLLMProvider
+    from app.ai.local import LocalRuleProvider
+
+    db = SessionLocal()
+    try:
+        s = db.query(AppSettings).filter(AppSettings.id == 1).first()
+        if s is None:
+            s = AppSettings(id=1)
+            db.add(s)
+        s.ai_provider = "remote"
+        s.ai_api_key = "ark-test"
+        s.ai_base_url = "https://ark.example/v1"
+        s.ai_model = "doubao-test"
+        db.commit()
+
+        provider = get_ai_provider(db)
+        assert isinstance(provider, RemoteLLMProvider)
+        assert provider.model == "doubao-test"
+
+        # 无 key → 回退本地规则
+        s.ai_api_key = ""
+        db.commit()
+        provider2 = get_ai_provider(db)
+        assert isinstance(provider2, LocalRuleProvider)
+    finally:
+        # 清理，避免污染同模块后续 AI 端点测试（默认本地）
+        s = db.query(AppSettings).filter(AppSettings.id == 1).first()
+        if s is not None:
+            s.ai_provider = "local"
+            s.ai_api_key = ""
+            db.commit()
+        db.close()
+        reset_provider()

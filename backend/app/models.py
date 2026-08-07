@@ -257,6 +257,13 @@ class AppSettings(Base):
     notification_deadline_reminder_hours = Column(Integer, nullable=False, default=24)
     notification_quotation_submitted = Column(Boolean, nullable=False, default=True)
     notification_approval_result = Column(Boolean, nullable=False, default=True)
+    # AI 服务配置（P2-15：设置页可配置，替代仅环境变量）
+    # provider: local（本地规则）/ remote（远程 LLM）
+    ai_provider = Column(String, nullable=False, default="local")
+    ai_base_url = Column(String, nullable=False, default="")
+    ai_model = Column(String, nullable=False, default="")
+    ai_api_key = Column(String, nullable=False, default="")
+    ai_structured_output = Column(Boolean, nullable=False, default=True)
 
 
 class UserNotificationPreference(Base):

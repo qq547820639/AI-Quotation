@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from ..ai import DISCLAIMER, execute, get_ai_provider
+from ..ai import DISCLAIMER, build_provider, execute, get_provider_override
 from ..ai.base import AIProvider, ProviderResult
 from ..ai.usage import (
     FEEDBACK_VALUES,
@@ -33,9 +33,26 @@ from ..ai.usage import (
 )
 from ..auth import get_current_user, require_admin
 from ..database import get_db
-from ..models import User
+from ..models import AppSettings, User
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+def get_ai_provider(db: Session = Depends(get_db)) -> AIProvider:
+    """依据设置页（DB）的 AI 配置构建 Provider；测试时可先用 set_provider 注入覆盖。"""
+    override = get_provider_override()
+    if override is not None:
+        return override
+    s = db.query(AppSettings).filter(AppSettings.id == 1).first()
+    if s is None:
+        return build_provider()
+    return build_provider(
+        provider_mode=s.ai_provider or "local",
+        api_key=s.ai_api_key or "",
+        base_url=s.ai_base_url or "",
+        model=s.ai_model or "",
+        structured_output=s.ai_structured_output,
+    )
 
 
 # ============ 请求体（AI 视为不透明数据，宽松透传） ============

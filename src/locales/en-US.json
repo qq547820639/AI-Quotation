@@ -1420,6 +1420,21 @@
       "selectApprover": "Select approver",
       "saveSuccess": "Approval settings saved"
     },
+    "ai": {
+      "title": "AI Settings",
+      "provider": "AI Provider",
+      "providerLocal": "Local Rule Engine",
+      "providerRemote": "Remote LLM (OpenAI compatible)",
+      "baseUrl": "Base URL",
+      "model": "Model",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "Enter API Key",
+      "apiKeyMasked": "Configured, enter a new key to replace",
+      "structuredOutput": "Structured Output",
+      "structuredOutputDesc": "Constrain the model to return valid JSON, strictly validated with Pydantic",
+      "keyHint": "API Key is stored server-side only and masked on display; never sent to the frontend.",
+      "saveSuccess": "AI settings saved"
+    },
     "notification": {
       "title": "Notification Settings",
       "deadlineReminder": "Deadline Reminder",
