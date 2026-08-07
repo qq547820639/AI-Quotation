@@ -8,10 +8,20 @@ import { create } from 'zustand';
 import { loadJSON, saveJSON } from '@/utils/storage';
 import { Currency, type ApprovalConfig } from '@/types';
 import { supervisorUser } from '@/mock/users';
-import { settingsApi, type AppSettings } from '@/api/settingsApi';
+import { settingsApi, type AppSettings, type AISettings } from '@/api/settingsApi';
 import { ok, fail, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'settings';
+
+/** 演示模式默认指向火山引擎百炼 Ark 端点（OpenAI 兼容） */
+const AI_DEFAULTS: AISettings = {
+  provider: 'local',
+  baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+  model: 'doubao-seed-2-1-pro-260628',
+  apiKey: '',
+  hasApiKey: false,
+  structuredOutput: true,
+};
 
 /** 将 store 的 Settings 映射为 API 的 AppSettings */
 function toAppSettings(s: Settings): AppSettings {
@@ -23,6 +33,7 @@ function toAppSettings(s: Settings): AppSettings {
       quotationSubmitted: s.notifications.quotationSubmitted ?? true,
       approvalResult: s.notifications.approval ?? true,
     },
+    ai: s.ai,
   };
 }
 
@@ -43,6 +54,8 @@ export interface Settings {
   notifications: Record<string, boolean>;
   /** 审批配置（W5） */
   approval: ApprovalConfig;
+  /** AI 服务配置（P2-15，设置页可配置） */
+  ai: AISettings;
 }
 
 const DEFAULTS: Settings = {
@@ -64,6 +77,7 @@ const DEFAULTS: Settings = {
     amountThreshold: 50000,
     approverId: supervisorUser.id,
   },
+  ai: { ...AI_DEFAULTS },
 };
 
 interface SettingsState extends Settings {
@@ -80,6 +94,7 @@ function loadSettings(): Settings {
     ...saved,
     notifications: { ...DEFAULTS.notifications, ...(saved.notifications ?? {}) },
     approval: { ...DEFAULTS.approval, ...(saved.approval ?? {}) },
+    ai: { ...AI_DEFAULTS, ...(saved.ai ?? {}) },
   };
 }
 
@@ -95,9 +110,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loadFromApi: async () => {
     try {
       const remote = await settingsApi.get();
-      // 仅覆盖 approval 部分，notifications/基本配置保留本地
-      set({ approval: remote.approval });
-      persist({ ...get(), approval: remote.approval });
+      // 仅覆盖 approval / ai 部分，notifications/基本配置保留本地
+      set({ approval: remote.approval, ai: remote.ai });
+      persist({ ...get(), approval: remote.approval, ai: remote.ai });
     } catch {
       /* API 不可用时使用本地设置 */
     }
@@ -115,6 +130,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       timeoutThresholdHours: patch.timeoutThresholdHours ?? state.timeoutThresholdHours,
       notifications: patch.notifications ?? state.notifications,
       approval: patch.approval ?? state.approval,
+      ai: patch.ai ?? state.ai,
     };
     set(next);
     persist(next);

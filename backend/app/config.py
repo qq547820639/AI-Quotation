@@ -278,8 +278,9 @@ AI_PROVIDER = os.environ.get("AI_PROVIDER", "local").strip().lower()
 AI_API_KEY = os.environ.get("AI_API_KEY", "")
 
 # OpenAI 兼容端点（/v1/chat/completions）：形如 https://api.openai.com/v1
-AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
+# 默认指向火山引擎百炼 Ark 端点（OpenAI 兼容），演示模式开箱即用。
+AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
+AI_MODEL = os.environ.get("AI_MODEL", "doubao-seed-2-1-pro-260628")
 
 # 单次请求超时（秒）
 AI_TIMEOUT_SECONDS = float(os.environ.get("AI_TIMEOUT_SECONDS", "30"))

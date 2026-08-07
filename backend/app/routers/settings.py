@@ -47,6 +47,13 @@ def update_settings(
     s.notification_deadline_reminder_hours = body.notification.deadlineReminderHours
     s.notification_quotation_submitted = body.notification.quotationSubmitted
     s.notification_approval_result = body.notification.approvalResult
+    # AI 配置：apiKey 为空或为脱敏形态（含 *）时保持不变，避免覆盖已有密钥
+    if body.ai.apiKey and "*" not in body.ai.apiKey:
+        s.ai_api_key = body.ai.apiKey
+    s.ai_provider = body.ai.provider
+    s.ai_base_url = body.ai.baseUrl
+    s.ai_model = body.ai.model
+    s.ai_structured_output = body.ai.structuredOutput
     db.commit()
     db.refresh(s)
     return settings_to_schema(s)

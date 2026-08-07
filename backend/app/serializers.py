@@ -19,7 +19,7 @@ from .schemas import (
     InquirySchema, InquiryItemSchema, InquiryLogSchema, ApprovalNodeSchema,
     QuotationSchema, QuotationItemSchema, SupplierSchema, MaterialSchema, UserSchema,
     NotificationSchema, AppSettingsSchema, ApprovalSettings, NotificationSettings,
-    AttachmentSchema,
+    AISettings, AttachmentSchema,
 )
 
 
@@ -222,6 +222,15 @@ def notification_to_schema(n: Notification) -> NotificationSchema:
     )
 
 
+def _mask_key(key: str) -> str:
+    """脱敏 API Key：仅保留后 4 位，其余以 * 替代；空串返回空串。"""
+    if not key:
+        return ""
+    if len(key) <= 4:
+        return "****"
+    return "*" * (len(key) - 4) + key[-4:]
+
+
 def settings_to_schema(s: AppSettings) -> AppSettingsSchema:
     return AppSettingsSchema(
         approval=ApprovalSettings(
@@ -234,5 +243,13 @@ def settings_to_schema(s: AppSettings) -> AppSettingsSchema:
             deadlineReminderHours=s.notification_deadline_reminder_hours,
             quotationSubmitted=s.notification_quotation_submitted,
             approvalResult=s.notification_approval_result,
+        ),
+        ai=AISettings(
+            provider=s.ai_provider or "local",
+            baseUrl=s.ai_base_url or "",
+            model=s.ai_model or "",
+            apiKey=_mask_key(s.ai_api_key),
+            hasApiKey=bool(s.ai_api_key),
+            structuredOutput=s.ai_structured_output,
         ),
     )

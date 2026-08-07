@@ -3,6 +3,16 @@
  */
 import { client } from './client';
 
+export interface AISettings {
+  provider: 'local' | 'remote';
+  baseUrl: string;
+  model: string;
+  /** 脱敏回显（尾 4 位）；提交时为空或含 * 视为保持不变 */
+  apiKey: string;
+  hasApiKey: boolean;
+  structuredOutput: boolean;
+}
+
 export interface AppSettings {
   approval: {
     enabled: boolean;
@@ -15,6 +25,7 @@ export interface AppSettings {
     quotationSubmitted: boolean;
     approvalResult: boolean;
   };
+  ai: AISettings;
 }
 
 export const settingsApi = {

@@ -36,14 +36,23 @@ _provider_override: Optional[AIProvider] = None
 _provider_cache: Optional[AIProvider] = None
 
 
-def _build_provider() -> AIProvider:
-    """工厂：AI_PROVIDER=remote 且配置了 AI_API_KEY 时使用远程，否则本地规则。"""
-    mode = AI_PROVIDER
-    if mode == "remote" and AI_API_KEY:
+def build_provider(
+    provider_mode: str = "local",
+    api_key: str = "",
+    base_url: str = "",
+    model: str = "",
+    structured_output: bool = True,
+) -> AIProvider:
+    """按显式配置构建 Provider。
+
+    provider_mode == "remote" 且 api_key 非空时返回远程 LLM，否则返回本地规则。
+    base_url/model 为空时回退环境变量默认值。供设置页配置（DB）驱动运行时使用。
+    """
+    if provider_mode == "remote" and api_key:
         return RemoteLLMProvider(
-            api_key=AI_API_KEY,
-            base_url=AI_BASE_URL,
-            model=AI_MODEL,
+            api_key=api_key,
+            base_url=base_url or AI_BASE_URL,
+            model=model or AI_MODEL,
             timeout_seconds=AI_TIMEOUT_SECONDS,
             max_retries=AI_MAX_RETRIES,
             max_concurrency=AI_MAX_CONCURRENCY,
@@ -53,9 +62,20 @@ def _build_provider() -> AIProvider:
             cost_per_1k_prompt=AI_COST_PER_1K_PROMPT_TOKENS,
             cost_per_1k_completion=AI_COST_PER_1K_COMPLETION_TOKENS,
             budget_max_cost=AI_BUDGET_MAX_COST,
-            structured_output=AI_STRUCTURED_OUTPUT,
+            structured_output=structured_output,
         )
     return LocalRuleProvider()
+
+
+def _build_provider() -> AIProvider:
+    """工厂：AI_PROVIDER=remote 且配置了 AI_API_KEY 时使用远程，否则本地规则。"""
+    return build_provider(
+        provider_mode=AI_PROVIDER,
+        api_key=AI_API_KEY,
+        base_url=AI_BASE_URL,
+        model=AI_MODEL,
+        structured_output=AI_STRUCTURED_OUTPUT,
+    )
 
 
 def get_provider() -> AIProvider:
@@ -65,6 +85,11 @@ def get_provider() -> AIProvider:
     if _provider_cache is None:
         _provider_cache = _build_provider()
     return _provider_cache
+
+
+def get_provider_override() -> Optional[AIProvider]:
+    """返回测试注入的 Provider；未注入返回 None。"""
+    return _provider_override
 
 
 def set_provider(provider: AIProvider) -> None:
