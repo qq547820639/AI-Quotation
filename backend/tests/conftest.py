@@ -12,6 +12,8 @@ _tmpdir = tempfile.mkdtemp(prefix="procurement-test-")
 os.environ["DB_PATH"] = os.path.join(_tmpdir, "test.db")
 # 通用测试以演示模式运行（快捷登录），生产鉴权路径由 test_auth_security.py 单独覆盖
 os.environ.setdefault("APP_DEMO_MODE", "true")
+# 演示模式测试密钥：仅用于测试环境，绝不使用真实演示密钥
+os.environ.setdefault("AI_DEMO_API_KEY", "ark-test-demo-key")
 
 import pytest
 from fastapi.testclient import TestClient

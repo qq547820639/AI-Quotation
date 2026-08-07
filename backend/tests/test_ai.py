@@ -686,3 +686,28 @@ def test_ai_provider_respects_db_settings():
             db.commit()
         db.close()
         reset_provider()
+
+
+def test_provider_demo_mode_uses_builtin_key():
+    """demo 模式使用内置演示密钥，无需 api_key，开箱即用指向默认端点。"""
+    from app.ai import build_provider
+    from app.ai.remote import RemoteLLMProvider
+    from app.config import AI_DEMO_API_KEY, AI_BASE_URL, AI_MODEL
+
+    provider = build_provider(provider_mode="demo", api_key="", base_url="", model="")
+    assert isinstance(provider, RemoteLLMProvider)
+    assert provider._api_key == AI_DEMO_API_KEY
+    assert provider._base_url == AI_BASE_URL
+    assert provider.model == AI_MODEL
+
+
+def test_provider_modes_remote_and_local():
+    """local → 本地规则；demo → 远程；remote 无 key → 本地。"""
+    from app.ai import build_provider
+    from app.ai.remote import RemoteLLMProvider
+    from app.ai.local import LocalRuleProvider
+
+    assert isinstance(build_provider(provider_mode="local"), LocalRuleProvider)
+    assert isinstance(build_provider(provider_mode="demo"), RemoteLLMProvider)
+    assert isinstance(build_provider(provider_mode="remote", api_key=""), LocalRuleProvider)
+    assert isinstance(build_provider(provider_mode="remote", api_key="k"), RemoteLLMProvider)

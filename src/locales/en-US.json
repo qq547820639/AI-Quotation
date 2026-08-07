@@ -1424,7 +1424,10 @@
       "title": "AI Settings",
       "provider": "AI Provider",
       "providerLocal": "Local Rule Engine",
+      "providerDemo": "Demo Mode (built-in key)",
       "providerRemote": "Remote LLM (OpenAI compatible)",
+      "demoHint": "Enabled by default, works out of the box, no key needed",
+      "demoKeyBuiltin": "Built-in demo key",
       "baseUrl": "Base URL",
       "model": "Model",
       "apiKey": "API Key",
@@ -1432,6 +1435,7 @@
       "apiKeyMasked": "Configured, enter a new key to replace",
       "structuredOutput": "Structured Output",
       "structuredOutputDesc": "Constrain the model to return valid JSON, strictly validated with Pydantic",
+      "demoKeyHint": "Demo mode calls Volcano Ark with a built-in key stored server-side; never sent to the frontend.",
       "keyHint": "API Key is stored server-side only and masked on display; never sent to the frontend.",
       "saveSuccess": "AI settings saved"
     },

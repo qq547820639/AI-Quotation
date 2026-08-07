@@ -269,16 +269,24 @@ TRUSTED_PROXY = [p.strip() for p in TRUSTED_PROXY if p.strip()]
 
 # ============ AI 服务（P1-9 Task 14） ============
 
-# Provider 模式：local（本地规则，默认，不调用外部 API）/ remote（OpenAI 兼容远程 LLM）
-# 仅当 AI_PROVIDER=remote 且配置了 AI_API_KEY 时才启用远程；否则回退本地规则。
-# 默认 local 且 AI_API_KEY 留空，保证测试/CI 不调用外部 API、不发送任何数据。
+# Provider 模式：local（本地规则，不调用外部 API）/ demo（内置演示密钥，开箱即用）
+# / remote（OpenAI 兼容远程 LLM，用户自填密钥）。
+# - demo：使用 AI_DEMO_API_KEY 环境变量指向 AI_BASE_URL/AI_MODEL，无需前端配置即可调用。
+# - remote：仅当 AI_PROVIDER=remote 且非空 AI_API_KEY（或设置页 DB key）时才启用远程。
+# - local：纯本地规则，不调用外部 API。
+# 默认 local 且不内置 key，保证测试/CI 不调用外部 API、不发送任何数据。
 AI_PROVIDER = os.environ.get("AI_PROVIDER", "local").strip().lower()
+
+# 演示模式密钥（仅存服务端环境变量，绝不写入代码/发送到前端）。
+# 未配置时演示模式（demo）回退本地规则，不调用外部 API。生产环境请用 AI_API_KEY
+# 注入自己的密钥。
+AI_DEMO_API_KEY = os.environ.get("AI_DEMO_API_KEY", "")
 
 # API Key 仅存服务端环境变量，绝不发送到前端。
 AI_API_KEY = os.environ.get("AI_API_KEY", "")
 
 # OpenAI 兼容端点（/v1/chat/completions）：形如 https://api.openai.com/v1
-# 默认指向火山引擎百炼 Ark 端点（OpenAI 兼容），演示模式开箱即用。
+# 默认指向火山引擎百炼 Ark 端点（OpenAI 兼容），演示/远程模式开箱即用。
 AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
 AI_MODEL = os.environ.get("AI_MODEL", "doubao-seed-2-1-pro-260628")
 
