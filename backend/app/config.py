@@ -4,6 +4,14 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 加载本地 .env（若存在，放入 FERNET_KEY 等解密密钥；.env 已被 .gitignore 排除，不入库）
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except Exception:  # noqa: BLE001 - dotenv 可选，缺失不影响运行
+    pass
+
 DB_PATH = os.environ.get("DB_PATH", str(BASE_DIR / "procurement.db"))
 # 支持 DATABASE_URL 环境变量（如 postgresql://...），否则回退到本地 SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -277,10 +285,27 @@ TRUSTED_PROXY = [p.strip() for p in TRUSTED_PROXY if p.strip()]
 # 默认 local 且不内置 key，保证测试/CI 不调用外部 API、不发送任何数据。
 AI_PROVIDER = os.environ.get("AI_PROVIDER", "local").strip().lower()
 
-# 演示模式密钥（仅存服务端环境变量，绝不写入代码/发送到前端）。
-# 未配置时演示模式（demo）回退本地规则，不调用外部 API。生产环境请用 AI_API_KEY
-# 注入自己的密钥。
-AI_DEMO_API_KEY = os.environ.get("AI_DEMO_API_KEY", "")
+# 演示模式密钥（加密存储，仅存服务端，绝不写入代码明文/发送到前端）。
+# 用 FERNET_KEY 对称解密出明文；未配置 FERNET_KEY 或解密失败时回退 AI_DEMO_API_KEY
+# 明文环境变量。两者皆无时演示模式（demo）回退本地规则，不调用外部 API。
+AI_DEMO_KEY_CIPHERTEXT = (
+    "gAAAAABqdU7LWbbFvvAKzFb4N_yxehQefxa1wgx-OzIPJiqsm6Taq08IIP9m430BpEm0eLhqEt1TCgVPNTVnMCrAHcxiGF57tephyXWod0Q-Kqd770FTo0lCAomp4TfS2qAu01oqiCyb"
+)
+
+
+def _load_demo_api_key() -> str:
+    """优先用 FERNET_KEY 解密密文；失败/缺失时回退 AI_DEMO_API_KEY 明文。"""
+    fernet_key = os.environ.get("FERNET_KEY", "").strip()
+    if fernet_key:
+        try:
+            from cryptography.fernet import Fernet
+            return Fernet(fernet_key.encode()).decrypt(AI_DEMO_KEY_CIPHERTEXT).decode()
+        except Exception:  # noqa: BLE001 - 密钥错误/格式非法时回退
+            pass
+    return os.environ.get("AI_DEMO_API_KEY", "").strip()
+
+
+AI_DEMO_API_KEY = _load_demo_api_key()
 
 # API Key 仅存服务端环境变量，绝不发送到前端。
 AI_API_KEY = os.environ.get("AI_API_KEY", "")

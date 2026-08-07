@@ -14,6 +14,8 @@ os.environ["DB_PATH"] = os.path.join(_tmpdir, "test.db")
 os.environ.setdefault("APP_DEMO_MODE", "true")
 # 演示模式测试密钥：仅用于测试环境，绝不使用真实演示密钥
 os.environ.setdefault("AI_DEMO_API_KEY", "ark-test-demo-key")
+# 强制使用无效 FERNET_KEY，使测试回退到上面明文测试密钥，避免解密出真实演示密钥
+os.environ.setdefault("FERNET_KEY", "invalid-test-key-plaintext")
 
 import pytest
 from fastapi.testclient import TestClient

@@ -6,6 +6,8 @@ pytest==9.0.3
 pytest-cov==7.1.0
 httpx==0.28.1
 bcrypt==4.2.1
+# 对称加密（加密存储演示密钥，解密密钥 FERNET_KEY 走环境变量）
+cryptography==44.0.1
 alembic==1.14.0
 python-multipart==0.0.31
 # 传递依赖安全修复（pip-audit 门禁）：
