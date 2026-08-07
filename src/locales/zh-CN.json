@@ -1428,7 +1428,10 @@
       "title": "AI 设置",
       "provider": "AI 服务商",
       "providerLocal": "本地规则引擎",
+      "providerDemo": "演示模式（内置密钥）",
       "providerRemote": "远程大模型（OpenAI 兼容）",
+      "demoHint": "默认启用，开箱即用，无需填写密钥",
+      "demoKeyBuiltin": "内置演示密钥",
       "baseUrl": "接口地址（Base URL）",
       "model": "模型",
       "apiKey": "API Key",
@@ -1436,6 +1439,7 @@
       "apiKeyMasked": "已配置，输入新 Key 以替换",
       "structuredOutput": "结构化输出",
       "structuredOutputDesc": "约束模型返回合法 JSON，并用 Pydantic 严格校验",
+      "demoKeyHint": "演示模式使用内置密钥调用火山引擎百炼 Ark，密钥保存在服务端，不会发送到前端。",
       "keyHint": "API Key 仅保存在服务端，回显时脱敏，不会发送到前端。",
       "saveSuccess": "AI 设置已保存"
     },

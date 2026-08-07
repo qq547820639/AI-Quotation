@@ -18,7 +18,12 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { SaveOutlined, InfoCircleOutlined, SafetyCertificateOutlined, RobotOutlined } from '@ant-design/icons';
+import {
+  SaveOutlined,
+  InfoCircleOutlined,
+  SafetyCertificateOutlined,
+  RobotOutlined,
+} from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/PageHeader';
 import Permission from '@/components/Permission';
@@ -28,6 +33,7 @@ import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import i18n from '@/i18n';
 import { removeKey, clearAll } from '@/utils/storage';
 import { useSettingsStore } from '@/store/useSettingsStore';
+import type { AISettings } from '@/api/settingsApi';
 
 const { Text, Paragraph } = Typography;
 
@@ -140,148 +146,184 @@ export default function SettingsPage() {
       <div>
         <PageHeader title={t('settings.title')} description={t('settings.description')} />
 
-      {/* 1. 基本信息设置 */}
-      <Card title={t('settings.basicTitle')} style={cardStyle}>
-        <Row gutter={[24, 16]}>
-          <Col xs={24} sm={12} md={8}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              {t('settings.basic.organization')}
-            </div>
-            <Input
-              value={organization}
-              onChange={(e) => updateSettings({ organization: e.target.value })}
-              placeholder={t('settings.basic.organizationPlaceholder')}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              {t('settings.basic.systemName')}
-            </div>
-            <Input
-              value={systemName}
-              onChange={(e) => updateSettings({ systemName: e.target.value })}
-              placeholder={t('settings.basic.systemNamePlaceholder')}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('settings.basic.currency')}</div>
-            <Select
-              value={currency}
-              onChange={(val) => updateSettings({ currency: val })}
-              options={CURRENCY_OPTIONS}
-              style={{ width: '100%' }}
-            />
-          </Col>
-        </Row>
-        <div style={{ marginTop: 16 }}>
-          <Button
-            type="primary"
-            icon={<SaveOutlined />}
-            onClick={handleSaveBasic}
-          >
-            {t('common.save')}
-          </Button>
-        </div>
-      </Card>
-
-      {/* 2. 询价规则设置 */}
-      <Card title={t('settings.rulesTitle')} style={cardStyle}>
-        <Row gutter={[24, 16]}>
-          <Col xs={24} sm={12} md={8}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              {t('settings.rules.validDays')}
-            </div>
-            <InputNumber
-              value={validDays}
-              onChange={(v) => updateSettings({ validDays: v ?? 0 })}
-              min={1}
-              precision={0}
-              style={{ width: '100%' }}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              {t('settings.rules.deadlineLeadDays')}
-            </div>
-            <InputNumber
-              value={deadlineLeadDays}
-              onChange={(v) => updateSettings({ deadlineLeadDays: v ?? 0 })}
-              min={0}
-              precision={0}
-              style={{ width: '100%' }}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={8}>
-            <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              {t('settings.rules.timeoutThresholdHours')}
-            </div>
-            <InputNumber
-              value={timeoutThresholdHours}
-              onChange={(v) => updateSettings({ timeoutThresholdHours: v ?? 0 })}
-              min={1}
-              precision={0}
-              style={{ width: '100%' }}
-            />
-          </Col>
-        </Row>
-
-        <Divider style={{ margin: '20px 0 16px' }} />
-
-        {/* 综合评分权重（只读展示） */}
-        <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          {t('settings.scoreWeightsTitle')}
-          <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-            {t('settings.readonly')}
-          </Text>
-        </div>
-        <Space size={[16, 12]} wrap>
-          {SCORE_WEIGHTS.map((item) => (
-            <div
-              key={item.key}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '8px 14px',
-                background: 'var(--color-bg)',
-                borderRadius: 6,
-                minWidth: 140,
-              }}
-            >
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background: item.color,
-                }}
+        {/* 1. 基本信息设置 */}
+        <Card title={t('settings.basicTitle')} style={cardStyle}>
+          <Row gutter={[24, 16]}>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.basic.organization')}
+              </div>
+              <Input
+                value={organization}
+                onChange={(e) => updateSettings({ organization: e.target.value })}
+                placeholder={t('settings.basic.organizationPlaceholder')}
               />
-              <Text>{t(`settings.scoreWeights.${item.key}`)}</Text>
-              <Text strong style={{ marginLeft: 'auto' }}>
-                {item.weight}%
-              </Text>
-            </div>
-          ))}
-        </Space>
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.basic.systemName')}
+              </div>
+              <Input
+                value={systemName}
+                onChange={(e) => updateSettings({ systemName: e.target.value })}
+                placeholder={t('settings.basic.systemNamePlaceholder')}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.basic.currency')}
+              </div>
+              <Select
+                value={currency}
+                onChange={(val) => updateSettings({ currency: val })}
+                options={CURRENCY_OPTIONS}
+                style={{ width: '100%' }}
+              />
+            </Col>
+          </Row>
+          <div style={{ marginTop: 16 }}>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveBasic}>
+              {t('common.save')}
+            </Button>
+          </div>
+        </Card>
 
-        <div style={{ marginTop: 16 }}>
-          <Button
-            type="primary"
-            icon={<SaveOutlined />}
-            onClick={handleSaveRules}
-          >
-            {t('common.save')}
-          </Button>
-        </div>
-      </Card>
+        {/* 2. 询价规则设置 */}
+        <Card title={t('settings.rulesTitle')} style={cardStyle}>
+          <Row gutter={[24, 16]}>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.rules.validDays')}
+              </div>
+              <InputNumber
+                value={validDays}
+                onChange={(v) => updateSettings({ validDays: v ?? 0 })}
+                min={1}
+                precision={0}
+                style={{ width: '100%' }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.rules.deadlineLeadDays')}
+              </div>
+              <InputNumber
+                value={deadlineLeadDays}
+                onChange={(v) => updateSettings({ deadlineLeadDays: v ?? 0 })}
+                min={0}
+                precision={0}
+                style={{ width: '100%' }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {t('settings.rules.timeoutThresholdHours')}
+              </div>
+              <InputNumber
+                value={timeoutThresholdHours}
+                onChange={(v) => updateSettings({ timeoutThresholdHours: v ?? 0 })}
+                min={1}
+                precision={0}
+                style={{ width: '100%' }}
+              />
+            </Col>
+          </Row>
 
-      {/* 3. 通知设置 */}
-      <Card title={t('settings.notification.title')} style={cardStyle}>
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          {NOTIFICATION_ITEMS.map((item) => (
+          <Divider style={{ margin: '20px 0 16px' }} />
+
+          {/* 综合评分权重（只读展示） */}
+          <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+            {t('settings.scoreWeightsTitle')}
+            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+              {t('settings.readonly')}
+            </Text>
+          </div>
+          <Space size={[16, 12]} wrap>
+            {SCORE_WEIGHTS.map((item) => (
+              <div
+                key={item.key}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '8px 14px',
+                  background: 'var(--color-bg)',
+                  borderRadius: 6,
+                  minWidth: 140,
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: item.color,
+                  }}
+                />
+                <Text>{t(`settings.scoreWeights.${item.key}`)}</Text>
+                <Text strong style={{ marginLeft: 'auto' }}>
+                  {item.weight}%
+                </Text>
+              </div>
+            ))}
+          </Space>
+
+          <div style={{ marginTop: 16 }}>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveRules}>
+              {t('common.save')}
+            </Button>
+          </div>
+        </Card>
+
+        {/* 3. 通知设置 */}
+        <Card title={t('settings.notification.title')} style={cardStyle}>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {NOTIFICATION_ITEMS.map((item) => (
+              <div
+                key={item.key}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 0',
+                  borderBottom: '1px solid var(--color-border-light)',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 14, color: 'var(--color-text)' }}>
+                    {t(`settings.notification.${item.key}`)}
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t(`settings.notification.${item.key}Desc`)}
+                  </Text>
+                </div>
+                <Switch
+                  checked={notifications[item.key]}
+                  onChange={(checked) => handleToggleNotification(item.key, checked)}
+                />
+              </div>
+            ))}
+          </Space>
+          <div style={{ marginTop: 16 }}>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveNotifications}>
+              {t('common.save')}
+            </Button>
+          </div>
+        </Card>
+
+        {/* 4. 审批配置（W5） */}
+        <Card
+          title={
+            <Space>
+              <SafetyCertificateOutlined style={{ color: '#722ED1' }} />
+              <span>{t('settings.approval.title')}</span>
+            </Space>
+          }
+          style={cardStyle}
+        >
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <div
-              key={item.key}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -292,269 +334,256 @@ export default function SettingsPage() {
             >
               <div>
                 <div style={{ fontSize: 14, color: 'var(--color-text)' }}>
-                  {t(`settings.notification.${item.key}`)}
+                  {t('settings.approval.enabled')}
                 </div>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t(`settings.notification.${item.key}Desc`)}
+                  {t('settings.approval.enabledDesc')}
                 </Text>
               </div>
               <Switch
-                checked={notifications[item.key]}
+                checked={approval.enabled}
                 onChange={(checked) =>
-                  handleToggleNotification(item.key, checked)
+                  updateSettings({ approval: { ...approval, enabled: checked } })
                 }
               />
             </div>
-          ))}
-        </Space>
-        <div style={{ marginTop: 16 }}>
-          <Button
-            type="primary"
-            icon={<SaveOutlined />}
-            onClick={handleSaveNotifications}
-          >
-            {t('common.save')}
-          </Button>
-        </div>
-      </Card>
-
-      {/* 4. 审批配置（W5） */}
-      <Card
-        title={
-          <Space>
-            <SafetyCertificateOutlined style={{ color: '#722ED1' }} />
-            <span>{t('settings.approval.title')}</span>
-          </Space>
-        }
-        style={cardStyle}
-      >
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '12px 0',
-              borderBottom: '1px solid var(--color-border-light)',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 14, color: 'var(--color-text)' }}>{t('settings.approval.enabled')}</div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('settings.approval.enabledDesc')}
-              </Text>
-            </div>
-            <Switch
-              checked={approval.enabled}
-              onChange={(checked) => updateSettings({ approval: { ...approval, enabled: checked } })}
-            />
-          </div>
-          <Row gutter={[24, 16]}>
-            <Col xs={24} sm={12}>
-              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                {t('settings.approval.amountThresholdLabel')}
-              </div>
-              <InputNumber
-                value={approval.amountThreshold}
-                onChange={(v) =>
-                  updateSettings({ approval: { ...approval, amountThreshold: v ?? 0 } })
-                }
-                min={0}
-                precision={2}
-                style={{ width: '100%' }}
-                formatter={(value) => `¥ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                parser={(value) => Number(value?.replace(/¥\s?|(,*)/g, '') || 0)}
-                disabled={!approval.enabled}
-              />
-            </Col>
-            <Col xs={24} sm={12}>
-              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>{t('settings.approval.approverId')}</div>
-              <Select
-                value={approval.approverId}
-                onChange={(val) => updateSettings({ approval: { ...approval, approverId: val } })}
-                style={{ width: '100%' }}
-                disabled={!approval.enabled}
-                options={users
-                  .filter((u) => u.role === '采购主管' || u.role === '管理员')
-                  .map((u) => ({
-                    label: t('settings.about.userWithRoleOrg', { name: u.name, role: t(`enum.role.${u.role}`), org: u.organization }),
-                    value: u.id,
-                  }))}
-              />
-            </Col>
-          </Row>
-          <div>
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveApproval}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </Space>
-      </Card>
-
-      {/* 5. AI 设置（P2-15） */}
-      <Card
-        title={
-          <Space>
-            <RobotOutlined style={{ color: 'var(--color-primary)' }} />
-            <span>{t('settings.ai.title')}</span>
-          </Space>
-        }
-        style={cardStyle}
-      >
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Row gutter={[24, 16]}>
-            <Col xs={24} sm={12} md={8}>
-              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                {t('settings.ai.provider')}
-              </div>
-              <Select
-                value={ai.provider}
-                onChange={(val) => updateSettings({ ai: { ...ai, provider: val } })}
-                style={{ width: '100%' }}
-                options={[
-                  { label: t('settings.ai.providerLocal'), value: 'local' },
-                  { label: t('settings.ai.providerRemote'), value: 'remote' },
-                ]}
-              />
-            </Col>
-            <Col xs={24} sm={12} md={8}>
-              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                {t('settings.ai.baseUrl')}
-              </div>
-              <Input
-                value={ai.baseUrl}
-                onChange={(e) => updateSettings({ ai: { ...ai, baseUrl: e.target.value } })}
-                placeholder="https://ark.cn-beijing.volces.com/api/v3"
-                disabled={ai.provider !== 'remote'}
-              />
-            </Col>
-            <Col xs={24} sm={12} md={8}>
-              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                {t('settings.ai.model')}
-              </div>
-              <Input
-                value={ai.model}
-                onChange={(e) => updateSettings({ ai: { ...ai, model: e.target.value } })}
-                placeholder="doubao-seed-2-1-pro-260628"
-                disabled={ai.provider !== 'remote'}
-              />
-            </Col>
-            <Col xs={24} sm={12} md={8}>
-              <div style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                {t('settings.ai.apiKey')}
-              </div>
-              <Input.Password
-                value={ai.apiKey}
-                onChange={(e) => updateSettings({ ai: { ...ai, apiKey: e.target.value } })}
-                placeholder={ai.hasApiKey ? t('settings.ai.apiKeyMasked') : t('settings.ai.apiKeyPlaceholder')}
-                autoComplete="new-password"
-                disabled={ai.provider !== 'remote'}
-              />
-            </Col>
-            <Col xs={24} sm={12} md={8}>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingTop: 18,
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 14, color: 'var(--color-text)' }}>
-                    {t('settings.ai.structuredOutput')}
-                  </div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {t('settings.ai.structuredOutputDesc')}
-                  </Text>
+            <Row gutter={[24, 16]}>
+              <Col xs={24} sm={12}>
+                <div
+                  style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}
+                >
+                  {t('settings.approval.amountThresholdLabel')}
                 </div>
-                <Switch
-                  checked={ai.structuredOutput}
-                  onChange={(checked) =>
-                    updateSettings({ ai: { ...ai, structuredOutput: checked } })
+                <InputNumber
+                  value={approval.amountThreshold}
+                  onChange={(v) =>
+                    updateSettings({ approval: { ...approval, amountThreshold: v ?? 0 } })
                   }
-                  disabled={ai.provider !== 'remote'}
+                  min={0}
+                  precision={2}
+                  style={{ width: '100%' }}
+                  formatter={(value) => `¥ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                  parser={(value) => Number(value?.replace(/¥\s?|(,*)/g, '') || 0)}
+                  disabled={!approval.enabled}
                 />
-              </div>
-            </Col>
-          </Row>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {t('settings.ai.keyHint')}
-          </Text>
-          <div>
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAI}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </Space>
-      </Card>
-
-      {/* 6. 关于 */}
-      <Card
-        title={
-          <Space>
-            <InfoCircleOutlined style={{ color: 'var(--color-primary)' }} />
-            <span>{t('settings.about.title')}</span>
+              </Col>
+              <Col xs={24} sm={12}>
+                <div
+                  style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}
+                >
+                  {t('settings.approval.approverId')}
+                </div>
+                <Select
+                  value={approval.approverId}
+                  onChange={(val) => updateSettings({ approval: { ...approval, approverId: val } })}
+                  style={{ width: '100%' }}
+                  disabled={!approval.enabled}
+                  options={users
+                    .filter((u) => u.role === '采购主管' || u.role === '管理员')
+                    .map((u) => ({
+                      label: t('settings.about.userWithRoleOrg', {
+                        name: u.name,
+                        role: t(`enum.role.${u.role}`),
+                        org: u.organization,
+                      }),
+                      value: u.id,
+                    }))}
+                />
+              </Col>
+            </Row>
+            <div>
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveApproval}>
+                {t('common.save')}
+              </Button>
+            </div>
           </Space>
-        }
-        style={cardStyle}
-      >
-        <Descriptions column={1} size="small">
-          <Descriptions.Item label={t('settings.about.version')}>
-            <Tag color="blue">v1.0.0</Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.about.currentUser')}>
-            {t('settings.about.userWithRole', { name: currentUser.name, role: t(`enum.role.${currentUser.role}`) })}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.about.organization')}>
-            {currentUser.organization}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.about.techStack')}>
-            <Space size={[4, 4]} wrap>
-              <Tag>React 18</Tag>
-              <Tag>TypeScript 5</Tag>
-              <Tag>Vite 5</Tag>
-              <Tag>Ant Design 5</Tag>
-              <Tag>Zustand 4</Tag>
-              <Tag>React Router 6</Tag>
-              <Tag>dayjs</Tag>
-              <Tag>ECharts 5</Tag>
-            </Space>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.about.descriptionLabel')}>
-            <Paragraph style={{ margin: 0, color: 'var(--color-text-secondary)' }}>
-              {t('settings.about.description')}
-            </Paragraph>
-          </Descriptions.Item>
-        </Descriptions>
-      </Card>
+        </Card>
 
-      {/* 5. 数据管理 */}
-      <Card title={t('settings.dataManagement.title')} style={cardStyle}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          <div>
-            <Text
-              type="secondary"
-              style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
-            >
-              {t('settings.dataManagement.clearDraftDesc')}
+        {/* 5. AI 设置（P2-15） */}
+        <Card
+          title={
+            <Space>
+              <RobotOutlined style={{ color: 'var(--color-primary)' }} />
+              <span>{t('settings.ai.title')}</span>
+            </Space>
+          }
+          style={cardStyle}
+        >
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Row gutter={[24, 16]}>
+              <Col xs={24} sm={12} md={8}>
+                <div
+                  style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}
+                >
+                  {t('settings.ai.provider')}
+                </div>
+                <Select
+                  value={ai.provider}
+                  onChange={(val) =>
+                    updateSettings({ ai: { ...ai, provider: val as AISettings['provider'] } })
+                  }
+                  style={{ width: '100%' }}
+                  options={[
+                    { label: t('settings.ai.providerLocal'), value: 'local' },
+                    { label: t('settings.ai.providerDemo'), value: 'demo' },
+                    { label: t('settings.ai.providerRemote'), value: 'remote' },
+                  ]}
+                />
+                {ai.provider === 'demo' && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('settings.ai.demoHint')}
+                  </Text>
+                )}
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <div
+                  style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}
+                >
+                  {t('settings.ai.baseUrl')}
+                </div>
+                <Input
+                  value={ai.baseUrl}
+                  onChange={(e) => updateSettings({ ai: { ...ai, baseUrl: e.target.value } })}
+                  placeholder="https://ark.cn-beijing.volces.com/api/v3"
+                  disabled={ai.provider === 'local'}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <div
+                  style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}
+                >
+                  {t('settings.ai.model')}
+                </div>
+                <Input
+                  value={ai.model}
+                  onChange={(e) => updateSettings({ ai: { ...ai, model: e.target.value } })}
+                  placeholder="doubao-seed-2-1-pro-260628"
+                  disabled={ai.provider === 'local'}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <div
+                  style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}
+                >
+                  {t('settings.ai.apiKey')}
+                </div>
+                {ai.provider === 'demo' ? (
+                  <Input value={t('settings.ai.demoKeyBuiltin')} disabled />
+                ) : (
+                  <Input.Password
+                    value={ai.apiKey}
+                    onChange={(e) => updateSettings({ ai: { ...ai, apiKey: e.target.value } })}
+                    placeholder={
+                      ai.hasApiKey
+                        ? t('settings.ai.apiKeyMasked')
+                        : t('settings.ai.apiKeyPlaceholder')
+                    }
+                    autoComplete="new-password"
+                    disabled={ai.provider !== 'remote'}
+                  />
+                )}
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingTop: 18,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 14, color: 'var(--color-text)' }}>
+                      {t('settings.ai.structuredOutput')}
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('settings.ai.structuredOutputDesc')}
+                    </Text>
+                  </div>
+                  <Switch
+                    checked={ai.structuredOutput}
+                    onChange={(checked) =>
+                      updateSettings({ ai: { ...ai, structuredOutput: checked } })
+                    }
+                    disabled={ai.provider === 'local'}
+                  />
+                </div>
+              </Col>
+            </Row>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {ai.provider === 'demo' ? t('settings.ai.demoKeyHint') : t('settings.ai.keyHint')}
             </Text>
-            <Button onClick={handleClearDraft}>{t('settings.dataManagement.clearDraft')}</Button>
-          </div>
-          <Divider style={{ margin: '4px 0' }} />
-          <div>
-            <Text
-              type="secondary"
-              style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
-            >
-              {t('settings.dataManagement.resetAllDesc')}
-            </Text>
-            <Button danger onClick={handleResetAll}>
-              {t('settings.dataManagement.resetAll')}
-            </Button>
-          </div>
-        </Space>
-      </Card>
+            <div>
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAI}>
+                {t('common.save')}
+              </Button>
+            </div>
+          </Space>
+        </Card>
+
+        {/* 6. 关于 */}
+        <Card
+          title={
+            <Space>
+              <InfoCircleOutlined style={{ color: 'var(--color-primary)' }} />
+              <span>{t('settings.about.title')}</span>
+            </Space>
+          }
+          style={cardStyle}
+        >
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label={t('settings.about.version')}>
+              <Tag color="blue">v1.0.0</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('settings.about.currentUser')}>
+              {t('settings.about.userWithRole', {
+                name: currentUser.name,
+                role: t(`enum.role.${currentUser.role}`),
+              })}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('settings.about.organization')}>
+              {currentUser.organization}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('settings.about.techStack')}>
+              <Space size={[4, 4]} wrap>
+                <Tag>React 18</Tag>
+                <Tag>TypeScript 5</Tag>
+                <Tag>Vite 5</Tag>
+                <Tag>Ant Design 5</Tag>
+                <Tag>Zustand 4</Tag>
+                <Tag>React Router 6</Tag>
+                <Tag>dayjs</Tag>
+                <Tag>ECharts 5</Tag>
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('settings.about.descriptionLabel')}>
+              <Paragraph style={{ margin: 0, color: 'var(--color-text-secondary)' }}>
+                {t('settings.about.description')}
+              </Paragraph>
+            </Descriptions.Item>
+          </Descriptions>
+        </Card>
+
+        {/* 5. 数据管理 */}
+        <Card title={t('settings.dataManagement.title')} style={cardStyle}>
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                {t('settings.dataManagement.clearDraftDesc')}
+              </Text>
+              <Button onClick={handleClearDraft}>{t('settings.dataManagement.clearDraft')}</Button>
+            </div>
+            <Divider style={{ margin: '4px 0' }} />
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                {t('settings.dataManagement.resetAllDesc')}
+              </Text>
+              <Button danger onClick={handleResetAll}>
+                {t('settings.dataManagement.resetAll')}
+              </Button>
+            </div>
+          </Space>
+        </Card>
       </div>
     </Permission>
   );

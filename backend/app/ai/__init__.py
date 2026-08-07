@@ -18,7 +18,7 @@ from typing import Any, Optional
 from ..config import (
     AI_API_KEY, AI_BASE_URL, AI_BUDGET_MAX_COST, AI_CIRCUIT_COOLDOWN_SECONDS, AI_CIRCUIT_ENABLED,
     AI_CIRCUIT_FAILURE_THRESHOLD, AI_COST_PER_1K_COMPLETION_TOKENS,
-    AI_COST_PER_1K_PROMPT_TOKENS, AI_MAX_CONCURRENCY, AI_MAX_RETRIES,
+    AI_COST_PER_1K_PROMPT_TOKENS, AI_DEMO_API_KEY, AI_MAX_CONCURRENCY, AI_MAX_RETRIES,
     AI_MODEL, AI_PROVIDER, AI_STRUCTURED_OUTPUT, AI_TIMEOUT_SECONDS,
 )
 from .base import AIProvider, AIProviderError, ProviderResult
@@ -36,6 +36,27 @@ _provider_override: Optional[AIProvider] = None
 _provider_cache: Optional[AIProvider] = None
 
 
+def _build_remote(
+    api_key: str, base_url: str, model: str, structured_output: bool
+) -> RemoteLLMProvider:
+    """构造远程 LLM Provider，统一承载 demo / remote 两种模式。"""
+    return RemoteLLMProvider(
+        api_key=api_key,
+        base_url=base_url or AI_BASE_URL,
+        model=model or AI_MODEL,
+        timeout_seconds=AI_TIMEOUT_SECONDS,
+        max_retries=AI_MAX_RETRIES,
+        max_concurrency=AI_MAX_CONCURRENCY,
+        circuit_failure_threshold=AI_CIRCUIT_FAILURE_THRESHOLD,
+        circuit_cooldown_seconds=AI_CIRCUIT_COOLDOWN_SECONDS,
+        circuit_enabled=AI_CIRCUIT_ENABLED,
+        cost_per_1k_prompt=AI_COST_PER_1K_PROMPT_TOKENS,
+        cost_per_1k_completion=AI_COST_PER_1K_COMPLETION_TOKENS,
+        budget_max_cost=AI_BUDGET_MAX_COST,
+        structured_output=structured_output,
+    )
+
+
 def build_provider(
     provider_mode: str = "local",
     api_key: str = "",
@@ -43,27 +64,20 @@ def build_provider(
     model: str = "",
     structured_output: bool = True,
 ) -> AIProvider:
-    """按显式配置构建 Provider。
+    """按显式配置构建 Provider。provider_mode 支持 local / demo / remote。
 
-    provider_mode == "remote" 且 api_key 非空时返回远程 LLM，否则返回本地规则。
+    - local：返回本地规则引擎（不调用外部 API）。
+    - demo：使用 AI_DEMO_API_KEY 环境变量，指向默认 Ark 端点，开箱即用；
+      未配置密钥时回退本地规则（不调用外部 API）。
+    - remote：仅当 api_key 非空时返回远程 LLM，否则回退本地规则。
     base_url/model 为空时回退环境变量默认值。供设置页配置（DB）驱动运行时使用。
     """
+    if provider_mode == "demo":
+        if AI_DEMO_API_KEY:
+            return _build_remote(AI_DEMO_API_KEY, base_url, model, structured_output)
+        return LocalRuleProvider()
     if provider_mode == "remote" and api_key:
-        return RemoteLLMProvider(
-            api_key=api_key,
-            base_url=base_url or AI_BASE_URL,
-            model=model or AI_MODEL,
-            timeout_seconds=AI_TIMEOUT_SECONDS,
-            max_retries=AI_MAX_RETRIES,
-            max_concurrency=AI_MAX_CONCURRENCY,
-            circuit_failure_threshold=AI_CIRCUIT_FAILURE_THRESHOLD,
-            circuit_cooldown_seconds=AI_CIRCUIT_COOLDOWN_SECONDS,
-            circuit_enabled=AI_CIRCUIT_ENABLED,
-            cost_per_1k_prompt=AI_COST_PER_1K_PROMPT_TOKENS,
-            cost_per_1k_completion=AI_COST_PER_1K_COMPLETION_TOKENS,
-            budget_max_cost=AI_BUDGET_MAX_COST,
-            structured_output=structured_output,
-        )
+        return _build_remote(api_key, base_url, model, structured_output)
     return LocalRuleProvider()
 
 

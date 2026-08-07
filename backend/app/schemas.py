@@ -320,8 +320,13 @@ class NotificationSettings(BaseModel):
 class AISettings(BaseModel):
     """AI 服务配置（P2-15：设置页可配置）。
 
+    provider ∈ {local, demo, remote}：
+    - local：本地规则引擎，不调用外部 API。
+    - demo：内置演示密钥，开箱即用指向火山引擎 Ark（密钥存服务端，前端不持有）。
+    - remote：用户自填 API Key 的远程大模型（OpenAI 兼容）。
+
     apiKey 回显时脱敏（仅尾 4 位），避免完整密钥离开服务端。hasApiKey 用于前端
-    判断是否已配置。提交时若 apiKey 为空或为脱敏形态（含 *），视为保持不变。
+    判断 remote 模式是否已配置。提交时若 apiKey 为空或为脱敏形态（含 *），视为保持不变。
     """
     provider: str = "local"
     baseUrl: str = ""

@@ -4,6 +4,14 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 加载本地 .env（若存在，放入 FERNET_KEY 等解密密钥；.env 已被 .gitignore 排除，不入库）
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except Exception:  # noqa: BLE001 - dotenv 可选，缺失不影响运行
+    pass
+
 DB_PATH = os.environ.get("DB_PATH", str(BASE_DIR / "procurement.db"))
 # 支持 DATABASE_URL 环境变量（如 postgresql://...），否则回退到本地 SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -269,16 +277,41 @@ TRUSTED_PROXY = [p.strip() for p in TRUSTED_PROXY if p.strip()]
 
 # ============ AI 服务（P1-9 Task 14） ============
 
-# Provider 模式：local（本地规则，默认，不调用外部 API）/ remote（OpenAI 兼容远程 LLM）
-# 仅当 AI_PROVIDER=remote 且配置了 AI_API_KEY 时才启用远程；否则回退本地规则。
-# 默认 local 且 AI_API_KEY 留空，保证测试/CI 不调用外部 API、不发送任何数据。
+# Provider 模式：local（本地规则，不调用外部 API）/ demo（内置演示密钥，开箱即用）
+# / remote（OpenAI 兼容远程 LLM，用户自填密钥）。
+# - demo：使用 AI_DEMO_API_KEY 环境变量指向 AI_BASE_URL/AI_MODEL，无需前端配置即可调用。
+# - remote：仅当 AI_PROVIDER=remote 且非空 AI_API_KEY（或设置页 DB key）时才启用远程。
+# - local：纯本地规则，不调用外部 API。
+# 默认 local 且不内置 key，保证测试/CI 不调用外部 API、不发送任何数据。
 AI_PROVIDER = os.environ.get("AI_PROVIDER", "local").strip().lower()
+
+# 演示模式密钥（加密存储，仅存服务端，绝不写入代码明文/发送到前端）。
+# 用 FERNET_KEY 对称解密出明文；未配置 FERNET_KEY 或解密失败时回退 AI_DEMO_API_KEY
+# 明文环境变量。两者皆无时演示模式（demo）回退本地规则，不调用外部 API。
+AI_DEMO_KEY_CIPHERTEXT = (
+    "gAAAAABqdU7LWbbFvvAKzFb4N_yxehQefxa1wgx-OzIPJiqsm6Taq08IIP9m430BpEm0eLhqEt1TCgVPNTVnMCrAHcxiGF57tephyXWod0Q-Kqd770FTo0lCAomp4TfS2qAu01oqiCyb"
+)
+
+
+def _load_demo_api_key() -> str:
+    """优先用 FERNET_KEY 解密密文；失败/缺失时回退 AI_DEMO_API_KEY 明文。"""
+    fernet_key = os.environ.get("FERNET_KEY", "").strip()
+    if fernet_key:
+        try:
+            from cryptography.fernet import Fernet
+            return Fernet(fernet_key.encode()).decrypt(AI_DEMO_KEY_CIPHERTEXT).decode()
+        except Exception:  # noqa: BLE001 - 密钥错误/格式非法时回退
+            pass
+    return os.environ.get("AI_DEMO_API_KEY", "").strip()
+
+
+AI_DEMO_API_KEY = _load_demo_api_key()
 
 # API Key 仅存服务端环境变量，绝不发送到前端。
 AI_API_KEY = os.environ.get("AI_API_KEY", "")
 
 # OpenAI 兼容端点（/v1/chat/completions）：形如 https://api.openai.com/v1
-# 默认指向火山引擎百炼 Ark 端点（OpenAI 兼容），演示模式开箱即用。
+# 默认指向火山引擎百炼 Ark 端点（OpenAI 兼容），演示/远程模式开箱即用。
 AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
 AI_MODEL = os.environ.get("AI_MODEL", "doubao-seed-2-1-pro-260628")
 

@@ -13,9 +13,9 @@ import { ok, fail, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'settings';
 
-/** 演示模式默认指向火山引擎百炼 Ark 端点（OpenAI 兼容） */
+/** 演示模式默认指向火山引擎百炼 Ark 端点（OpenAI 兼容），开箱即用 */
 const AI_DEFAULTS: AISettings = {
-  provider: 'local',
+  provider: 'demo',
   baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
   model: 'doubao-seed-2-1-pro-260628',
   apiKey: '',
