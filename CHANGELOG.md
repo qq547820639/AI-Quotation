@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+### 修复（收尾审计：干净签出复现不出 E2E 的绿）
+
+- **E2E 的"绿"依赖一个没写进仓库的宿主环境变量（高）**：`docker-compose.dev.yml` 硬注入
+  `DEMO_USER_PASSWORD=dev-demo-pass-12345678`（种子用户按它做哈希），而 `e2e/helpers.ts` 的兜底密码是
+  `123456`。CI 恰好在 compose 步骤与 playwright 步骤各写了一次同一个强密码把它盖住，
+  因此本地/干净签出一旦忘记导出该变量，前 5 次登录吃 401，随后被 `LOGIN_MAX_ATTEMPTS=5` 的锁定
+  换成全线 429 —— 读数像限流故障，实为配置漂移（`CHANGELOG` 里 `test123`→`123456` 是同一类第二次）。
+  现在 dev compose 改为 `${DEMO_USER_PASSWORD:-dev-demo-pass-12345678}`（宿主 env 真能覆盖，
+  README 的说法随之成立），helpers 兜底值对齐，`login()` 断言按 401 / 429 分别给出根因与复算命令。
+- **新增常驻门禁 `npm run e2e:config:check`**：`scripts/check-e2e-demo-password.mjs` 机械核对
+  "dev compose 注入默认值 / `e2e/helpers.ts` 兜底值 / README 对外承诺值"三处副本必须相等，
+  锚点未命中（位点被改写或删除）即失败；`--self-test` 带两条反证（注入漂移必须翻红、
+  删除位点必须报锚点未命中）。CI 的 `docker-e2e` job 在启动 compose 之前先跑它，配置漂移在 30 秒内判红，
+  不再由 180 个用例实例代为报错。
+- **README E2E 段两处失真更正**：用例规模写的是"7 个文件 / 28 条用例"（现算为 10 个 spec 文件 /
+  36 条 `test()` 声明 × 5 浏览器项目 = 180 用例实例）；运行前置写的 `docker compose up -d --build`
+  是生产形态（`APP_ENV=prod` fail-closed，缺 `.env` 强密钥拒绝启动；且 `clamav/clamav:stable`
+  无 linux/arm64 镜像，Apple Silicon 实测 `no matching manifest for linux/arm64/v8`），
+  本地 E2E 的正确形态是 `docker-compose.dev.yml`，现已写明完整三步复现入口。
+
 ### 修复（本轮：实时推送链路与报价状态机的服务端断头）
 
 - **SSE 事件流在浏览器里从不鉴权（高）**：`src/hooks/useEventStream.ts` 用原生 `EventSource`

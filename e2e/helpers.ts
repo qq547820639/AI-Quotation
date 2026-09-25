@@ -41,10 +41,13 @@ export const SUPPLIER_B = '杭州启明供应链有限公司'; // sup-5
 export const DATA_ROW = '.ant-table-row, .ant-list-item';
 
 /**
- * 演示账号密码。生产/CI 形态下种子用户的密码由 DEMO_USER_PASSWORD 注入（强随机值），
- * 本地开发默认 123456。E2E 必须使用与后端种子一致的值，否则登录断言会失败。
+ * 演示账号密码。E2E 必须与后端种子用户的密码一致，否则前 5 次登录吃 401、
+ * 之后被 LOGIN_MAX_ATTEMPTS=5 的锁定换成 429，整个套件全线红。
+ * CI 用 `DEMO_USER_PASSWORD` 注入强随机值（compose 与 playwright 两步同一个格式串）；
+ * 兜底值必须等于 `docker-compose.dev.yml` 注入种子的默认值 —— 由
+ * `npm run e2e:config:check` 机械核对，不再靠人记住。
  */
-export const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || '123456';
+export const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || 'dev-demo-pass-12345678';
 
 /** 登录（选中用户 + 任意密码），登录本身直接断言跳转 */
 export async function login(page: Page, name: string, password = DEMO_PASSWORD) {
@@ -60,7 +63,17 @@ export async function login(page: Page, name: string, password = DEMO_PASSWORD) 
     { timeout: 30000 },
   );
   await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-  expect((await loginRes).status(), '登录接口必须返回 2xx').toBeLessThan(300);
+  const status = (await loginRes).status();
+  expect(
+    status,
+    status === 401
+      ? '登录 401：E2E 密码与后端种子密码不一致（改 DEMO_USER_PASSWORD 时两处要同时改），' +
+          '跑 `npm run e2e:config:check` 核对'
+      : status === 429
+        ? '登录 429：连续失败已触发 LOGIN_MAX_ATTEMPTS=5 锁定，根因通常是更早的 401（密码不一致），' +
+          '重启后端容器清计数并跑 `npm run e2e:config:check`'
+        : `登录接口必须返回 2xx，实际 ${status}`,
+  ).toBeLessThan(300);
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 30000 });
 }
 

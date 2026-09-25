@@ -24,7 +24,11 @@ services:
       - SEED_DEMO_DATA=true
       # 统一演示密码：低于后端最小长度校验？不 —— APP_ENV=dev 不触发生产强密码守卫，
       # 但为体验一致仍给一个足够强的值，避免误导。
-      - DEMO_USER_PASSWORD=dev-demo-pass-12345678
+      # 用 ${VAR:-default} 而不是写死，宿主侧 `DEMO_USER_PASSWORD=x docker compose ...` 才真能覆盖，
+      # 与 README「可在 docker-compose.dev.yml 中通过 DEMO_USER_PASSWORD 覆盖」一致；
+      # 默认值必须等于 e2e/helpers.ts 的 DEMO_PASSWORD 兜底值（否则干净签出跑 E2E 会
+      # 先 401×5 再全线 429），由 `npm run e2e:config:check` 机械核对。
+      - DEMO_USER_PASSWORD=${DEMO_USER_PASSWORD:-dev-demo-pass-12345678}
       - SCANNER_PROVIDER=noop
       - NOTIFY_CHANNEL=log
       - CELERY_TASK_ALWAYS_EAGER=true

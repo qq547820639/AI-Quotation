@@ -212,10 +212,25 @@ cd backend && python3 -m alembic upgrade head
 
 ### E2E 测试（Playwright）
 
-- 7 个文件 / 28 条用例，覆盖 5 个浏览器项目：**chromium / firefox / webkit / mobile-android / mobile-ios**
+- 10 个文件 / 36 条用例 × 5 个浏览器项目 = 每次运行 180 个用例实例：**chromium / firefox / webkit / mobile-android / mobile-ios**
 - 覆盖：核心业务链路（询价→报价→审批→定标）、异常场景（超时/网络中断/500/401/403/重复点击/部分批量失败/表单校验/数据冲突/刷新/返回/保存失败重试/不同权限）、认证与会话、供应商门户（邀请 Token 路由）、权限控制、国际化与主题
 - 供应商门户走**不可预测邀请 Token** 路由（`/supplier-portal/:invitationToken`），不再依赖内部登录 Token 或可枚举 ID
-- 运行：`npm run e2e`（需先 `docker compose up -d --build` 启动真实前后端；CI 的 `docker-e2e` 任务在 Docker 环境执行并上传 trace/截图/视频产物）
+- 运行（本地用 dev 形态，干净签出即可，无需任何宿主 env）：
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build   # 真实前后端，前端 nginx 监听 :80
+npm run e2e:config:check                                 # 先核对 E2E 与种子账号的密码契约
+npm run e2e                                              # playwright 复用已就绪的 :80
+```
+
+注意 **不要**用 `docker compose up -d --build`（生产形态）跑本地 E2E：它在 `APP_ENV=prod` 下 fail-closed，
+缺 `.env` 强密钥会拒绝启动，且 `clamav/clamav:stable` 无 linux/arm64 镜像，Apple Silicon 上拉取即失败。
+CI 的 `docker-e2e` 任务用生产形态 + 注入强 `DEMO_USER_PASSWORD`，并上传 trace/截图/视频产物。
+
+- 密码契约：E2E 侧 `e2e/helpers.ts` 的兜底密码必须等于 dev compose 注入后端的种子密码，
+  否则前 5 次登录 401、之后被 `LOGIN_MAX_ATTEMPTS=5` 锁定换成全线 429（看起来像限流 bug）。
+  该一致性由 `npm run e2e:config:check`（`scripts/check-e2e-demo-password.mjs`，自带 `--self-test` 反证）机械保证，
+  CI 在启动 compose 之前先跑它。
 
 ---
 

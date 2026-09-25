@@ -210,6 +210,14 @@ jobs:
           key: clamav-db-${{ runner.os }}
           restore-keys: |
             clamav-db-${{ runner.os }}
+      - name: Verify E2E config contract (demo password consistency)
+        # 本 job 给 compose 与 playwright 两步各写了一次 DEMO_USER_PASSWORD 格式串；
+        # dev 形态则靠 compose 默认值与 e2e/helpers.ts 兜底值对齐。任一漂移会让整套 E2E
+        # 先 401×5 再全线 429，读起来像限流故障。这里在启动 compose 之前先判红，
+        # 并跑尺子自带的两条反证（注入漂移 / 删除位点必须翻红）。
+        run: |
+          npm run e2e:config:check
+          node scripts/check-e2e-demo-password.mjs --self-test
       - name: Build & start all services (docker compose)
         # 生产配置在 APP_ENV=prod 下为 fail-fast：compose 的 dev 默认值（SECRET_KEY/
         # DEMO_USER_PASSWORD/CORS/NOTIFY_CHANNEL）会被后端启动守卫拒绝。CI E2E 必须注入
