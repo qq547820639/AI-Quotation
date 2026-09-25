@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { DEMO_PASSWORD, DATA_ROW, tap, tick } from './helpers';
+import { login, DATA_ROW, tap, tick } from './helpers';
 
 /**
  * E2E：异常场景（Task 11）
@@ -14,16 +14,6 @@ import { DEMO_PASSWORD, DATA_ROW, tap, tick } from './helpers';
 const ADMIN = '周大海'; // u-6 管理员，具备全部权限（含 SUPPLIER_DISABLE / INQUIRY_CANCEL）
 const PURCHASER = '李明辉'; // u-1 采购人员，无 INQUIRY_APPROVE / SETTINGS_MANAGE
 const SUP1 = '上海恒远工业设备有限公司'; // sup-1，初始 COOPERATING
-
-/** 登录（选中用户 + 任意密码） */
-async function login(page: Page, name: string, password = DEMO_PASSWORD) {
-  await page.goto('/login');
-  await page.locator('.ant-select-selector').click();
-  await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
-  await page.locator('input[type="password"]').fill(password);
-  await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
-}
 
 /** 点击确认弹窗的确定按钮（antd Modal.confirm） */
 async function confirmOk(page: Page) {

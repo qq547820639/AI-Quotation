@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEMO_PASSWORD, createAndSendInquiry, submitQuoteViaPortal, DATA_ROW } from './helpers';
+import { login, createAndSendInquiry, submitQuoteViaPortal, DATA_ROW, tap } from './helpers';
 
 /**
  * E2E：询价全流程（G4 重写：强化断言 + 新增创建页用例）
@@ -12,12 +12,7 @@ import { DEMO_PASSWORD, createAndSendInquiry, submitQuoteViaPortal, DATA_ROW } f
 test.describe('询价全流程', () => {
   test.beforeEach(async ({ page }) => {
     // 登录管理员
-    await page.goto('/login');
-    await page.locator('.ant-select-selector').click();
-    await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-    await expect(page).toHaveURL(/\/dashboard/);
+    await login(page, '周大海');
   });
 
   test('查看询价列表有数据', async ({ page }) => {
@@ -55,7 +50,8 @@ test.describe('询价全流程', () => {
     await page.goto('/quotation/compare');
     const card = page.locator('.ant-card[role="button"]').filter({ hasText: subject }).first();
     await expect(card).toBeVisible({ timeout: 15000 });
-    await card.click();
+    // 卡片自带 role="button" + Enter 处理；用键盘避开弹层/浮层的命中测试干扰
+    await tap(card);
     await expect(page).toHaveURL(new RegExp(`/quotation/compare/${inquiryId}`));
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 15000 });
   });

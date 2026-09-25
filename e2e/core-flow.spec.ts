@@ -47,7 +47,7 @@ test.describe('核心业务链路', () => {
 
     // 4. 为物料选择推荐供应商（触发 selectedSupplierMap）
     await chooseSupplierOnCompare(page, SUPPLIER_A);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ant-message-success').first()).toBeVisible();
 
     // 5. 填写评审意见（CommentEditor 自动保存）
     const comment = page.locator('textarea').first();
@@ -59,7 +59,7 @@ test.describe('核心业务链路', () => {
     await expect(submitApprovalBtn).toBeVisible({ timeout: 5000 });
     await submitApprovalBtn.click();
     await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ant-message-success').first()).toBeVisible();
 
     // 7. 审批通过
     await page.goto('/approval');
@@ -72,7 +72,7 @@ test.describe('核心业务链路', () => {
       .locator('.ant-modal')
       .getByRole('button', { name: /确\s*定|OK/ })
       .click();
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ant-message-success').first()).toBeVisible();
 
     // 8. 完成定标
     await page.goto(`/quotation/compare/${inquiryId}`);
@@ -80,7 +80,7 @@ test.describe('核心业务链路', () => {
     await expect(confirmBtn).toBeVisible({ timeout: 10000 });
     await confirmBtn.click();
     await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ant-message-success').first()).toBeVisible();
 
     // 9. 校验最终状态与持久化（刷新后仍在详情页看到已完成状态）
     await page.goto(`/inquiry/detail/${inquiryId}`);
@@ -101,13 +101,13 @@ test.describe('核心业务链路', () => {
     await page.goto(`/quotation/compare/${inquiryId}`);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     await chooseSupplierOnCompare(page, SUPPLIER_A);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ant-message-success').first()).toBeVisible();
 
     const submitApprovalBtn = page.getByRole('button', { name: /提交审批|Submit Approval/ });
     await expect(submitApprovalBtn).toBeVisible({ timeout: 5000 });
     await submitApprovalBtn.click();
     await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ant-message-success').first()).toBeVisible();
 
     // 审批驳回
     await page.goto('/approval');
@@ -118,7 +118,7 @@ test.describe('核心业务链路', () => {
       .locator('.ant-modal')
       .getByRole('button', { name: /确\s*定|OK/ })
       .click();
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.ant-message-success').first()).toBeVisible();
 
     // 驳回后审批节点为 REJECTED，不应出现"确认定标"按钮（无法定标）
     await page.goto(`/quotation/compare/${inquiryId}`);

@@ -52,8 +52,16 @@ export async function login(page: Page, name: string, password = DEMO_PASSWORD) 
   await page.locator('.ant-select-selector').click();
   await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
   await page.locator('input[type="password"]').fill(password);
+  // 登录是全套件最重的一次请求（服务端要跑 bcrypt 校验）。实测各引擎/冷启动下
+  // 10s 期望预算会不够（一次 12.8 分钟的全量跑里出现 3 次停在 /login 的红），
+  // 因此先显式等待该响应并断言其状态，再给跳转一个与引擎无关的 30s 预算。
+  const loginRes = page.waitForResponse(
+    (res) => res.url().includes('/api/auth/login') && res.request().method() === 'POST',
+    { timeout: 30000 },
+  );
   await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  expect((await loginRes).status(), '登录接口必须返回 2xx').toBeLessThan(300);
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 30000 });
 }
 
 /**
