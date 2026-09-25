@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 报价对比页面（Task 12）
  * 路由：/quotation/compare（无 id 展示可对比询价单列表）、/quotation/compare/:inquiryId
@@ -23,7 +24,6 @@ import { ApprovalNodeStatus, InquiryStatus, QuotationStatus } from '@/types';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useSupplierStore } from '@/store/useSupplierStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
-import { useUIStore } from '@/store/useUIStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import PageHeader from '@/components/PageHeader';
@@ -60,12 +60,7 @@ export default function QuotationComparePage() {
   const { inquiryId } = useParams<{ inquiryId?: string }>();
   const navigate = useNavigate();
 
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
   const getInquiryById = useInquiryStore((s) => s.getInquiryById);
   const selectSupplier = useInquiryStore((s) => s.selectSupplier);
   const confirmInquiry = useInquiryStore((s) => s.confirmInquiry);

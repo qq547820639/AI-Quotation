@@ -435,18 +435,18 @@ export default function InquiryCreatePage() {
   );
 
   /** 保存草稿 */
-  const handleSaveDraft = useCallback(() => {
+  const handleSaveDraft = useCallback(async () => {
     if (readOnly) return;
     if (!basicInfo.subject?.trim()) {
       notifyWarning(t('inquiry.create.subjectRequiredForDraft'));
       return;
     }
     const inquiry = buildInquiry(InquiryStatus.DRAFT);
-    if (editingInquiry) {
-      updateInquiry(editingInquiry.id, inquiry);
-    } else {
-      addInquiry(inquiry);
-    }
+    const result = editingInquiry
+      ? await updateInquiry(editingInquiry.id, inquiry)
+      : await addInquiry(inquiry);
+    // 写失败时 store 已回滚，且 axios 响应拦截器已弹出错误提示，这里只负责不再谎报成功
+    if (!result.success) return;
     removeKey(DRAFT_KEY);
     markDirty(false);
     notifySuccess(t('inquiry.create.draftSaved'));
@@ -478,15 +478,17 @@ export default function InquiryCreatePage() {
       }),
       okText: t('inquiry.create.confirmSendOk'),
       cancelText: t('common.cancel'),
-      onOk: () => {
-        // 两步：先以 DRAFT 保存（拿到稳定 id），再调 sendInquiry 触发状态转换 + INQUIRY_SENT 通知
+      onOk: async () => {
+        // 两步且必须串行：先以 DRAFT 创建（服务端落库并返回同一 id），成功后再 send
+        // 触发状态转换 + 生成邀请。此前 addInquiry 未被 await，send 打在还不存在的 id 上，
+        // 真实后端下返回 404：询价停在 DRAFT、邀请不生成，而界面仍提示"已发送"。
         const draft = buildInquiry(InquiryStatus.DRAFT);
-        if (editingInquiry) {
-          updateInquiry(editingInquiry.id, draft);
-        } else {
-          addInquiry(draft);
-        }
-        sendInquiry(draft.id);
+        const saved = editingInquiry
+          ? await updateInquiry(editingInquiry.id, draft)
+          : await addInquiry(draft);
+        if (!saved.success) return;
+        const sent = await sendInquiry(draft.id);
+        if (!sent.success) return;
         removeKey(DRAFT_KEY);
         markDirty(false);
         notifySuccess(t('inquiry.create.sent'));
@@ -684,7 +686,11 @@ export default function InquiryCreatePage() {
               {t('inquiry.create.saveAsTemplate')}
             </Button>
           )}
-          <Button icon={<SaveOutlined />} onClick={handleSaveDraft} disabled={readOnly}>
+          <Button
+            icon={<SaveOutlined />}
+            onClick={() => void handleSaveDraft()}
+            disabled={readOnly}
+          >
             {t('common.saveDraft')}
           </Button>
           {current > 0 && <Button onClick={handlePrev}>{t('common.prev')}</Button>}

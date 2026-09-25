@@ -433,13 +433,20 @@ export default function MainLayout() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            // 窄屏下"组织选择 + 全局搜索 + 用户操作"三组控件放不下：flex 项默认不收缩到
+            // 内容宽度以下，于是左侧组会压住语言/主题按钮（实测点不到）。允许换行，
+            // 不隐藏任何入口；桌面仍是一行，行为不变。
+            flexWrap: 'wrap',
+            rowGap: isMobile ? 8 : 0,
+            height: 'auto',
+            minHeight: 64,
             borderBottom: '1px solid var(--color-border)',
             position: 'sticky',
             top: 0,
             zIndex: 10,
           }}
         >
-          <Space size="middle">
+          <Space size="middle" style={{ minWidth: 0 }}>
             <Button
               type="text"
               icon={

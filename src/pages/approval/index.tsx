@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 审批管理（W5）
  * - 待审批列表（PENDING_APPROVAL）
@@ -37,7 +38,6 @@ import PageHeader from '@/components/PageHeader';
 import Permission from '@/components/Permission';
 import { InquiryStatusTag } from '@/components/StatusTag';
 import { useInquiryStore } from '@/store/useInquiryStore';
-import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import {
   ApprovalNodeStatus,
@@ -70,8 +70,6 @@ function getSelectedTotal(inquiry: Inquiry): number {
 export default function ApprovalPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
   const approveInquiry = useInquiryStore((s) => s.approveInquiry);
   const rejectInquiry = useInquiryStore((s) => s.rejectInquiry);
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -84,10 +82,7 @@ export default function ApprovalPage() {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
 
   const pendingList = useMemo(
     () => inquiries.filter((i) => i.status === InquiryStatus.PENDING_APPROVAL),
@@ -97,7 +92,8 @@ export default function ApprovalPage() {
     () =>
       inquiries.filter((i) =>
         i.approvalNodes.some(
-          (n) => n.status === ApprovalNodeStatus.APPROVED || n.status === ApprovalNodeStatus.REJECTED,
+          (n) =>
+            n.status === ApprovalNodeStatus.APPROVED || n.status === ApprovalNodeStatus.REJECTED,
         ),
       ),
     [inquiries],
@@ -129,7 +125,11 @@ export default function ApprovalPage() {
       const result = await action(modalInquiryId, comment.trim());
       if (result.success) {
         setModalOpen(false);
-        notifySuccess(modalAction === 'approve' ? i18n.t('approval.approvePassed') : i18n.t('approval.rejectPassed'));
+        notifySuccess(
+          modalAction === 'approve'
+            ? i18n.t('approval.approvePassed')
+            : i18n.t('approval.rejectPassed'),
+        );
       } else if (result.reason === 'pending') {
         // 重复提交被拦截，静默
       } else {
@@ -148,10 +148,17 @@ export default function ApprovalPage() {
       width: 200,
       render: (_, r) => (
         <Space direction="vertical" size={0}>
-          <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate(`/inquiry/detail/${r.id}`)}>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() => navigate(`/inquiry/detail/${r.id}`)}
+          >
             {r.code}
           </Button>
-          <Text type="secondary" style={{ fontSize: 12 }}>{r.subject}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {r.subject}
+          </Text>
         </Space>
       ),
     },
@@ -173,7 +180,11 @@ export default function ApprovalPage() {
       width: 140,
       render: (_, r) => {
         const total = getSelectedTotal(r);
-        return <Text strong style={{ color: 'var(--color-primary)' }}>{formatCurrency(total, r.currency)}</Text>;
+        return (
+          <Text strong style={{ color: 'var(--color-primary)' }}>
+            {formatCurrency(total, r.currency)}
+          </Text>
+        );
       },
     },
     {
@@ -242,12 +253,12 @@ export default function ApprovalPage() {
 
   return (
     <div>
-      <PageHeader
-        title={t('approval.managementTitle')}
-        description={t('approval.description')}
-      />
+      <PageHeader title={t('approval.managementTitle')} description={t('approval.description')} />
 
-      <Permission perm="INQUIRY_APPROVE" fallback={<Empty description={t('approval.noPermission')} style={{ padding: 80 }} />}>
+      <Permission
+        perm="INQUIRY_APPROVE"
+        fallback={<Empty description={t('approval.noPermission')} style={{ padding: 80 }} />}
+      >
         {/* 统计卡片 */}
         <Row gutter={12} style={{ marginBottom: 16 }}>
           <Col xs={24} sm={8}>
@@ -285,8 +296,14 @@ export default function ApprovalPage() {
               value={tab}
               onChange={(v) => setTab(v as Tab)}
               options={[
-                { label: t('approval.pendingWithCount', { count: pendingList.length }), value: 'pending' },
-                { label: t('approval.historyWithCount', { count: historyList.length }), value: 'history' },
+                {
+                  label: t('approval.pendingWithCount', { count: pendingList.length }),
+                  value: 'pending',
+                },
+                {
+                  label: t('approval.historyWithCount', { count: historyList.length }),
+                  value: 'history',
+                },
               ]}
             />
 
@@ -300,8 +317,14 @@ export default function ApprovalPage() {
               locale={{
                 emptyText: (
                   <Empty
-                    image={<FileTextOutlined style={{ fontSize: 48, color: 'var(--color-text-tertiary)' }} />}
-                    description={tab === 'pending' ? t('approval.emptyPending') : t('approval.emptyHistory')}
+                    image={
+                      <FileTextOutlined
+                        style={{ fontSize: 48, color: 'var(--color-text-tertiary)' }}
+                      />
+                    }
+                    description={
+                      tab === 'pending' ? t('approval.emptyPending') : t('approval.emptyHistory')
+                    }
                     style={{ padding: 48 }}
                   />
                 ),
@@ -317,13 +340,19 @@ export default function ApprovalPage() {
 
       {/* 审批意见 Modal */}
       <Modal
-        title={modalAction === 'approve' ? t('approval.approveModalTitle') : t('approval.rejectModalTitle')}
+        title={
+          modalAction === 'approve'
+            ? t('approval.approveModalTitle')
+            : t('approval.rejectModalTitle')
+        }
         open={modalOpen}
         onOk={handleModalOk}
         onCancel={() => setModalOpen(false)}
         okText={t('common.ok')}
         cancelText={t('common.cancel')}
-        okButtonProps={modalAction === 'reject' ? { danger: true, loading: submitting } : { loading: submitting }}
+        okButtonProps={
+          modalAction === 'reject' ? { danger: true, loading: submitting } : { loading: submitting }
+        }
       >
         <Form layout="vertical">
           <Form.Item label={t('approval.comment')}>
@@ -331,7 +360,11 @@ export default function ApprovalPage() {
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               rows={4}
-              placeholder={modalAction === 'approve' ? t('approval.commentOptionalPlaceholder') : t('approval.rejectReasonPlaceholder')}
+              placeholder={
+                modalAction === 'approve'
+                  ? t('approval.commentOptionalPlaceholder')
+                  : t('approval.rejectReasonPlaceholder')
+              }
               maxLength={500}
               showCount
             />
@@ -349,12 +382,16 @@ function ApprovalDetail({ inquiry }: { inquiry: Inquiry }) {
     <Row gutter={24}>
       <Col xs={24} lg={12}>
         <Descriptions title={t('approval.inquiryInfo')} size="small" column={1} bordered>
-          <Descriptions.Item label={t('approval.inquiryCodeLabel')}>{inquiry.code}</Descriptions.Item>
+          <Descriptions.Item label={t('approval.inquiryCodeLabel')}>
+            {inquiry.code}
+          </Descriptions.Item>
           <Descriptions.Item label={t('approval.subject')}>{inquiry.subject}</Descriptions.Item>
           <Descriptions.Item label={t('approval.selectedAmount')}>
             {formatCurrency(getSelectedTotal(inquiry), inquiry.currency)}
           </Descriptions.Item>
-          <Descriptions.Item label={t('approval.submittedAt')}>{formatDateTime(inquiry.updatedAt)}</Descriptions.Item>
+          <Descriptions.Item label={t('approval.submittedAt')}>
+            {formatDateTime(inquiry.updatedAt)}
+          </Descriptions.Item>
         </Descriptions>
       </Col>
       <Col xs={24} lg={12}>

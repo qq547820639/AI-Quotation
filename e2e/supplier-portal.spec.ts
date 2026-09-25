@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, createAndSendInquiry, getInvitationToken } from './helpers';
+import { login, createAndSendInquiry, getInvitationToken, tap } from './helpers';
 
 /**
  * E2E：供应商门户报价填报（邀请令牌路由 /supplier-portal/:invitationToken）
@@ -23,28 +23,28 @@ test.describe('供应商门户', () => {
     await page.goto(`/supplier-portal/${invitationToken}`);
 
     // 关键步骤1：报价表单单价输入框必须可见（否则直接失败，不跳过）
-    const unitPriceInput = page.locator('.ant-input-number input').first();
+    // 按产品提供的稳定 id 定位，不用位置索引——窄屏是卡片式表单，索引会命中别的列
+    const unitPriceInput = page.locator('input[id$="-unitPrice"]').first();
     await expect(unitPriceInput).toBeVisible({ timeout: 10000 });
 
     // 关键步骤2：填写单价
-    await unitPriceInput.click();
     await unitPriceInput.fill('100');
 
-    // 关键步骤3：填写交货期（第3个 InputNumber）
-    const deliveryInput = page.locator('.ant-input-number input').nth(2);
-    await expect(deliveryInput).toBeVisible({ timeout: 5000 });
-    await deliveryInput.click();
+    // 关键步骤3：填写交货期
+    const deliveryInput = page.locator('input[id$="-deliveryDays"]').first();
+    await expect(deliveryInput).toBeVisible();
     await deliveryInput.fill('7');
 
     // 关键步骤4：正式提交报价
     const submitBtn = page.getByRole('button', { name: /正式提交|Submit/ });
-    await expect(submitBtn).toBeVisible({ timeout: 5000 });
-    await submitBtn.click();
+    await expect(submitBtn).toBeVisible();
+    await tap(submitBtn);
 
-    // 关键步骤5：确认弹窗
-    const confirmBtn = page.locator('.ant-modal-confirm-btns .ant-btn-primary');
-    await expect(confirmBtn).toBeVisible({ timeout: 5000 });
-    await confirmBtn.click();
+    // 关键步骤5：正式提交先打开「提交前预览」弹窗，在预览内确认提交（Task 17）
+    await expect(page.getByText('提交前预览')).toBeVisible();
+    const confirmBtn = page.getByRole('button', { name: /确认提交/ });
+    await expect(confirmBtn).toBeVisible();
+    await tap(confirmBtn);
 
     // 断言提交成功（成功回执页）
     await expect(page.locator('.ant-result-success').first()).toBeVisible({ timeout: 10000 });

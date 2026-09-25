@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 工作台页面（Task 6）
  * - 顶部统计卡片行
@@ -30,7 +31,6 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
 import { useSupplierStore } from '@/store/useSupplierStore';
-import { useUIStore } from '@/store/useUIStore';
 import {
   INQUIRY_STATUS_COLOR,
   INQUIRY_STATUS_LABEL,
@@ -717,16 +717,11 @@ function StatCard({ data }: { data: StatCardData }) {
 export default function DashboardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
   const loading = useInquiryStore((s) => s.loading);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const currentUser = useAuthStore((s) => s.currentUser);
   const canApprove = hasPermission('INQUIRY_APPROVE');
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
   const quotations = useQuotationStore((s) => s.quotations);
 
   const stats = useMemo<StatCardData[]>(() => {

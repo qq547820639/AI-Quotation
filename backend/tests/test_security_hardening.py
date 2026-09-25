@@ -7,10 +7,12 @@
 - CSRF：refresh（cookie 认证）校验 Origin，跨站来源 403，可信来源放行
 - 登录限流接线（刷新确认仍生效）
 """
+import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import reset_login_attempts
 from app.config import LOGIN_MAX_ATTEMPTS
+from app.routers.auth import _canonical_origin
 
 DEMO_PWD = "123456"
 
@@ -140,6 +142,86 @@ def test_refresh_rejects_cross_origin(client, monkeypatch):
         "Origin": "http://localhost:5173",
     })
     assert r_ok.status_code == 200
+
+
+def test_refresh_same_origin_behind_reverse_proxy(client, monkeypatch):
+    """同源部署（nginx 反代 /api）下，浏览器 Origin 省略默认端口，必须放行。
+
+    前端已接入 refresh_token 自动续期：访问 http://localhost（80 是 http 默认端口，
+    浏览器序列化 origin 时会省略）的页面会带 `Origin: http://localhost` 打
+    /api/auth/refresh。若只做 CORS 白名单逐字符串比对（白名单里写的是
+    http://localhost:80），续期请求会被判 403，自动续期形同虚设并把用户踢回登录页。
+    """
+    monkeypatch.setattr("app.routers.auth.APP_DEMO_MODE", False)
+    # 白名单刻意只写带 :80 的形式：验证放行依据是"默认端口归一化/同源"，而非白名单恰好含裸形式
+    monkeypatch.setattr("app.routers.auth.CORS_ORIGINS", ["http://localhost:80"])
+
+    def _login(base_url: str) -> TestClient:
+        c = TestClient(client.app, base_url=base_url)
+        r = c.post("/api/auth/login", json={"userId": "u-1", "password": DEMO_PWD})
+        assert r.status_code == 200, r.text
+        assert c.cookies.get("refresh_token")
+        return c
+
+    # 1) 默认端口省略形式（浏览器真实发出的头）→ 放行
+    c = _login("http://localhost")
+    r = c.post("/api/auth/refresh", headers={
+        "Cookie": f"refresh_token={c.cookies.get('refresh_token')}",
+        "Origin": "http://localhost",
+    })
+    assert r.status_code == 200, r.text
+
+    # 2) 显式带默认端口 → 归一化后与 1) 同源，同样放行
+    c = _login("http://localhost")
+    r = c.post("/api/auth/refresh", headers={
+        "Cookie": f"refresh_token={c.cookies.get('refresh_token')}",
+        "Origin": "http://localhost:80",
+    })
+    assert r.status_code == 200, r.text
+
+    # 3) 同源但完全不在白名单里的域名 → 靠"同源"这一条放行（证明不是白名单在兜底）
+    c = _login("http://app.internal")
+    r = c.post("/api/auth/refresh", headers={
+        "Cookie": f"refresh_token={c.cookies.get('refresh_token')}",
+        "Origin": "http://app.internal",
+    })
+    assert r.status_code == 200, r.text
+
+    # 4) 反向对照：非白名单域名上的跨站 Origin → 仍须 403（同源判断不得放宽成无条件放行）
+    r = c.post("/api/auth/refresh", headers={
+        "Cookie": f"refresh_token={c.cookies.get('refresh_token')}",
+        "Origin": "http://evil.example.com",
+    })
+    assert r.status_code == 403
+
+    # 5) 反向对照：白名单域名上的跨站 Origin → 仍须 403
+    c = _login("http://localhost")
+    r = c.post("/api/auth/refresh", headers={
+        "Cookie": f"refresh_token={c.cookies.get('refresh_token')}",
+        "Origin": "http://evil.example.com",
+    })
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("http://localhost", "http://localhost"),
+        ("http://localhost:80", "http://localhost"),          # 默认端口省略后须等价
+        ("HTTP://LocalHost:80/", "http://localhost"),          # 大小写/尾斜杠归一
+        ("https://app.example.com:443", "https://app.example.com"),
+        ("https://app.example.com", "https://app.example.com"),
+        ("http://localhost:8080", "http://localhost:8080"),    # 非默认端口必须保留
+        ("http://user:pass@localhost", "http://localhost"),    # 不携带 userinfo
+        ("http://", None),                                     # 无 host 不可信
+        ("not-an-origin", None),
+        ("", None),
+        ("http://localhost:99999", None),                      # 非法端口不崩溃
+    ],
+)
+def test_canonical_origin_normalization(raw, expected):
+    """origin 归一化：同源/跨站判断的唯一依据，必须可预期且对畸形输入不抛错"""
+    assert _canonical_origin(raw) == expected
 
 
 # ============ 5. 登录限流（接线确认） ============

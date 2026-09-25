@@ -23,10 +23,13 @@ test.describe('认证流程', () => {
     // 验证跳转到工作台
     await expect(page).toHaveURL(/\/dashboard/);
 
-    // 验证工作台统计卡片可见（具体断言，非恒真式）
-    await expect(page.locator('.ant-statistic').first()).toBeVisible({ timeout: 10000 });
-    const statCount = await page.locator('.ant-statistic').count();
-    expect(statCount).toBeGreaterThan(0);
+    // 验证统计卡渲染（工作台用自定义 StatCard，不是 antd Statistic，按标题文本断言）
+    await expect(page.getByText('本月询价单')).toBeVisible({ timeout: 10000 });
+    expect(await page.getByText('询价中').count()).toBeGreaterThan(0);
+    // 验证种子数据真的渲染进了页面：store 在首帧之后才拿到数据时，
+    // 页面若用不订阅数据的派生写法会永远显示空态（登录后列表恒为空的回归点）
+    await expect(page.getByText('暂无询价单')).toHaveCount(0);
+    await expect(page.locator('.ant-card').first()).toBeVisible();
   });
 
   test('登录态刷新后持久化', async ({ page }) => {
@@ -41,7 +44,11 @@ test.describe('认证流程', () => {
     // 刷新页面，验证仍保持登录态（未跳回 /login）
     await page.reload();
     await expect(page).toHaveURL(/\/dashboard/);
-    // 验证侧边栏菜单存在（登录态标志）
-    await expect(page.locator('.ant-menu').first()).toBeVisible({ timeout: 10000 });
+    // 验证登录后专属的布局外壳存在（登录态标志）。
+    // 窄屏（mobile-* 项目）下 Sider 折叠为抽屉，触发器是 .anticon-menu-unfold，
+    // 因此断言"侧栏菜单或抽屉触发器"，两者都只在已登录布局里出现。
+    await expect(page.locator('.ant-menu, .anticon-menu-unfold').first()).toBeVisible({
+      timeout: 10000,
+    });
   });
 });

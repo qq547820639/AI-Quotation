@@ -9,6 +9,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
+import { inDays } from '@/test/temporalFixtures';
 
 // mock echarts，避免真实 canvas 渲染
 vi.mock('@/utils/echarts', () => ({
@@ -39,7 +40,7 @@ function makeInquiry(overrides: Partial<Inquiry> = {}): Inquiry {
     ownerName: '采购员',
     ownerId: 'u-1',
     currency: Currency.CNY,
-    deadline: '2026-12-31 18:00:00',
+    deadline: inDays(90),
     deliveryAddress: '上海',
     contact: '李四',
     paymentTerms: '款到发货',

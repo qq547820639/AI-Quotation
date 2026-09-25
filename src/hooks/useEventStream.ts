@@ -6,6 +6,7 @@
  * - 仅生产/真实后端模式启用；MSW 演示模式不建立连接以免误报。
  */
 import { useEffect, useRef } from 'react';
+import { createParser } from 'eventsource-parser';
 import { IS_DEMO_MODE } from '@/config';
 import { useNotificationStore } from '@/store/useNotificationStore';
 
@@ -16,6 +17,7 @@ export interface SSEEvent {
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 const MAX_RETRY_MS = 30000;
+const FIRST_RETRY_MS = 2000;
 
 /** 断线重连后默认补拉逻辑：重载通知以拉取遗漏通知 */
 function defaultReconnectCatchUp(): void {
@@ -41,11 +43,12 @@ export function useEventStream(
     // 演示模式（MSW）不建立 SSE 连接
     if (!enabled || IS_DEMO_MODE) return;
 
-    let es: EventSource | null = null;
     let closed = false;
-    let retryMs = 2000;
-    // 首个 onopen 属于初始连接，之后的 onopen 视为断线重连成功
+    let retryMs = FIRST_RETRY_MS;
+    // 首次成功连接属于初始连接，之后的成功连接视为断线重连成功
     let hasConnected = false;
+    let controller: AbortController | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
     const triggerReconnect = () => {
       if (onReconnectRef.current) {
@@ -55,53 +58,83 @@ export function useEventStream(
       }
     };
 
-    const connect = () => {
+    const scheduleReconnect = () => {
       if (closed) return;
-      if (es) {
-        es.close();
-        es = null;
-      }
-      try {
-        es = new EventSource(`${BASE_URL}/events/stream`);
-      } catch {
-        // 构造失败（如非浏览器环境）则放弃
-        return;
-      }
+      const delay = retryMs;
+      retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
+      timer = setTimeout(() => {
+        timer = null;
+        void connect();
+      }, delay);
+    };
 
-      es.onopen = () => {
-        retryMs = 2000;
-        if (hasConnected) {
-          // 断线重连成功后补拉遗漏通知
-          triggerReconnect();
-        }
-        hasConnected = true;
-      };
-      es.addEventListener('message', (ev) => {
+    const parser = createParser({
+      onEvent: (event) => {
+        // 服务端以 data 承载 {type, data} JSON；无 type 的帧（如首帧 connected）不分发
         try {
-          const payload = JSON.parse((ev as MessageEvent).data) as SSEEvent;
+          const payload = JSON.parse(event.data) as SSEEvent;
           if (payload && payload.type) {
             onEventRef.current(payload);
           }
         } catch {
           /* 忽略无法解析的事件 */
         }
-      });
-      es.onerror = () => {
-        // 连接异常：关闭后按退避重连
-        es?.close();
-        es = null;
-        if (closed) return;
-        const delay = retryMs;
-        retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
-        setTimeout(connect, delay);
-      };
+      },
+    });
+
+    const connect = async () => {
+      if (closed) return;
+      controller = new AbortController();
+      // 每次连接现取 token：access token 会随 401 续期轮换，登录前则不带认证头
+      const token = localStorage.getItem('procurement_token');
+      const headers: Record<string, string> = { Accept: 'text/event-stream' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      let response: Response;
+      try {
+        response = await fetch(`${BASE_URL}/events/stream`, {
+          headers,
+          signal: controller.signal,
+          credentials: 'same-origin',
+        });
+      } catch {
+        // 网络异常 / 主动 abort：abort 时 closed 已为 true
+        scheduleReconnect();
+        return;
+      }
+      if (!response.ok || !response.body) {
+        scheduleReconnect();
+        return;
+      }
+
+      retryMs = FIRST_RETRY_MS;
+      if (hasConnected) {
+        // 断线重连成功后补拉遗漏通知
+        triggerReconnect();
+      }
+      hasConnected = true;
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      parser.reset();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parser.feed(decoder.decode(value, { stream: true }));
+        }
+      } catch {
+        /* 连接被中断：走下方统一重连 */
+      }
+      if (!closed) scheduleReconnect();
     };
 
-    connect();
+    void connect();
     return () => {
       closed = true;
-      es?.close();
-      es = null;
+      if (timer) clearTimeout(timer);
+      controller?.abort();
+      controller = null;
     };
   }, [enabled]);
 }

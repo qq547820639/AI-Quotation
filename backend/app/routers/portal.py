@@ -19,7 +19,14 @@ from sqlalchemy.orm import Session
 
 from ..config import ALLOWED_UPLOAD_EXTENSIONS, ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_SIZE
 from ..database import get_db
+from ..events import publish
 from ..idempotency import get_result, store_result
+from ..state_machine import (
+    S_ALL_QUOTED,
+    S_INQUIRING,
+    S_PARTIAL_QUOTED,
+    validate_inquiry_transition,
+)
 from ..invitations import get_invitation_by_token, is_invitation_valid, invitation_error
 from ..money import compute_item_totals, compute_quotation_total, to_decimal
 from ..models import (
@@ -215,6 +222,33 @@ def _receipt(quotation: Quotation, db: Session) -> dict:
 
 
 # ============ 报价读写辅助 ============
+
+def _sync_quote_progress(db: Session, inquiry) -> None:
+    """按已提交报价覆盖的受邀供应商集合推进询价的报价收集状态。
+
+    缺失这一步时，供应商全部报价后询价仍停在 INQUIRING，报价对比页的
+    「定标/提交审批」入口（要求 ALL_QUOTED 或 PENDING_CONFIRM）永不出现，
+    采购→报价→定标链路在服务端侧断头。只在收集态之间前进，终态与回退不动。
+    """
+    if inquiry.status not in (S_INQUIRING, S_PARTIAL_QUOTED, S_ALL_QUOTED):
+        return
+    # 本次提交对报价单状态的修改仍挂在会话里，先 flush 再查，否则统计会落后一次提交
+    db.flush()
+    invited = {sup.id for sup in (inquiry.invited_suppliers or [])}
+    if not invited:
+        return
+    submitted = {
+        row[0]
+        for row in db.query(Quotation.supplier_id)
+        .filter(Quotation.inquiry_id == inquiry.id, Quotation.status == Q_SUBMITTED_STATUS)
+        .all()
+    }
+    target = S_ALL_QUOTED if invited <= submitted else S_PARTIAL_QUOTED
+    if target == inquiry.status or not validate_inquiry_transition(inquiry.status, target):
+        return
+    inquiry.status = target
+    inquiry.version = (inquiry.version or 0) + 1
+
 
 def _find_quotation(db: Session, invitation: SupplierInvitation) -> Quotation | None:
     return db.query(Quotation).filter(
@@ -442,8 +476,19 @@ def portal_submit_quotation(
     invitation.submitted_at = datetime.now(timezone.utc)
     invitation.delivery_status = "submitted"  # P1-8 Task 12: 提交即标记交付完成
 
+    _sync_quote_progress(db, inquiry)
     db.commit()
     db.refresh(quotation)
+    # 门户是供应商实际使用的提交路径：必须与内部提交路径一样广播事件，
+    # 否则采购端 SSE「实时刷新」在真实链路上永远不触发。
+    publish(
+        "quotation_submitted",
+        {
+            "quotationId": quotation.id,
+            "inquiryId": quotation.inquiry_id,
+            "supplierId": quotation.supplier_id,
+        },
+    )
     result = _receipt(quotation, db)
     if idem_key:
         store_result(idem_key, "portal.submit_quotation", result)

@@ -4,6 +4,7 @@ import {
   confirmOk,
   createAndSendInquiry,
   submitQuoteViaPortal,
+  chooseSupplierOnCompare,
   SUPPLIER_A,
 } from './helpers';
 
@@ -45,9 +46,7 @@ test.describe('核心业务链路', () => {
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
 
     // 4. 为物料选择推荐供应商（触发 selectedSupplierMap）
-    const materialRow = page.locator('.ant-table-row').first();
-    await materialRow.locator('.ant-select-selector').first().click();
-    await page.locator('.ant-select-item-option').filter({ hasText: SUPPLIER_A }).click();
+    await chooseSupplierOnCompare(page, SUPPLIER_A);
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
 
     // 5. 填写评审意见（CommentEditor 自动保存）
@@ -67,7 +66,8 @@ test.describe('核心业务链路', () => {
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 5000 });
-    await approvalRow.getByRole('button', { name: /^通\s*过|Approve/ }).click();
+    // 按钮带前导图标，可访问名是「check-circle 通 过」→ 不能用 ^ 锚定行首
+    await approvalRow.getByRole('button', { name: /通\s*过|Approve/ }).click();
     await page
       .locator('.ant-modal')
       .getByRole('button', { name: /确\s*定|OK/ })
@@ -100,8 +100,7 @@ test.describe('核心业务链路', () => {
     // 进入对比页，选择供应商并提交审批
     await page.goto(`/quotation/compare/${inquiryId}`);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
-    await page.locator('.ant-table-row').first().locator('.ant-select-selector').first().click();
-    await page.locator('.ant-select-item-option').filter({ hasText: SUPPLIER_A }).click();
+    await chooseSupplierOnCompare(page, SUPPLIER_A);
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
 
     const submitApprovalBtn = page.getByRole('button', { name: /提交审批|Submit Approval/ });
@@ -114,7 +113,7 @@ test.describe('核心业务链路', () => {
     await page.goto('/approval');
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 10000 });
-    await approvalRow.getByRole('button', { name: /^驳\s*回|Reject/ }).click();
+    await approvalRow.getByRole('button', { name: /驳\s*回|Reject/ }).click();
     await page
       .locator('.ant-modal')
       .getByRole('button', { name: /确\s*定|OK/ })

@@ -1,5 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
-import { DEMO_PASSWORD } from './helpers';
+import { test, expect, type Locator, type Page } from '@playwright/test';
+import { DEMO_PASSWORD, DATA_ROW, tap, tick } from './helpers';
 
 /**
  * E2E：异常场景（Task 11）
@@ -27,16 +27,46 @@ async function login(page: Page, name: string, password = DEMO_PASSWORD) {
 
 /** 点击确认弹窗的确定按钮（antd Modal.confirm） */
 async function confirmOk(page: Page) {
-  await page.locator('.ant-modal-confirm-btns .ant-btn-primary').click();
+  // .first()：前一个确认弹窗退场动画未结束时同时存在两个按钮，
+  // press()/click() 的严格模式会因命中 2 个元素而报错
+  await tap(
+    page
+      .locator(
+        '.ant-modal-confirm-btns .ant-btn-primary, .ant-modal-confirm-btns .ant-btn-dangerous',
+      )
+      .first(),
+  );
 }
 
-/** 打开供应商列表并点击第一行（sup-1）的停用/启用按钮 */
+/**
+ * 打开供应商列表并对 sup-1 触发停用/启用。
+ * 桌面表格里它是行内按钮；窄屏卡片把行操作收进了「更多 ▾」下拉
+ * （antd Dropdown 默认 hover 触发），两条都是产品真实的用户路径。
+ */
+/** 对某一行触发「停用/启用」：桌面行内按钮与窄屏「更多 ▾」两条路径都覆盖 */
+async function toggleSupplierRow(page: Page, row: Locator) {
+  const inline = row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ });
+  if (await inline.count()) {
+    await tap(inline);
+    return;
+  }
+  const more = row.getByRole('button', { name: /更\s*多|More/ });
+  await expect(more).toBeVisible({ timeout: 5000 });
+  // 触屏上下文里 rc-trigger 把 hover 触发改成了点击展开（实测 hover 不出弹层、click 出）
+  await more.click();
+  const item = page
+    .locator('.ant-dropdown')
+    .getByRole('menuitem', { name: /停\s*用|禁\s*用|Disable/ });
+  await expect(item).toBeVisible({ timeout: 5000 });
+  await item.click();
+}
+
 async function openSupplierPageAndToggle(page: Page) {
   await page.goto('/supplier');
-  await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
-  const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
+  await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
+  const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
   await expect(row).toBeVisible({ timeout: 5000 });
-  await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
+  await toggleSupplierRow(page, row);
 }
 
 test.describe('异常场景', () => {
@@ -62,13 +92,27 @@ test.describe('异常场景', () => {
     });
 
     await login(page, ADMIN);
-    await openSupplierPageAndToggle(page);
+    await page.goto('/supplier');
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
+    const row = page.locator(DATA_ROW).filter({ hasText: SUP1 }).first();
+    await expect(row).toBeVisible({ timeout: 5000 });
+    await toggleSupplierRow(page, row);
     await confirmOk(page);
 
-    // 客户端 axios 15s 超时后提示"请求超时"
-    await expect(page.locator('.ant-message')).toContainText(/请求超时|Request timeout/, {
-      timeout: 20000,
+    // 请求被挂起 16s：Chromium 下由 axios 自身的 15s 超时给出"请求超时"（实测）；
+    // WebKit（webkit / mobile-ios 项目）在 15s 之前就先中止了停滞连接，axios 看到的是
+    // 网络错误 → 提示"网络错误，请检查连接"（实测）。两种都是"不悬挂、明确告知用户"，
+    // 因此跨引擎断言"出现错误提示"，并在 Chromium 项目上继续钉住超时这一具体文案。
+    const wording =
+      test.info().project.name === 'chromium'
+        ? /请求超时|Request timeout/
+        : /请求超时|网络错误|Request timeout|Network error/i;
+    await expect(page.locator('.ant-message-error').first()).toContainText(wording, {
+      timeout: 25000,
     });
+    // 失败的停用必须回滚：合作状态标签仍是"合作中"（若乐观更新未回滚会变成"停用"）
+    await expect(row.locator('.ant-tag').filter({ hasText: /合作中|Cooperating/ })).toBeVisible();
+    await expect(row.locator('.ant-tag').filter({ hasText: /^停用$/ })).toHaveCount(0);
   });
 
   test('网络中断：abort 引发网络错误提示', async ({ page }) => {
@@ -95,7 +139,7 @@ test.describe('异常场景', () => {
         await route.fulfill({
           status: 500,
           contentType: 'application/json',
-          body: JSON.stringify({ detail: 'boom' }),
+          body: JSON.stringify({ code: 'internal_error' }),
         });
       } else {
         await route.continue();
@@ -190,14 +234,16 @@ test.describe('异常场景', () => {
 
     await login(page, ADMIN);
     await page.goto('/supplier');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
-    const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
-    await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
+    const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
+    await toggleSupplierRow(page, row);
     await confirmOk(page);
 
     // 请求未完成时再次点击确定，应被 pendingOps 拦截（不发起第二次请求）
     await page
-      .locator('.ant-modal-confirm-btns .ant-btn-primary')
+      .locator(
+        '.ant-modal-confirm-btns .ant-btn-primary, .ant-modal-confirm-btns .ant-btn-dangerous',
+      )
       .click({ force: true, timeout: 500 })
       .catch(() => {});
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
@@ -205,7 +251,10 @@ test.describe('异常场景', () => {
     expect(putCount).toBe(1);
   });
 
-  test('部分批量操作失败：提示成功/失败条数', async ({ page }) => {
+  test('部分批量操作失败：提示成功/失败条数', async ({ page, isMobile }) => {
+    // 窄屏供应商卡片只给单条操作（无行多选框），批量停用整条工具栏按
+    // selectedRowKeys.length > 0 条件渲染，因此移动端没有可测的批量入口。
+    test.skip(isMobile, '窄屏布局不提供批量选择，本项只在桌面布局可测');
     // sup-1 成功，sup-2 失败（500）
     await page.route('**/api/suppliers/*', async (route) => {
       if (route.request().method() === 'PUT') {
@@ -223,19 +272,16 @@ test.describe('异常场景', () => {
 
     await login(page, ADMIN);
     await page.goto('/supplier');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
     // 勾选 sup-1 与 sup-2 两行
-    await page
-      .locator('.ant-table-row')
-      .filter({ hasText: SUP1 })
-      .locator('.ant-checkbox-input')
-      .click();
-    await page
-      .locator('.ant-table-row')
-      .filter({ hasText: '苏州联创自动化科技有限公司' })
-      .locator('.ant-checkbox-input')
-      .click();
+    await tick(page.locator(DATA_ROW).filter({ hasText: SUP1 }).locator('.ant-checkbox-input'));
+    await tick(
+      page
+        .locator(DATA_ROW)
+        .filter({ hasText: '苏州联创自动化科技有限公司' })
+        .locator('.ant-checkbox-input'),
+    );
 
     await page.getByRole('button', { name: /批量停用|Batch Disable/ }).click();
     await confirmOk(page);
@@ -259,7 +305,7 @@ test.describe('异常场景', () => {
     // 清空主题（必填）后点击下一步，应出现校验错误
     const subject = page.locator('#subject');
     await subject.fill('');
-    await page.getByRole('button', { name: /下一步|Next/ }).click();
+    await tap(page.getByRole('button', { name: /下一步|Next/ }));
 
     await expect(page.locator('.ant-form-item-explain-error').first()).toContainText(
       /请输入询价主题|Subject/,
@@ -272,28 +318,33 @@ test.describe('异常场景', () => {
   test('页面刷新：刷新后仍保持登录态且数据可加载', async ({ page }) => {
     await login(page, ADMIN);
     await page.goto('/supplier');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
     await page.reload();
     // 刷新后未跳回登录，且供应商列表仍可加载
     await expect(page).toHaveURL(/\/supplier/);
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('浏览器返回：从详情返回列表，前一页状态保留', async ({ page }) => {
     await login(page, ADMIN);
     await page.goto('/inquiry/list');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
     // 进入第一行详情
-    await page.locator('.ant-table-row').first().click();
+    // 详情通过行内「详情」按钮进入（列表行本身不可点击）
+    await page
+      .locator(DATA_ROW)
+      .first()
+      .getByRole('button', { name: /详\s*情|Detail/ })
+      .click();
     await expect(page).toHaveURL(/\/inquiry\/detail\//);
     await expect(page.locator('.ant-descriptions').first()).toBeVisible({ timeout: 10000 });
 
     // 浏览器返回，回到列表页
     await page.goBack();
     await expect(page).toHaveURL(/\/inquiry\/list/);
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('保存失败后重试：首次失败提示，重试成功', async ({ page }) => {
@@ -305,7 +356,7 @@ test.describe('异常场景', () => {
           await route.fulfill({
             status: 500,
             contentType: 'application/json',
-            body: JSON.stringify({ detail: 'boom' }),
+            body: JSON.stringify({ code: 'internal_error' }),
           });
         } else {
           await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -325,8 +376,8 @@ test.describe('异常场景', () => {
     });
 
     // 重试成功：再次停用（乐观更新已回滚，按钮仍为"停用"）
-    const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
-    await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
+    const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
+    await toggleSupplierRow(page, row);
     await confirmOk(page);
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 10000 });
   });

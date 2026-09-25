@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 行动工作台（P2 Task 14）
  * - 8 个行动卡片：待发送 / 即将截止 / 未报价 / 发送失败 / 异常报价 / 待审批 / 审批超时 / 待定标
@@ -41,7 +42,6 @@ import {
 } from '@ant-design/icons';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
-import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useConnectivityStore } from '@/store/useConnectivityStore';
 import type { Permission } from '@/types';
@@ -160,8 +160,6 @@ const COLOR_BG_VAR: Record<string, string> = {
 export default function ActionWorkbench() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
   const loading = useInquiryStore((s) => s.loading);
   const isOnline = useConnectivityStore((s) => s.isOnline);
   const quotations = useQuotationStore((s) => s.quotations);
@@ -170,10 +168,7 @@ export default function ActionWorkbench() {
   const [owner, setOwner] = useState<string | undefined>(undefined);
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
 
-  const allInquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const allInquiries = useVisibleInquiries();
   const ownerOptions = useMemo(() => getOwnerOptions(allInquiries), [allInquiries]);
 
   const filtered = useMemo(

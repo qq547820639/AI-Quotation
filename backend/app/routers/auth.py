@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -76,36 +77,69 @@ def get_client_ip(request: Request) -> str:
     return client_host
 
 
+_SCHEME_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _canonical_origin(raw: str) -> str | None:
+    """归一化 origin 为 `scheme://host[:非默认端口]`（小写、省略 scheme 默认端口）。
+
+    浏览器序列化 Origin 头时会省略 http/https 的默认端口（MDN「Origin」：
+    `http://example.com` 而非 `http://example.com:80`），而运维写的白名单常带端口，
+    逐字符串比对会把同源/可信来源误判为跨站。无法解析时返回 None（调用方按不可信处理）。
+    """
+    try:
+        parts = urlsplit((raw or "").strip())
+        scheme = parts.scheme.lower()
+        host = (parts.hostname or "").lower()
+        port = parts.port  # 非法端口在这里抛 ValueError
+    except ValueError:
+        return None
+    if not scheme or not host:
+        return None
+    if port is not None and port != _SCHEME_DEFAULT_PORTS.get(scheme):
+        return f"{scheme}://{host}:{port}"
+    return f"{scheme}://{host}"
+
+
+def _referer_origin(referer: str) -> str:
+    """取 Referer 的 origin 部分（忽略 path/query），避免同源判定被路径干扰。"""
+    canonical = _canonical_origin(referer)
+    return canonical if canonical is not None else referer
+
+
 def _assert_same_origin(request: Request) -> None:
     """CSRF 防护：对 cookie 认证的状态修改端点校验 Origin/Referer 必须为可信同源。
 
     - 仅当请求携带 Origin 或 Referer 头时校验（浏览器始终携带；纯 API 客户端如 curl/测试
       通常不带，此时放行以保持对非浏览器调用方的兼容）。
     - Origin 优先；若 Origin 缺失则回退校验 Referer 的 origin 部分。
-    - 校验通过条件：该 origin 在 CORS_ORIGINS 白名单内（与 CORS 配置一致）。
+    - 放行条件（两者都按 _canonical_origin 归一化后比较）：
+      与本次请求自身的 origin 同源，或该 origin 在 CORS_ORIGINS 白名单内。
     - 不匹配则 403，阻断跨站请求伪造（配合 SameSite=Lax 双重防护）。
     """
-    def _origin_of(referer: str) -> str:
-        # 仅取 scheme://host（忽略 path/query），避免同源判定被 path 干扰
-        try:
-            from urllib.parse import urlsplit
-            parts = urlsplit(referer)
-            if parts.scheme and parts.netloc:
-                return f"{parts.scheme}://{parts.netloc}"
-        except (ValueError, TypeError):
-            return referer
-        return referer
-
     origin = request.headers.get("origin")
     if not origin:
         referer = request.headers.get("referer")
         if not referer:
             return  # 无 Origin/Referer：非浏览器调用，放行
-        origin = _origin_of(referer)
+        origin = _referer_origin(referer)
 
-    # 仅信任 CORS 白名单内的来源（与 CORS 配置一致）
-    allowed = set(CORS_ORIGINS)
-    if origin not in allowed:
+    # 仅信任同源或 CORS 白名单内的来源
+    candidate = _canonical_origin(origin)
+    if candidate is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="跨站请求被拒绝（Origin 校验失败）",
+        )
+
+    # 同源放行：反代部署（nginx 把 /api 与页面同域转发）下页面发来的 Origin 就是本服务
+    # 自身的 origin，不必也不应要求运维把它重复写进 CORS 白名单。
+    self_origin = _canonical_origin(f"{request.url.scheme}://{request.url.netloc}")
+    if self_origin is not None and candidate == self_origin:
+        return
+
+    allowed = {c for c in (_canonical_origin(o) for o in CORS_ORIGINS) if c is not None}
+    if candidate not in allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="跨站请求被拒绝（Origin 校验失败）",

@@ -50,7 +50,6 @@ import Permission from '@/components/Permission';
 import { InquiryStatusTag } from '@/components/StatusTag';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
-import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useQuery } from '@tanstack/react-query';
 import { inquiryApi, type BatchOperationResult } from '@/api';
@@ -76,6 +75,7 @@ import {
   type TableColumnPref,
 } from '@/hooks/useTablePreferences';
 import { useSavedViews, type SavedFilterView } from '@/hooks/useSavedViews';
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 import {
   useBatchInquiries,
   type BatchActionKind,
@@ -99,12 +99,7 @@ interface SavedViewFilter {
 export default function InquiryListPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
   const copyInquiry = useInquiryStore((s) => s.copyInquiry);
   const cancelInquiry = useInquiryStore((s) => s.cancelInquiry);
   const batchCancelInquiries = useInquiryStore((s) => s.batchCancelInquiries);

@@ -139,6 +139,13 @@ interface InquiryState {
   addLog: (inquiryId: string, type: LogType, content: string, result?: string) => void;
 }
 
+/** 组织可见性过滤（纯函数）：store 选择器与页面派生 hook 共用，避免两处规则漂移 */
+export function filterVisibleInquiries(inquiries: Inquiry[], organization: string): Inquiry[] {
+  return organization === '__ALL__'
+    ? inquiries
+    : inquiries.filter((i) => i.organization === organization);
+}
+
 export const useInquiryStore = create<InquiryState>((set, get) => ({
   // P1-10 Task 15：生产模式不预置 mock 数据，仅演示模式允许（真实数据与 mock 隔离）
   inquiries: MOCK_FALLBACK_ENABLED ? mergeInquiries() : [],
@@ -169,10 +176,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   getInquiryById: (id) => get().inquiries.find((i) => i.id === id),
 
-  getVisibleInquiries: (organization) =>
-    get().inquiries.filter((i) =>
-      organization === '__ALL__' ? true : i.organization === organization,
-    ),
+  getVisibleInquiries: (organization) => filterVisibleInquiries(get().inquiries, organization),
 
   addInquiry: async (inquiry) => {
     if (pendingOps[`add:${inquiry.id}`]) return pending();
@@ -213,11 +217,9 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         return { inquiries };
       });
-      await inquiryApi.update(id, { ...patch, version: current?.version });
-      const updated = get().getInquiryById(id);
-      if (updated) {
-        applyServerInquiry({ ...updated, version: (updated.version ?? 0) + 1 });
-      }
+      // 写成功后一律以服务端返回实体（含权威 version）覆盖本地；
+      // 原先本地 +1 猜测会在其他写入口（选定供应商/状态动作）递增后失配 → 下次写 409
+      applyServerInquiry(await inquiryApi.update(id, { ...patch, version: current?.version }));
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -322,7 +324,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         }
         return { inquiries };
       });
-      await inquiryApi.cancel(id);
+      applyServerInquiry(await inquiryApi.cancel(id));
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -390,7 +392,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         }
         return { inquiries };
       });
-      await inquiryApi.send(id);
+      applyServerInquiry(await inquiryApi.send(id));
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -441,7 +443,9 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
       });
       const updated = get().inquiries.find((i) => i.id === inquiryId);
       if (updated) {
-        await inquiryApi.update(inquiryId, { selectedSupplierMap: updated.selectedSupplierMap });
+        applyServerInquiry(
+          await inquiryApi.update(inquiryId, { selectedSupplierMap: updated.selectedSupplierMap }),
+        );
       }
       return ok();
     } catch (e) {
@@ -484,7 +488,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         }
         return { inquiries };
       });
-      await inquiryApi.confirm(inquiryId);
+      applyServerInquiry(await inquiryApi.confirm(inquiryId));
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -539,7 +543,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         }
         return { inquiries };
       });
-      await inquiryApi.submitApproval(inquiryId);
+      applyServerInquiry(await inquiryApi.submitApproval(inquiryId));
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -592,7 +596,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         }
         return { inquiries };
       });
-      await inquiryApi.approve(inquiryId, comment);
+      applyServerInquiry(await inquiryApi.approve(inquiryId, comment));
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -645,7 +649,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         }
         return { inquiries };
       });
-      await inquiryApi.reject(inquiryId, comment);
+      applyServerInquiry(await inquiryApi.reject(inquiryId, comment));
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });

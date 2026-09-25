@@ -1,7 +1,10 @@
 """后端配置"""
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -9,8 +12,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 try:
     from dotenv import load_dotenv
     load_dotenv(BASE_DIR / ".env")
-except Exception:  # noqa: BLE001 - dotenv 可选，缺失不影响运行
-    pass
+except Exception as exc:  # noqa: BLE001 - dotenv 可选，缺失不影响运行
+    logger.debug("未加载 .env（python-dotenv 不可用）：%s", exc)
 
 DB_PATH = os.environ.get("DB_PATH", str(BASE_DIR / "procurement.db"))
 # 支持 DATABASE_URL 环境变量（如 postgresql://...），否则回退到本地 SQLite
@@ -300,8 +303,8 @@ def _load_demo_api_key() -> str:
         try:
             from cryptography.fernet import Fernet
             return Fernet(fernet_key.encode()).decrypt(AI_DEMO_KEY_CIPHERTEXT).decode()
-        except Exception:  # noqa: BLE001 - 密钥错误/格式非法时回退
-            pass
+        except Exception as exc:  # noqa: BLE001 - 密钥错误/格式非法时回退
+            logger.debug("演示密钥解密失败，回退明文环境变量：%s", type(exc).__name__)
     return os.environ.get("AI_DEMO_API_KEY", "").strip()
 
 

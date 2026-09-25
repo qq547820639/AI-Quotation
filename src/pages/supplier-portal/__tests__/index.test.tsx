@@ -11,6 +11,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
 import { ApiError } from '@/api/errors';
+import { agoDays, inDays } from '@/test/temporalFixtures';
 
 // mock portal API 模块，避免真实网络请求
 vi.mock('@/api/portal', () => ({
@@ -45,6 +46,14 @@ import SupplierPortalPage from '../index';
 const TOKEN = 'inv-token-valid';
 const mockedPortal = vi.mocked(portalApi);
 
+/**
+ * 截止/有效期一律相对当前时刻生成。绝对日期会在真实时间越过后静默改写页面状态：
+ * deadline 过期 → 提交按钮 disabled → 点击无任何效果，提交类用例会随日历漂移而失败。
+ */
+const OPEN_DEADLINE = inDays(7);
+const OPEN_EXPIRES_AT = inDays(14);
+const PASSED_DEADLINE = agoDays(3);
+
 const validInvitation = {
   status: 'valid' as const,
   invitationId: 'inv-1',
@@ -52,8 +61,8 @@ const validInvitation = {
   inquiryCode: 'INQ20260801003',
   supplierId: 'sup-2',
   supplierName: '华为技术有限公司',
-  deadline: '2026-08-11 18:00:00',
-  expiresAt: '2026-08-18 18:00:00',
+  deadline: OPEN_DEADLINE,
+  expiresAt: OPEN_EXPIRES_AT,
 };
 
 const inquiry = {
@@ -62,7 +71,7 @@ const inquiry = {
   subject: '服务器设备采购询价',
   organization: '总部数据中心',
   currency: 'CNY',
-  deadline: '2026-08-11 18:00:00',
+  deadline: OPEN_DEADLINE,
   expectedDeliveryDate: '2026-09-01',
   deliveryAddress: '上海市浦东新区',
   contact: '张经理',
@@ -237,6 +246,26 @@ describe('供应商门户页面状态', () => {
 });
 
 describe('供应商门户提交', () => {
+  it('对照：deadline 已过 → 提交按钮禁用并提示已截止，点击不打开预览', async () => {
+    mockedPortal.validateInvitation.mockResolvedValue(validInvitation);
+    mockedPortal.getPortalInquiry.mockResolvedValue({ ...inquiry, deadline: PASSED_DEADLINE });
+    mockedPortal.getCurrentQuotation.mockResolvedValue(prefilledDraft);
+    renderWithProviders(<SupplierPortalPage />);
+    await screen.findByText('服务器设备采购询价');
+
+    const submitBtn = screen.getByText('正式提交').closest('button')!;
+    expect(submitBtn).toBeDisabled();
+    expect(screen.getByText('报价已截止，无法提交')).toBeInTheDocument();
+
+    fireEvent.click(submitBtn);
+    expect(mockedPortal.submitQuotation).not.toHaveBeenCalled();
+    expect(screen.queryByText('提交前预览')).not.toBeInTheDocument();
+    // 走的是"已截止"分支而非表单校验分支
+    expect(
+      screen.queryByText('请补全所有物料的单价（>0）与交货周期（>0）后再提交'),
+    ).not.toBeInTheDocument();
+  });
+
   it('提交前预览：点正式提交打开预览，展示逐项报价与总额，确认后调用 API 并展示回执', async () => {
     mockedPortal.validateInvitation.mockResolvedValue(validInvitation);
     mockedPortal.getPortalInquiry.mockResolvedValue(inquiry);

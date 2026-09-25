@@ -20,7 +20,7 @@ test.describe('工作台行动工作台', () => {
     await page.reload();
     await login(page, OPERATOR);
     await page.goto('/dashboard');
-    await expect(page.locator('.ant-card')).first().toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.ant-card').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('渲染行动工作台标题与负责人筛选控件', async ({ page }) => {

@@ -466,3 +466,46 @@ describe('useInquiryStore', () => {
     });
   });
 });
+
+/**
+ * 乐观锁版本回同步（回归：写操作丢弃服务端返回体、本地按 +1 猜测 version）
+ * 服务端对每次写都 version += 1；若本地不采纳服务端返回值，
+ * 下一次 updateInquiry 带着过期 version 提交 → 后端 409 → 界面「保存失败重试」。
+ */
+describe('写操作后回同步服务端 version', () => {
+  it('选定供应商后的下一次写入携带服务端最新 version', async () => {
+    let serverVersion = 5;
+    const inq = makeInquiry({ id: 'inq-ver-1', version: 5 });
+    useInquiryStore.setState({ inquiries: [inq], loaded: true });
+    vi.mocked(inquiryApi.update).mockImplementation(async (id, data) => {
+      serverVersion += 1;
+      return { id, ...data, version: serverVersion } as unknown as Inquiry;
+    });
+
+    await useInquiryStore.getState().selectSupplier('inq-ver-1', 'item-1', 'sup-1');
+    expect(useInquiryStore.getState().getInquiryById('inq-ver-1')?.version).toBe(6);
+
+    await useInquiryStore
+      .getState()
+      .updateInquiry('inq-ver-1', { purchaserComments: { 'sup-1': '价格合理' } });
+    expect(inquiryApi.update).toHaveBeenLastCalledWith(
+      'inq-ver-1',
+      expect.objectContaining({ version: 6, purchaserComments: { 'sup-1': '价格合理' } }),
+    );
+    expect(useInquiryStore.getState().getInquiryById('inq-ver-1')?.version).toBe(7);
+  });
+
+  it('状态动作（发送）同样采纳服务端返回的 version', async () => {
+    const inq = makeInquiry({ id: 'inq-ver-2', version: 2, status: InquiryStatus.DRAFT });
+    useInquiryStore.setState({ inquiries: [inq], loaded: true });
+    vi.mocked(inquiryApi.send).mockResolvedValue({
+      id: 'inq-ver-2',
+      status: InquiryStatus.INQUIRING,
+      version: 9,
+    } as unknown as Inquiry);
+
+    await useInquiryStore.getState().sendInquiry('inq-ver-2');
+    const after = useInquiryStore.getState().getInquiryById('inq-ver-2');
+    expect(after?.version).toBe(9);
+  });
+});

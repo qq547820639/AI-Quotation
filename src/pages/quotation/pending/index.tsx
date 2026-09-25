@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 待回收报价页（Task 11）
  * 路由：/quotation/pending，使用 MainLayout
@@ -22,11 +23,7 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import {
-  EyeOutlined,
-  ReloadOutlined,
-  SwapOutlined,
-} from '@ant-design/icons';
+import { EyeOutlined, ReloadOutlined, SwapOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
   InquiryStatus,
@@ -35,10 +32,8 @@ import {
   type Quotation,
   type Supplier,
 } from '@/types';
-import { useInquiryStore } from '@/store/useInquiryStore';
 import { useSupplierStore } from '@/store/useSupplierStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
-import { useUIStore } from '@/store/useUIStore';
 import PageHeader from '@/components/PageHeader';
 import { InquiryStatusTag } from '@/components/StatusTag';
 import { formatDateTime, getRemainingTime } from '@/utils/format';
@@ -91,12 +86,7 @@ function calcStat(inquiry: Inquiry, quotations: Quotation[]): RowStat {
 export default function QuotationPendingPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
   const suppliers = useSupplierStore((s) => s.suppliers);
   const quotations = useQuotationStore((s) => s.quotations);
   const isMobile = useIsMobile();
@@ -139,14 +129,16 @@ export default function QuotationPendingPage() {
       const [start, end] = deadlineRange;
       list = list.filter((i) => {
         const d = dayjs(i.deadline);
-        return d.isAfter(start.startOf('day').subtract(1, 'ms')) && d.isBefore(end.endOf('day').add(1, 'ms'));
+        return (
+          d.isAfter(start.startOf('day').subtract(1, 'ms')) &&
+          d.isBefore(end.endOf('day').add(1, 'ms'))
+        );
       });
     }
     if (keyword.trim()) {
       const kw = keyword.trim().toLowerCase();
       list = list.filter(
-        (i) =>
-          i.code.toLowerCase().includes(kw) || i.subject.toLowerCase().includes(kw),
+        (i) => i.code.toLowerCase().includes(kw) || i.subject.toLowerCase().includes(kw),
       );
     }
     return list;
@@ -208,7 +200,9 @@ export default function QuotationPendingPage() {
       align: 'center',
       render: (_, record) => {
         const stat = calcStat(record, getQuotationsByInquiry(record.id));
-        return <Text style={{ color: 'var(--color-success)', fontWeight: 600 }}>{stat.submitted}</Text>;
+        return (
+          <Text style={{ color: 'var(--color-success)', fontWeight: 600 }}>{stat.submitted}</Text>
+        );
       },
     },
     {
@@ -239,7 +233,11 @@ export default function QuotationPendingPage() {
       render: (_, record) => {
         const stat = calcStat(record, getQuotationsByInquiry(record.id));
         return (
-          <Text style={{ color: stat.timeout > 0 ? 'var(--color-error)' : 'var(--color-text-tertiary)' }}>
+          <Text
+            style={{
+              color: stat.timeout > 0 ? 'var(--color-error)' : 'var(--color-text-tertiary)',
+            }}
+          >
             {stat.timeout}
           </Text>
         );
@@ -255,13 +253,7 @@ export default function QuotationPendingPage() {
           <Progress
             percent={stat.progress}
             size="small"
-            status={
-              stat.progress >= 100
-                ? 'success'
-                : stat.progress === 0
-                  ? 'exception'
-                  : 'active'
-            }
+            status={stat.progress >= 100 ? 'success' : stat.progress === 0 ? 'exception' : 'active'}
             format={() => `${stat.submitted}/${stat.invited}`}
           />
         );
@@ -334,9 +326,7 @@ export default function QuotationPendingPage() {
           />
           <RangePicker
             value={deadlineRange}
-            onChange={(dates) =>
-              setDeadlineRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)
-            }
+            onChange={(dates) => setDeadlineRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
             placeholder={[t('quotation.pending.deadlineStart'), t('quotation.pending.deadlineEnd')]}
           />
           <Input.Search
@@ -362,46 +352,103 @@ export default function QuotationPendingPage() {
                   <Empty description={t('quotation.pending.noMatch')} />
                 ),
             }}
-            pagination={{ pageSize: 10, simple: true, showTotal: (total) => t('common.total', { count: total }) }}
+            pagination={{
+              pageSize: 10,
+              simple: true,
+              showTotal: (total) => t('common.total', { count: total }),
+            }}
             renderItem={(record) => {
               const stat = calcStat(record, getQuotationsByInquiry(record.id));
               const remaining = getRemainingTime(record.deadline);
               const unquotedSuppliers = getUnquotedSuppliers(record);
               return (
-                <List.Item style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
+                <List.Item
+                  style={{ padding: '12px 16px', flexDirection: 'column', alignItems: 'stretch' }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      alignItems: 'center',
+                      marginBottom: 4,
+                      flexWrap: 'wrap',
+                    }}
+                  >
                     <Text strong>{record.code}</Text>
                     <InquiryStatusTag status={record.status} />
                     <Tag color={remaining.expired ? 'red' : remaining.urgent ? 'orange' : 'green'}>
                       {remaining.text}
                     </Tag>
                   </div>
-                  <Text ellipsis style={{ display: 'block', color: 'var(--color-text-secondary)', marginBottom: 6 }}>
+                  <Text
+                    ellipsis
+                    style={{
+                      display: 'block',
+                      color: 'var(--color-text-secondary)',
+                      marginBottom: 6,
+                    }}
+                  >
                     {record.subject}
                   </Text>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}>
+                  <div
+                    style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 6 }}
+                  >
                     {t('quotation.pending.deadlineTime')}: {formatDateTime(record.deadline)}
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: 12, marginBottom: 8 }}>
-                    <span>{t('quotation.pending.invitedCount')}: {stat.invited}</span>
-                    <span style={{ color: 'var(--color-success)' }}>{t('quotation.pending.submittedCount')}: {stat.submitted}</span>
-                    <span style={{ color: 'var(--color-warning)' }}>{t('quotation.pending.draftCount')}: {stat.draft}</span>
-                    <span>{t('quotation.pending.unquotedCount')}: {stat.unquoted}</span>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '4px 12px',
+                      fontSize: 12,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span>
+                      {t('quotation.pending.invitedCount')}: {stat.invited}
+                    </span>
+                    <span style={{ color: 'var(--color-success)' }}>
+                      {t('quotation.pending.submittedCount')}: {stat.submitted}
+                    </span>
+                    <span style={{ color: 'var(--color-warning)' }}>
+                      {t('quotation.pending.draftCount')}: {stat.draft}
+                    </span>
+                    <span>
+                      {t('quotation.pending.unquotedCount')}: {stat.unquoted}
+                    </span>
                     {stat.timeout > 0 && (
-                      <span style={{ color: 'var(--color-error)' }}>{t('quotation.pending.timeoutCount')}: {stat.timeout}</span>
+                      <span style={{ color: 'var(--color-error)' }}>
+                        {t('quotation.pending.timeoutCount')}: {stat.timeout}
+                      </span>
                     )}
                   </div>
                   <Progress
                     percent={stat.progress}
                     size="small"
-                    status={stat.progress >= 100 ? 'success' : stat.progress === 0 ? 'exception' : 'active'}
+                    status={
+                      stat.progress >= 100
+                        ? 'success'
+                        : stat.progress === 0
+                          ? 'exception'
+                          : 'active'
+                    }
                     format={() => `${stat.submitted}/${stat.invited}`}
                   />
                   <Space size={4} wrap style={{ marginTop: 8 }}>
-                    <Button type="link" size="small" icon={<SwapOutlined />} onClick={() => navigate(`/quotation/compare/${record.id}`)}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<SwapOutlined />}
+                      onClick={() => navigate(`/quotation/compare/${record.id}`)}
+                    >
                       {t('quotation.pending.viewCompare')}
                     </Button>
-                    <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/inquiry/detail/${record.id}`)}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => navigate(`/inquiry/detail/${record.id}`)}
+                    >
                       {t('inquiry.list.viewDetail')}
                     </Button>
                     <Select
@@ -424,22 +471,26 @@ export default function QuotationPendingPage() {
             }}
           />
         ) : (
-        <Table<Inquiry>
-          rowKey="id"
-          size="small"
-          columns={columns}
-          dataSource={filteredInquiries}
-          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => t('common.total', { count: total }) }}
-          scroll={{ x: 'max-content' }}
-          locale={{
-            emptyText:
-              inquiries.filter((i) => VISIBLE_STATUSES.includes(i.status)).length === 0 ? (
-                <Empty description={t('quotation.pending.empty')} />
-              ) : (
-                <Empty description={t('quotation.pending.noMatch')} />
-              ),
-          }}
-        />
+          <Table<Inquiry>
+            rowKey="id"
+            size="small"
+            columns={columns}
+            dataSource={filteredInquiries}
+            pagination={{
+              pageSize: 10,
+              showSizeChanger: true,
+              showTotal: (total) => t('common.total', { count: total }),
+            }}
+            scroll={{ x: 'max-content' }}
+            locale={{
+              emptyText:
+                inquiries.filter((i) => VISIBLE_STATUSES.includes(i.status)).length === 0 ? (
+                  <Empty description={t('quotation.pending.empty')} />
+                ) : (
+                  <Empty description={t('quotation.pending.noMatch')} />
+                ),
+            }}
+          />
         )}
       </Card>
     </div>

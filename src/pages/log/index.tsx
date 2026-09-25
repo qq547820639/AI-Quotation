@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 操作日志页面（Task 17）
  * - 聚合所有询价单的 logs，按时间倒序展示
@@ -27,11 +28,7 @@ import type { TagProps } from 'antd';
 
 import PageHeader from '@/components/PageHeader';
 import { useInquiryStore } from '@/store/useInquiryStore';
-import { useUIStore } from '@/store/useUIStore';
-import {
-  LogType,
-  type InquiryLog,
-} from '@/types';
+import { LogType, type InquiryLog } from '@/types';
 import { formatDateTime } from '@/utils/format';
 
 const { RangePicker } = DatePicker;
@@ -66,9 +63,7 @@ interface FilterForm {
 
 /** 聚合所有询价单日志（按时间倒序），并附加稳定 key */
 function aggregateLogs(inquiries: ReturnType<typeof useInquiryStore.getState>['inquiries']) {
-  const all = inquiries
-    .flatMap((i) => i.logs)
-    .sort((a, b) => (a.time < b.time ? 1 : -1));
+  const all = inquiries.flatMap((i) => i.logs).sort((a, b) => (a.time < b.time ? 1 : -1));
   // 附加稳定 key：inquiryId+time+index
   return all.map((log, index) => ({
     ...log,
@@ -78,12 +73,7 @@ function aggregateLogs(inquiries: ReturnType<typeof useInquiryStore.getState>['i
 
 export default function LogPage() {
   const { t } = useTranslation();
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
   const [form] = Form.useForm<FilterForm>();
 
   const logTypeOptions = (Object.keys(LogType) as LogType[]).map((value) => ({
@@ -251,7 +241,9 @@ export default function LogPage() {
             showTotal: (total) => t('log.totalRecords', { count: total }),
           }}
           locale={{
-            emptyText: <Empty description={allLogs.length ? t('log.noSearchResult') : t('log.empty')} />,
+            emptyText: (
+              <Empty description={allLogs.length ? t('log.noSearchResult') : t('log.empty')} />
+            ),
           }}
         />
       </Card>

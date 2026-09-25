@@ -33,10 +33,18 @@ function bootstrapStores() {
 function App() {
   useEffect(() => {
     startDeadlineWatcher();
-    void bootstrapStores();
+    // 登录页也会挂载 App：未鉴权时拉业务数据必然 401，store 会被标成
+    // "离线/加载失败"，且登录成功后不再重取（工作台全为 0）。
+    // 因此只在已认证时引导，并在"未认证 → 已认证"的那一刻补一次。
+    if (useAuthStore.getState().isAuthenticated) void bootstrapStores();
+    return useAuthStore.subscribe((state, prev) => {
+      if (state.isAuthenticated && !prev.isAuthenticated) void bootstrapStores();
+    });
   }, []);
 
   // P2-12 Task 17：订阅 SSE 事件，实时刷新未读数与相关查询缓存
+  // 以认证态为开关：未登录建流必然 401，且登录成功后要立即重连而不是等退避计时
+  const authenticated = useAuthStore((s) => s.isAuthenticated);
   useEventStream((event) => {
     const { type } = event;
     if (type === 'quotation_submitted' || type === 'inquiry_confirmed') {
@@ -49,7 +57,7 @@ function App() {
       useNotificationStore.getState().refreshUnreadCount();
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.notifications });
     }
-  });
+  }, authenticated);
 
   return <RouterProvider router={appRouter} />;
 }

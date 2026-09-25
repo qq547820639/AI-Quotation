@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEMO_PASSWORD } from './helpers';
+import { DEMO_PASSWORD, tap } from './helpers';
 
 /**
  * E2E：国际化与主题切换（G4 重写：消除空跑与恒真式，具体文案断言）
@@ -27,7 +27,7 @@ test.describe('i18n 与主题', () => {
     // 点击 English 选项
     const englishOption = page.locator('.ant-dropdown-menu-item').filter({ hasText: /English/ });
     await expect(englishOption).toBeVisible({ timeout: 3000 });
-    await englishOption.click();
+    await tap(englishOption);
 
     // 验证页面文案变化：菜单或标题出现英文
     await expect(page.locator('body')).toContainText(/Dashboard|Inquiry|Supplier/i, {
@@ -37,7 +37,8 @@ test.describe('i18n 与主题', () => {
     // 切回中文（恢复默认状态）
     await langBtn.click();
     const chineseOption = page.locator('.ant-dropdown-menu-item').filter({ hasText: /中文/ });
-    await chineseOption.click();
+    await expect(chineseOption).toBeVisible({ timeout: 3000 });
+    await tap(chineseOption);
   });
 
   test('切换暗色主题并验证持久化', async ({ page }) => {
