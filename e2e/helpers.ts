@@ -200,8 +200,15 @@ export async function createAndSendInquiry(
 
   // 步骤4 预览：发送
   await expect(page.locator('.ant-descriptions').first()).toBeVisible({ timeout: 5000 });
+  // 先挂上响应等待再点：R28 的首跑形状是"点了发送、页面停在第 4 步、后端压根没有 /send 记录"，
+  // 那时第一个失败信号是 60s 之后的 waitForURL 超时，看不出是没发请求还是发了没跳转。
+  const sendRes = page.waitForResponse(
+    (res) => /\/api\/inquiries\/[^/]+\/send$/.test(new URL(res.url()).pathname),
+    { timeout: 30000 },
+  );
   await tap(page.getByRole('button', { name: /一键批量发送询价|Batch Send Inquiry/ }).last());
   await confirmOk(page);
+  expect((await sendRes).status(), '发送询价接口必须返回 2xx').toBeLessThan(300);
 
   // 发送成功跳转详情页
   await page.waitForURL(/\/inquiry\/detail\//);

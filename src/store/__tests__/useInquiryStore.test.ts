@@ -509,3 +509,38 @@ describe('写操作后回同步服务端 version', () => {
     expect(after?.version).toBe(9);
   });
 });
+
+/**
+ * R28：向导「创建 → 立即发送」两步之间落地的并发刷新，会把刚建的单从缓存里挤掉。
+ * 现场证据：E2E 一次全量跑里 core-flow「审批驳回后不可定标」的首跑，后端日志有
+ * POST /api/inquiries(200) 却没有随后的 /send，页面停在第 4 步、无报错提示、
+ * 直到 60s 测试预算耗尽 —— 与 sendInquiry 的 `if (!getInquiryById) return notFound()`
+ * 静默短路完全一致（onOk 里 `if (!sent.success) return;` 连提示都没有）。
+ */
+describe('并发刷新与刚创建实体之间的竞态（R28）', () => {
+  it('loadFromApi 覆盖缓存后，sendInquiry 仍要发出请求，并让该单带着服务端状态回到列表', async () => {
+    const draft = makeInquiry({ id: 'inq-race-1', status: InquiryStatus.DRAFT, version: 1 });
+    resetStore([]);
+    vi.mocked(inquiryApi.create).mockResolvedValue(draft);
+    // 读写不原子：list 在 create 之后发出，但返回的是不含这一单的快照
+    vi.mocked(inquiryApi.list).mockResolvedValue([makeInquiry({ id: 'inq-other' })]);
+    vi.mocked(inquiryApi.send).mockResolvedValue({
+      ...draft,
+      status: InquiryStatus.INQUIRING,
+      version: 2,
+    });
+
+    await useInquiryStore.getState().addInquiry(draft);
+    await useInquiryStore.getState().loadFromApi();
+    // 前提：缓存里确实已经没有这一单（否则下面断言的是恒真）
+    expect(useInquiryStore.getState().getInquiryById('inq-race-1')).toBeUndefined();
+
+    const sent = await useInquiryStore.getState().sendInquiry('inq-race-1');
+    expect(sent.success).toBe(true);
+    expect(inquiryApi.send).toHaveBeenCalledWith('inq-race-1');
+    // 服务端返回的实体要能把被挤掉的单放回列表
+    const after = useInquiryStore.getState().getInquiryById('inq-race-1');
+    expect(after?.status).toBe(InquiryStatus.INQUIRING);
+    expect(after?.version).toBe(2);
+  });
+});

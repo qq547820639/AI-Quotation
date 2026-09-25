@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+### 修复（收尾审计第二轮：一次"点了发送却没反应"的真实竞态）
+
+- **向导创建后立刻发送会静默不发请求（高）**：`useInquiryStore.sendInquiry` 以
+  "本地缓存里有这条"为前置条件，而 `loadFromApi` 是整体替换缓存。向导 `onOk` 走
+  `await addInquiry` → `await sendInquiry` 两次 await，中间只要落一次刷新（SSE 重连补拉、
+  列表页 refetch 都会触发），刚创建的询价单就被不含它的服务端快照挤掉 → 本地 `notFound()` 短路；
+  `onOk` 的 `if (!sent.success) return;` 又不弹提示（注释假设"拦截器已弹"，但本地短路没走网络）
+  → 用户点"发送"后界面毫无反应，服务端留下一条孤儿 DRAFT。
+  E2E 里表现为 `core-flow` 一条用例等满 60s，后端日志有 `POST /api/inquiries` 却没有 `/send`。
+  修法：`sendInquiry` 不再以本地缓存为发请求的前提（存在性交回服务端判定）、
+  `applyServerInquiry` 在缓存缺实体时插入而非只合并、`onOk` 对未走网络的失败补一条错误提示。
+  常驻用例：`src/store/__tests__/useInquiryStore.test.ts` 新增竞态用例（先红后绿，
+  并分别用"只回退守卫删除""只回退插入分支"两次变异确认都会翻红）。
+- **E2E 侧把"没发请求"和"发了没跳转"分开**：`createAndSendInquiry` 先挂
+  `waitForResponse(/\/api\/inquiries\/[^/]+\/send$/)` 再点发送并断言 2xx，
+  失败信息不再是一句 60s 之后的 `waitForURL` 超时。
+- **登记（未改）**：`useInquiryStore.ts` 另有 8 处同形的 `notFound()` 前置短路
+  （`updateInquiry/deleteInquiry/cancelInquiry/selectSupplier/confirmInquiry/submitForApproval/approveInquiry/rejectInquiry`），
+  触发窗口需要"用户正看着这条又被并发刷新挤掉"，本轮未取证，见风险文档 R28 残留段。
+- **登记（读数可信度）**：前端覆盖率百分比跨树不可复现——同一份已提交树在主工作树读 39.97%、
+  在 `git worktree` 检出读 42.39%，而两边**已覆盖语句数完全相同（7576）**，
+  差异全在仪表化分母（18953 vs 17871，集中在 21 个页面 `.tsx`）。已逐一排除换行符、
+  未跟踪 `.env.*`、`node_modules/.vite` 缓存与源码差异。门禁阈值 30% 不受影响，
+  但文档中的百分比今后必须注明测量树，并对账用语句数。见风险文档 R29。
+
 ### 修复（收尾审计：干净签出复现不出 E2E 的绿）
 
 - **E2E 的"绿"依赖一个没写进仓库的宿主环境变量（高）**：`docker-compose.dev.yml` 硬注入

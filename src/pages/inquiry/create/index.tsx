@@ -486,9 +486,17 @@ export default function InquiryCreatePage() {
         const saved = editingInquiry
           ? await updateInquiry(editingInquiry.id, draft)
           : await addInquiry(draft);
-        if (!saved.success) return;
+        // 网络/服务端类失败由 axios 响应拦截器弹提示；但 `reason: 'not_found' | 'pending'`
+        // 这类"请求根本没发出去"的本地短路不经过拦截器，过去这里是彻底静默的（R28）。
+        if (!saved.success) {
+          if (!saved.error) notifyError(t('common.operateFailed'));
+          return;
+        }
         const sent = await sendInquiry(draft.id);
-        if (!sent.success) return;
+        if (!sent.success) {
+          if (!sent.error) notifyError(t('common.operateFailed'));
+          return;
+        }
         removeKey(DRAFT_KEY);
         markDirty(false);
         notifySuccess(t('inquiry.create.sent'));

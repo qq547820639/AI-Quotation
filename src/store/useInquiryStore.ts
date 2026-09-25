@@ -45,7 +45,12 @@ const pendingOps: Record<string, boolean> = {};
 function applyServerInquiry(server: Inquiry) {
   if (!server || !server.id) return;
   useInquiryStore.setState((state) => {
-    const inquiries = state.inquiries.map((i) => (i.id === server.id ? { ...i, ...server } : i));
+    // 缓存里没有这条时（"创建→立刻发送"之间被一次并发 loadFromApi 挤掉）以服务端返回为准补回，
+    // 否则这条记录在本地视图里彻底消失，而服务器上它已经改好状态了。见 R28。
+    const exists = state.inquiries.some((i) => i.id === server.id);
+    const inquiries = exists
+      ? state.inquiries.map((i) => (i.id === server.id ? { ...i, ...server } : i))
+      : [server, ...state.inquiries];
     saveJSON(STORAGE_KEY, inquiries);
     // P1-10 Task 15：同步 React Query 服务端缓存为服务端返回对象
     queryClient.setQueryData(QUERY_KEYS.inquiries, inquiries);
@@ -362,7 +367,12 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   sendInquiry: async (id) => {
     if (pendingOps[`send:${id}`]) return pending();
-    if (!get().getInquiryById(id)) return notFound();
+    // 这里原先有一道 `if (!get().getInquiryById(id)) return notFound()` 的前置检查，
+    // 而向导走的是"创建 → 立刻发送"：两次 await 之间只要落一次并发 loadFromApi
+    // （SSE 重连补拉、列表页刷新都会触发），刚建的单就被整体替换掉的缓存挤掉，
+    // 于是这里静默 return，onOk 的 `if (!sent.success) return;` 又什么都不提示 ——
+    // 用户点了"发送"却什么都没发生（R28，E2E 里表现为等满 60s 且后端没有 /send 记录）。
+    // 这条记录存在与否由服务端判定，本地缓存不再是发请求的前提。
     const snapshot = get().inquiries;
     pendingOps[`send:${id}`] = true;
     try {
