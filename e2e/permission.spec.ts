@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEMO_PASSWORD } from './helpers';
+import { login } from './helpers';
 
 /**
  * E2E：RBAC 权限控制（G4 重写：消除恒真式，新增未登录用例）
@@ -16,13 +16,10 @@ test.describe('RBAC 权限', () => {
   });
 
   test('采购人员访问设置页受限', async ({ page }) => {
-    // 登录采购人员 u-1（李明辉，无 SETTINGS_MANAGE 权限）
-    await page.goto('/login');
-    await page.locator('.ant-select-selector').click();
-    await page.locator('.ant-select-item-option').filter({ hasText: '李明辉' }).click();
-    await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-    await expect(page).toHaveURL(/\/dashboard/);
+    // 登录采购人员 u-1（李明辉，无 SETTINGS_MANAGE 权限）。
+    // 走共享 login() 而不是自己抄一遍：它额外断言"选项真的落地 + 接口返回 2xx"，
+    // 自己抄的那份点了没落地也会一路静默到跳转断言。
+    await login(page, '李明辉');
 
     // 尝试访问设置页
     await page.goto('/settings');
@@ -44,13 +41,8 @@ test.describe('RBAC 权限', () => {
   });
 
   test('管理员可正常访问设置页', async ({ page }) => {
-    // 登录管理员 u-6（周大海）
-    await page.goto('/login');
-    await page.locator('.ant-select-selector').click();
-    await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-    await expect(page).toHaveURL(/\/dashboard/);
+    // 登录管理员 u-6（周大海），同样走共享 login()
+    await login(page, '周大海');
 
     // 访问设置页
     await page.goto('/settings');

@@ -53,8 +53,42 @@ export const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || 'dev-demo-pass-12
 export async function login(page: Page, name: string, password = DEMO_PASSWORD) {
   await page.goto('/login');
   await page.locator('.ant-select-selector').click();
-  await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
+  // 只认"当前展开的那个"下拉：antd 收起后节点仍挂在 DOM 里（只是 hidden），
+  // 不加作用域就可能点到上一次展开留下的旧节点。
+  await page
+    .locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')
+    .filter({ hasText: name })
+    .click();
+  // 必须验证"值真的落地"：`src/pages/login/index.tsx` 的 handleLogin 在 userId 为空时
+  // 只弹一条错误提示、**根本不发登录请求**，于是下面那次 waitForResponse 会一直等不到
+  // response 事件、30s 后报"超时"，读起来像后端慢，其实是这一次点击什么都没发出
+  // （一次 9.9 分钟的全量跑里那 1 个抖动正是这个形状）。选项文本是
+  // 「姓名（角色·组织）」，所以按包含断言。
+  await expect(page.locator('.ant-select-selection-item')).toContainText(name);
   await page.locator('input[type="password"]').fill(password);
+  // 受控 input 的写入竞态：`src/pages/login/index.tsx` 的密码框是 `value={password}` 的受控组件，
+  // 一次 fill 若落在 React 尚未挂上监听（或随后一次重渲染把 state 空值回写）的窗口里，
+  // DOM 上会短暂有值、state 仍为空 —— 于是 handleLogin 的 `if (!password)` 直接 return，
+  // **一个请求都不发**，下一次 `waitForResponse` 只能等满预算报"超时"。
+  // 实测证据（一次全量跑里那个抖动用例的失败截图 + aria 快照）：用户已提交、密码框为空、
+  // 页面无任何报错提示，而 `waitForResponse` 等满 30s 说明这一次点击什么都没发出去 ——
+  // 与 `handleLogin` 的 `if (!password) return` 分支完全一致。
+  // 究竟是"fill 落在监听挂载之前"还是"随后的重渲染把空 state 回写"，本轮未定案（复现率 1/36，
+  // 且当时的容器日志已随重建丢失），但两种成因的处置相同：不放宽超时（放宽只会把静默失败
+  // 拖得更久），而是反复写入直到值真的留在框里。
+  const passwordInput = page.locator('input[type="password"]');
+  await expect
+    .poll(
+      async () => {
+        await passwordInput.fill(password);
+        return passwordInput.inputValue();
+      },
+      {
+        timeout: 10000,
+        message: '密码写入未生效：受控 input 被重渲染清空，反复 fill 后仍拿不到值',
+      },
+    )
+    .toBe(password);
   // 登录是全套件最重的一次请求（服务端要跑 bcrypt 校验）。实测各引擎/冷启动下
   // 10s 期望预算会不够（一次 12.8 分钟的全量跑里出现 3 次停在 /login 的红），
   // 因此先显式等待该响应并断言其状态，再给跳转一个与引擎无关的 30s 预算。
