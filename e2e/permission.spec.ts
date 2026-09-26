@@ -24,15 +24,20 @@ test.describe('RBAC 权限', () => {
     // 尝试访问设置页
     await page.goto('/settings');
 
-    // 具体断言：要么跳转到 403 页面，要么设置页的保存按钮不可见（权限拦截）
+    // 断言不能重述自己的守卫：原来写成
+    //   if (A || B) { expect(A || B).toBeTruthy() } else { …保存按钮不可见… }
+    // 那条 expect 在 if 分支里恒真、永不失败，于是"被踢到 /login"也算通过——
+    // 用例宣称的是"权限被拦"，实际测的是"页面确实跳了个地方"。
+    // 收紧成：只接受两种产品语义上成立的结果（跳 403 / 留在设置页并被组件拦住），
+    // 第三类落点（尤其 /login）必须判红。
     const url = page.url();
-    const redirectedToForbidden = url.includes('/forbidden') || url.includes('/403');
-    const redirectedAway = !url.includes('/settings');
-
-    if (redirectedToForbidden || redirectedAway) {
-      // 跳转了，验证确实离开了 settings
-      expect(redirectedToForbidden || redirectedAway).toBeTruthy();
-    } else {
+    const onForbidden = url.includes('/forbidden') || url.includes('/403');
+    const stillOnSettings = url.includes('/settings');
+    expect(
+      onForbidden || stillOnSettings,
+      `采购人员访问 /settings 只应「跳 403」或「留在设置页且无保存权」，实际停在 ${url}`,
+    ).toBe(true);
+    if (stillOnSettings) {
       // 仍在 /settings，验证保存按钮不可见（权限组件拦截）
       await expect(page.getByRole('button', { name: /保\s*存|Save/ })).not.toBeVisible({
         timeout: 5000,
