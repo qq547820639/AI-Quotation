@@ -80,9 +80,11 @@ describe('useQuotationStore', () => {
     it('已存在的报价更新而非新增，且状态强制为 DRAFT', () => {
       const existing = makeQuotation({ id: 'quo-draft', totalAmount: 1000 });
       resetStore([existing]);
-      useQuotationStore.getState().saveQuotationDraft(
-        makeQuotation({ id: 'quo-draft', totalAmount: 2000, status: QuotationStatus.SUBMITTED }),
-      );
+      useQuotationStore
+        .getState()
+        .saveQuotationDraft(
+          makeQuotation({ id: 'quo-draft', totalAmount: 2000, status: QuotationStatus.SUBMITTED }),
+        );
       const list = useQuotationStore.getState().quotations;
       expect(list).toHaveLength(1);
       expect(list[0].totalAmount).toBe(2000);
@@ -92,9 +94,9 @@ describe('useQuotationStore', () => {
     it('暂存时同步记录 SAVE_QUOTATION_DRAFT 日志到询价单', () => {
       const addLog = vi.spyOn(useInquiryStore.getState(), 'addLog');
       resetStore([]);
-      useQuotationStore.getState().saveQuotationDraft(
-        makeQuotation({ id: 'quo-x', supplierName: '供应商X' }),
-      );
+      useQuotationStore
+        .getState()
+        .saveQuotationDraft(makeQuotation({ id: 'quo-x', supplierName: '供应商X' }));
       expect(addLog).toHaveBeenCalledWith(
         'inq-test-1',
         expect.anything(),
@@ -114,7 +116,11 @@ describe('useQuotationStore', () => {
     });
 
     it('提交报价：发送 QUOTATION_SUBMITTED 通知', () => {
-      const q = makeQuotation({ id: 'quo-ntf', status: QuotationStatus.DRAFT, totalAmount: 1234.5 });
+      const q = makeQuotation({
+        id: 'quo-ntf',
+        status: QuotationStatus.DRAFT,
+        totalAmount: 1234.5,
+      });
       resetStore([q]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
       useQuotationStore.getState().submitQuotation('quo-ntf');
@@ -150,9 +156,9 @@ describe('useQuotationStore', () => {
 
     it('更新已有报价', () => {
       resetStore([makeQuotation({ id: 'quo-up', totalAmount: 1000 })]);
-      useQuotationStore.getState().upsertQuotation(
-        makeQuotation({ id: 'quo-up', totalAmount: 3000 }),
-      );
+      useQuotationStore
+        .getState()
+        .upsertQuotation(makeQuotation({ id: 'quo-up', totalAmount: 3000 }));
       const list = useQuotationStore.getState().quotations;
       expect(list).toHaveLength(1);
       expect(list[0].totalAmount).toBe(3000);
@@ -202,15 +208,17 @@ describe('useQuotationStore', () => {
       expect(useQuotationStore.getState().getQuotationById('quo-fail')?.status).toBe(
         QuotationStatus.DRAFT,
       );
-      expect(useQuotationStore.getState().getQuotationById('quo-fail')?.submittedAt).toBeUndefined();
+      expect(
+        useQuotationStore.getState().getQuotationById('quo-fail')?.submittedAt,
+      ).toBeUndefined();
     });
 
     it('saveQuotationDraft API 失败时回滚空列表', async () => {
       resetStore([]);
       vi.mocked(quotationApi.saveDraft).mockRejectedValueOnce(new Error('boom'));
-      const res = await useQuotationStore.getState().saveQuotationDraft(
-        makeQuotation({ id: 'quo-new' }),
-      );
+      const res = await useQuotationStore
+        .getState()
+        .saveQuotationDraft(makeQuotation({ id: 'quo-new' }));
       expect(res).toEqual(expect.objectContaining({ success: false, reason: 'error' }));
       expect(useQuotationStore.getState().quotations).toHaveLength(0);
     });
@@ -236,5 +244,42 @@ describe('useQuotationStore', () => {
       expect(res).toEqual({ success: false, reason: 'not_found' });
       expect(quotationApi.submit).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * R30：报价列表的"在飞/已落地"标记。
+ * 没有它时，直达或刷新报价对比页会在 `quotationApi.list()` 还在飞的窗口里
+ * 把"还没拿到"渲染成"该询价单暂无已提交报价"（E2E 里表现为定标按钮 10s 找不到）。
+ */
+describe('报价列表加载状态（R30）', () => {
+  it('请求在飞时 loading=true 且 loaded=false；落地后 loading=false、loaded=true', async () => {
+    useQuotationStore.setState({ quotations: [], loading: false, loaded: false });
+    let release: (v: Quotation[]) => void = () => {};
+    const gate = new Promise<Quotation[]>((r) => {
+      release = r;
+    });
+    vi.mocked(quotationApi.list).mockImplementationOnce(() => gate);
+
+    const done = useQuotationStore.getState().loadFromApi();
+    const mid = useQuotationStore.getState();
+    expect(mid.loading).toBe(true);
+    expect(mid.loaded).toBe(false);
+
+    release([makeQuotation({ id: 'quo-load-1' })]);
+    await done;
+    const after = useQuotationStore.getState();
+    expect(after.loading).toBe(false);
+    expect(after.loaded).toBe(true);
+    expect(after.quotations.some((q) => q.id === 'quo-load-1')).toBe(true);
+  });
+
+  it('加载失败也要把 loaded 置真，否则页面会被永久钉在骨架屏上', async () => {
+    useQuotationStore.setState({ quotations: [], loading: false, loaded: false });
+    vi.mocked(quotationApi.list).mockRejectedValueOnce(new Error('network down'));
+    await useQuotationStore.getState().loadFromApi();
+    const s = useQuotationStore.getState();
+    expect(s.loading).toBe(false);
+    expect(s.loaded).toBe(true);
   });
 });

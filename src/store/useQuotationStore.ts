@@ -38,6 +38,13 @@ function mergeQuotations(): Quotation[] {
 
 interface QuotationState {
   quotations: Quotation[];
+  /**
+   * 首帧与在飞标记：页面需要区分"报价列表还没到"与"到了、确实没有已提交报价"。
+   * 没有这两个标记时，直达/刷新比价页会在请求在飞期间渲染成空态
+   * （"该询价单暂无已提交报价"），而报价其实已经提交（见风险文档 R30）。
+   */
+  loading: boolean;
+  loaded: boolean;
   /** W7.4：从 API 加载（失败时降级到 localStorage/mock） */
   loadFromApi: () => Promise<void>;
   getQuotationsByInquiry: (inquiryId: string) => Quotation[];
@@ -52,19 +59,25 @@ interface QuotationState {
 export const useQuotationStore = create<QuotationState>((set, get) => ({
   // P1-10 Task 15：生产模式不预置 mock 数据
   quotations: MOCK_FALLBACK_ENABLED ? mergeQuotations() : [],
+  loading: false,
+  loaded: false,
 
   // W7.4 + P1-10 Task 15：从 API 加载；生产模式失败不静默回退 mock
   loadFromApi: async () => {
+    set({ loading: true });
     try {
       const data = await quotationApi.list();
-      set({ quotations: data });
+      set({ quotations: data, loading: false, loaded: true });
       saveJSON(STORAGE_KEY, data);
       queryClient.setQueryData(QUERY_KEYS.quotations, data);
       useConnectivityStore.getState().markSynced();
     } catch {
+      // 无论成功失败，"这一次加载已经结束"，loaded 都要置真：
+      // 否则加载失败会把页面永久钉在骨架屏上，比误报空态更糟。
       if (MOCK_FALLBACK_ENABLED) {
-        set({ quotations: mergeQuotations() });
+        set({ quotations: mergeQuotations(), loading: false, loaded: true });
       } else {
+        set({ loading: false, loaded: true });
         useConnectivityStore.getState().markOffline();
       }
     }

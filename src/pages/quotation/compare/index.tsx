@@ -68,6 +68,10 @@ export default function QuotationComparePage() {
   const submitForApproval = useInquiryStore((s) => s.submitForApproval);
   const suppliers = useSupplierStore((s) => s.suppliers);
   const getQuotationsByInquiry = useQuotationStore((s) => s.getQuotationsByInquiry);
+  // 订阅加载状态本身：`getQuotationsByInquiry` 是稳定引用，只订阅它的话，
+  // 报价列表到货后这个组件不会重渲染，空态会一直挂在屏幕上。
+  const quotationsLoaded = useQuotationStore((s) => s.loaded);
+  const quotationsLoading = useQuotationStore((s) => s.loading);
   const approvalConfig = useSettingsStore((s) => s.approval);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canConfirmPerm = hasPermission('INQUIRY_CONFIRM');
@@ -322,6 +326,15 @@ export default function QuotationComparePage() {
   }
 
   // ===== 无已提交报价 =====
+  // 报价列表还没落地时不能渲染空态：直达或刷新比价页时 `quotationApi.list()` 还在飞，
+  // 此刻 `submittedRows === 0` 只说明"还没拿到"，不说明"没有"（R30）。
+  if (!quotationsLoaded || quotationsLoading) {
+    return (
+      <div style={{ textAlign: 'center', padding: 80 }}>
+        <Spin />
+      </div>
+    );
+  }
   if (data.submittedRows.length === 0) {
     return (
       <div>

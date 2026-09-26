@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 修复（收尾审计第三轮：报价对比页把"还在加载"当成"确实没有"）
+
+- **直达/刷新报价对比页会谎报"该询价单暂无已提交报价"（中）**：空态判据是
+  `data.submittedRows.length === 0`，而报价列表只在 `App` 启动时拉一次；请求还在飞时
+  `quotations` 仍是 `[]`，空态就成立了。并且该组件只订阅了 `getQuotationsByInquiry`
+  （zustand 稳定 action 引用）而没订阅 `quotations` 本身，列表到货后不会重渲染，
+  空态会一直挂着 —— E2E 里表现为 `[webkit] core-flow` 的「确认定标」按钮 10s 找不到、重试即过。
+  现在 `useQuotationStore` 带 `loading/loaded` 标记（失败也置 `loaded`，避免永久骨架屏），
+  比价页订阅它们并在空态之前先挡一层加载态；订阅本身同时修掉了"到货不重渲染"。
+  常驻用例两条（在飞中/落地后/失败三条状态）+ 变异对照（去掉成功分支的 `loaded` 会翻红）。
+
 ### 修复（收尾审计第二轮：一次"点了发送却没反应"的真实竞态）
 
 - **向导创建后立刻发送会静默不发请求（高）**：`useInquiryStore.sendInquiry` 以
