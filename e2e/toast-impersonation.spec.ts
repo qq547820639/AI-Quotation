@@ -22,7 +22,7 @@ import { login } from './helpers';
  *
  * 身份必须是管理员：第一版写成采购人员 `李明辉`（u-1），他在 `/settings` 上拿到的是
  * 403 Result 页（真实栈实测：`element(s) not found` + a11y 树里只有"返回首页"），
- * 于是"两张卡同屏"这个装置前提根本不成立 ⇒ 用 `周大海`（u-6，同 `permission.spec.ts:49`）。
+ * 于是"两张卡同屏"这个装置前提根本不成立 ⇒ 用 `周大海`（u-6，同 `permission.spec.ts:50`）。
  */
 const SAVE_BTN = /保\s*存|Save/;
 
