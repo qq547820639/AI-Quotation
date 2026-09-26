@@ -285,20 +285,15 @@ test.describe('异常场景', () => {
     });
     await page.goto(`/quotation/compare/${inquiryId}`);
 
-    // 产品缺陷面：加载失败不是"没有数据"。旧实现会把 loaded 置真而数据为空，
-    // 于是页面断言「该询价单暂无已提交报价」——把一次同步失败说成业务事实。
-    await expect(page.locator('.ant-empty-description')).not.toContainText(
-      /暂无已提交报价|No submitted quotation/,
-      { timeout: 15000 },
-    );
-    // 必须给出"加载失败/未同步"这一类可恢复提示，而不是空态
-    await expect(
-      page
-        .locator('.ant-card, .ant-result, .ant-alert')
-        .filter({ hasText: /加载失败|未同步|重试|离线|retry|failed/i }),
-    )
-      .first()
-      .toBeVisible({ timeout: 15000 });
+    // 判别面必须用**只有这个修复才会产出**的文案。
+    // 第一版这里判的是 `getByRole('button', {name:/重试/})`，控制档实测照样绿 ——
+    // 因为加载失败会 markOffline，全局离线条上本来就有一个「重试」按钮；
+    // 而随后的缺席断言又是在页面还在转骨架屏时求值的，自然"没有空态"。
+    // 两个坑合起来：正向断言要唯一、缺席断言要在状态落定后判。
+    await expect(page.getByText(/还不能判断|absence of data/, { exact: false })).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(page.locator('body')).not.toContainText(/暂无已提交报价|No submitted quotation/);
   });
 
   test('定标接口 500：只报失败，不得伪造「已确认定标」（R32）', async ({ page }) => {
