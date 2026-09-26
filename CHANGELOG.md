@@ -4,6 +4,44 @@
 
 ## [Unreleased]
 
+### 修复（R35：一条坏写让询价列表对所有人 500）
+
+- **写边界不校验、读边界必炸**：`_build_inquiry_items` 把前端值原样写库
+  （`quantity=it.get("quantity", 0)`），而 `InquiryCreate` 是 `extra="allow"` 且只校验 `subject`；
+  SQLite 列不做类型校验，表上的 `CHECK (quantity > 0)` 也拦不住（SQLite 里 TEXT 排序类高于
+  INTEGER，`'NOT-A-NUMBER' > 0` 为真）。读侧 `InquiryItemSchema.quantity: int` 于是抛
+  ValidationError，而列表端点是 `[inquiry_to_schema(i) for i in rows]` ——
+  **一行坏数据让 `GET /api/inquiries` 对所有用户持续 500**，且无法自愈。
+  任何能调创建接口的客户端都握有打挂主页面的开关。
+- **修法（构造性，不逐列枚举类型）**：写之前先过一遍**读侧** schema
+  （`InquiryItemSchema.model_validate`），使"能写进去的"⊆"能读出来的"成为结构保证；
+  可无损转换的（`"10"` → 10）照样接受并按转换后的值落库，不可表示的在**任何写入之前**
+  以 422 拒绝（`error_type=invalid_inquiry_item` + `index` + `fields`）。
+  创建与更新两条路径共用该函数，一次修好两处。
+- **迁移 0016 治已经躺在库里的坏行**：可转换就地改值；不可转换删行并在父询价单
+  `inquiry_logs` 留一条 `DATA_REPAIR` 痕迹（写明被删 item id 与原始值）。
+  刻意不选"置 0"（`CHECK (quantity > 0)` 会拒）也不选"猜一个数"（那是伪造业务事实）；
+  `target_price` 不可转换则置 NULL（该列本就可空）。`downgrade` 只收回留痕、不还原坏数据。
+- **顺带修掉同族的错误归因**：创建重试循环 `except IntegrityError: rollback()` 吞掉一切
+  完整性冲突后统一报 500「编号生成冲突重试耗尽」。实测把已存在的单改 `id` 回 POST
+  （子行 `items[].id` 已存在）会连撞 5 次并拿到这句假原因。现在只有"刚生成的编号确实已被占用"
+  才重试，其余冲突改判 409（`inquiry_conflict`）且文案不再声称编号碰撞；
+  真·耗尽保留 500 但改成结构化 detail。
+- **常驻用例 10 条**：`test_inquiry_item_validation.py` 6 条（核心那条断的是
+  "被拒之后列表仍 200 且行数不变"，只断状态码抓不到"行已落库"）+
+  `test_migration_0016_item_repair.py` 4 条（含"健康行一个都不动"这条不开火对照与幂等）。
+  控制档：写侧退回改前 → 6 条全红；把 0016 移走 → 4 条里 2 条开火（另 2 条本就是
+  "不该变更"的守卫，有无迁移都该绿）。
+- **端到端复验（真实栈）**：`BEFORE GET /api/inquiries -> 500` → `alembic upgrade head`
+  （`Running upgrade 0015 -> 0016`）→ `AFTER -> 200`，残留非整数行 0、留痕 2。
+  后端全量（CI 的 env 形状）：`436 passed, 1 skipped, coverage 85.53%`，
+  对照修前基线 `426 passed` —— 净增 10 条即本轮新用例，无回归。
+- **同时撤回两条我上一轮登记的假缺陷**（"500 不打栈"与"500 响应没有 X-Request-Id"）：
+  前者是 `tail -30` 在万行日志上截尾读的，按 request_id 精确 grep 后 ERROR 行与完整
+  traceback 都在（`main.py:291` 的 handler 一直有 `logger.exception`）；
+  后者是 `dict(headers)` 按 `'X-Request-Id'` 取值时大小写不匹配读成 None，
+  `curl -D -` 实测该头存在。
+
 ### 修复（R34：E2E 的泛化「成功提示」断言让测试在写请求飞行中就导航）
 
 - **断言替产品说谎**：`core-flow.spec.ts` 里「提交审批成功」写成
