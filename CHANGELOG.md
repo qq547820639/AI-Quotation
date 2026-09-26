@@ -4,6 +4,52 @@
 
 ## [Unreleased]
 
+### 修复（R34：E2E 的泛化「成功提示」断言让测试在写请求飞行中就导航）
+
+- **断言替产品说谎**：`core-flow.spec.ts` 里「提交审批成功」写成
+  `expect(.ant-message-success.first()).toBeVisible()`。antd 的 message 停留约 3s，
+  上一条「已选择推荐供应商」的提示还在屏上时这条断言立刻通过 —— 插桩实测 8/8 次，
+  断言通过时刻只有 67~85ms（小于审批 POST 自身 147ms 的服务端耗时），
+  屏上文案是上一步的，而审批 POST 的响应时刻读数为 `-1`：响应还没回来，
+  下一次 `page.goto('/approval')` 把它掐断了。于是「审批后的单能不能出现在审批页」
+  退化成服务端提交与新文档取数之间的掷硬币（全量跑 1/195 的红即此）。
+- **修法**：`e2e/helpers.ts` 新增 `expectSuccessToast(page, 文案正则)` 按指名文案等提示
+  （成功提示都在 `await` 写请求之后才弹，指名等就等于等落地），
+  `core-flow.spec.ts` 7 处泛化断言改为指名。改前全仓泛化断言共 11 处，
+  其余 4 处（exception-scenarios 2、门户回执 2）经上下文判未暴露，不改。
+- **成对对照**：把 `/submit-approval` 桩成 500 后，泛化断言照样绿（`genericPassed=true`，
+  这正是成因本身）、指名断言开火（`specificPassed=false`）、且此刻成功提示集合为空。
+  修复前后同一探针：POST 响应时刻由 `-1`(8/8) 变为 93~110ms(5/5)。
+- **棘轮门禁**：新增 `scripts/check-e2e-toast-assertions.mjs`（`npm run e2e:toast:check` + CI 的
+  docker-e2e job，紧随既有的 `e2e:config:check`）。判据：证明写落地的成功提示必须写成
+  `locator('…ant-message-success…').filter(`；未指名位点按文件登记豁免条数与理由，
+  **超出豁免**与**豁免没用完**（清单随代码演进过期）两个方向都判红。
+  第一版判据的字符类允许跨行，从上一行无关的单引号字符串一路匹到下一个选择器，
+  在 `e2e/helpers.ts` 凭空多报一处 —— 是 `--self-test` 的「真实仓库必须先过」前置抓出来的，
+  不是我读码读出来的；修法是把判据锚到 `locator(` 调用上并禁止跨行，
+  并补一条必须**不开火**的正对照（在已指名断言前故意放一行无关单引号字符串）。
+  读数：`✔ 未指名断言 4 处，全部在册且有豁免理由`，`--self-test` 四条控制全过。
+- 归因中排除并留档：后端读己之写探针 20/20 无违例；nginx 只缓存静态资源；
+  生产构建不注册 MSW；store 不从 localStorage 水合；`submitForApproval` 实现本身正确。
+
+### 修复（R33：列表加载失败时页面说「暂无已提交报价」）
+
+- **把同步失败说成业务事实**：报价清单拉取失败时 `loaded` 被置真而数组为空，
+  对比页于是走进空态分支，向用户宣布「该询价单暂无已提交报价」。
+  R30 补的 `loaded` 只分开了「还没加载」与「加载了且为空」，
+  没把「加载结束**且失败**」分出来 —— 失败分支恰好复刻了 R30 要杀的那句谎话。
+- **修法**：两个 store 各立第三根轴 `loadError`（成功清、两条 catch 分支置），
+  对比页在 `!inquiryId`/`!inquiry`/空态分支**之前**统一拦一道，
+  失败时渲染 `<Result status="warning">` + 「重试」，文案改成「还没拿到数据，不能判断有没有报价」。
+- **常驻用例**：两个 store 各补一组 `loadError` 断言（`it` 计 4 条，按 `describe` 标题
+  「…loadError（R33）」现数），`e2e/exception-scenarios.spec.ts` 补 1 条真实 500 链路。
+  判别面踩到三个坑并逐条修掉：401 会清会话跳登录（改用 500）、`not.toContainText`
+  作用在不存在的 locator 上是报错不是通过（缺席断言落到 `body`）、
+  「重试」按钮全局离线横幅也有（改用只有修复才产出的文案「还不能判断」）。
+  控制档（页面退回 `ec6735b` 的 blob 并重建镜像）确实断红 rc=1，修复档 5 项目全绿。
+- **效果读数**：全量跑由 `184 passed / 2 flaky / 2 failed / 2 skipped` 变为
+  `192 passed / 1 flaky / 2 skipped`，两条 firefox 硬红消失。
+
 ### 修复（R21 残留：门户 409 的可执行文案被前端丢掉）
 
 - **FastAPI 的 `detail` 信封没人读**：后端把重复报价的提示写在
