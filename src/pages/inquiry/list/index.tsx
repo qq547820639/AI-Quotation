@@ -111,6 +111,8 @@ export default function InquiryListPage() {
   const isMobile = useIsMobile();
   const currentUser = useAuthStore((s) => s.currentUser);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  // R41 之后导出要等真实生成完成 ⇒ 生成期给按钮 loading 并挡住重入
+  const [exportingCurrent, setExportingCurrent] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
 
   // ===== Task 19：保存筛选视图 + 默认视图 =====
@@ -710,6 +712,8 @@ export default function InquiryListPage() {
 
   /** 导出当前筛选结果 */
   const handleExportCurrent = async () => {
+    if (exportingCurrent) return;
+    setExportingCurrent(true);
     const header = [
       t('inquiry.list.inquiryCode'),
       t('inquiry.list.subject'),
@@ -737,6 +741,8 @@ export default function InquiryListPage() {
       notifySuccess(t('table.exportCurrentSuccess'));
     } catch {
       notifyError(i18n.t('inquiry.export.failed'));
+    } finally {
+      setExportingCurrent(false);
     }
   };
 
@@ -1215,7 +1221,11 @@ export default function InquiryListPage() {
             onSetDensity={setDensity}
             onReset={resetTablePrefs}
           />
-          <Button icon={<ExportOutlined />} onClick={() => void handleExportCurrent()}>
+          <Button
+            icon={<ExportOutlined />}
+            loading={exportingCurrent}
+            onClick={() => void handleExportCurrent()}
+          >
             {t('table.exportCurrent')}
           </Button>
         </Space>
