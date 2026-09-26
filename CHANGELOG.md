@@ -4,6 +4,50 @@
 
 ## [Unreleased]
 
+### R44：逐行导出补上按行的 loading 与重入保护（并撤回上一轮"不做"的理由）
+
+- 调用点普查（子代理跑，5 个 `file:line` 我逐个亲手复核）推翻了上一轮登记的理由：
+  R41 之后 **5 个导出调用点形状完全一致**（都 `await exportAOA` 才 `notifySuccess`），
+  唯一没守卫的那个是 `src/pages/inquiry/list/index.tsx:580` 的**逐行**导出，
+  也是唯一挂在表格行与移动端下拉两个入口上的那个。
+- 修法按行记状态（`exportingRows: Record<string, boolean>`：`:581` 挡重入、`:965` 给该行 loading），
+  没复用单个布尔——单槽位在两行同时生成时，先完成那次的 `finally` 会把后发起那次的标记清掉。
+- 残留事实：`grep -rniE "导出|xlsx|download" e2e/` 读数 **0** ⇒ 导出链路零浏览器级覆盖，
+  本轮两个守卫都只有代码形状与全量套件不回退作证据。
+
+### 冒充实证用例在真实栈跑绿：先证明的是我自己的装置有三处"绿而无效"
+
+- `e2e/toast-impersonation.spec.ts` 首跑（`4b35007`）把整套件拖成
+  `5 failed / 193 passed / 2 skipped (11.1m)`，三处装置病逐个被真实栈逼出：
+  ① `page.route` 装太早，把动作 A 自己的 PUT 也挂住；
+  ② 注入不承重——删掉 `await gate` 让 B 正常落库，用例照样绿，于是改成撑窗 1s，
+  并用"保持 handler 原样、只提前 `release()`"的干净对照实测翻红在第 93 行；
+  ③ 缺席断言用 `toHaveCount(0)` 是重试型 matcher，会被"出现过又淡掉"的提示在淡出后凑成 0，
+  改一次性 `count()` 读数；再补一条"删掉动作 A"的对照，实测红在第 72 行的未指名断言。
+- 修完（`8b1bd89`）同一套件读数：`PLAYWRIGHT_RC=0`｜`197 passed / 1 flaky / 2 skipped (8.8m)`，
+  该用例在 5 个 project 全绿（2.3/4.6/2.5/2.2/2.7s）。
+  跑之前先证"跑的就是这份代码"：worktree 里 `npx vite build` 的 36 个内容哈希文件名
+  与容器 `/usr/share/nginx/html/assets/*.js` 求差 = 空。
+- toast 判据档位随之从 `named=4 negative=2` 变 `named=5 negative=1`（总 19、豁免 6 不变）；
+  登记册里"豁免清单只是读码判定"那一格就此闭合。
+- 身份前提也修过一次：`李明辉` 是 u-1 采购人员、无 `SETTINGS_MANAGE`，
+  在 `/settings` 拿到的是 403 Result 页（`error-context.md` 的 a11y 树只有"返回首页"），
+  改用 u-6 管理员 `周大海`（`b5deef4`）。
+
+### 两条"要不要接新门禁"的选型，都落成实测数
+
+- `eslint-plugin-playwright@2.12.0`：在 `/tmp/pwlint` 隔离安装（跑套件期间绝不碰主仓 node_modules，
+  worktree 是指向它的软链），复制 `e2e/` 后只开 `flat/recommended` ⇒ **14 条 warning、7 个文件、0 error**
+  （`no-conditional-in-test 5 / no-conditional-expect 3 / no-wait-for-timeout 3 / no-force-option 1 /
+no-skipped-test 1 / prefer-to-have-count 1`）。规则数由 `Object.keys(plugin.rules).length` 读出 = 67；
+  npm 侧 MIT、2026-09-14 发布、周下载 6,352,928；仓库在个人名下而非 `playwright-community`
+  （GitHub API 对该 org 路径返回 301）。裁决：**限定规则面接**（R45），
+  因为有 3 条 recommended 规则直接打在本轮刚验证过的形状上（撑窗、一次性读数、带理由的 skip）。
+- `format:check`：三个口径实测 **39 / 50 / 48**，CI 里 `grep -c prettier` = 0，
+  `format:check` 定义存在但**调用者 0 个**；最近 6 个提交碰过的文件 ∩ 红名单 = 0
+  ⇒ 提交钩子（写模式）已经在挡新代码不合格式，接成常驻红门只会先逼一次 50 文件的清扫。
+  判本轮不接，重开条件是那一轮独立清扫。本轮只做卫生项：2 个生成物进 `.prettierignore`（`2a0d154`，全量 50→48）。
+
 ### R43：通知偏好写入失败不再静默（并修掉一处会随清理时机漂移的断言）
 
 - `src/pages/notification/index.tsx` 两处 `void updatePreferences(...)` 丢掉 `WriteResult`
