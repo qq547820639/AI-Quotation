@@ -32,12 +32,16 @@ function downloadFromBuffer(buffer: ExcelJS.Buffer, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** 通用导出：传入表头与数据行 */
-export function exportAOA(
+/**
+ * 通用导出：传入表头与数据行。
+ * 返回生成完成的 Promise：调用方必须在 await 之后再报"导出成功"，
+ * 否则失败时用户已经看到成功提示（R41）。
+ */
+export async function exportAOA(
   filename: string,
   header: (string | number)[],
   rows: (string | number)[][],
-): void {
+): Promise<void> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Sheet1');
   ws.addRow(header);
@@ -47,16 +51,14 @@ export function exportAOA(
     ws.getColumn(colIdx + 1).width = colWidths[colIdx];
   });
   const stamp = dayjs().format('YYYYMMDDHHmmss');
-  void wb.xlsx
-    .writeBuffer()
-    .then((buffer) => downloadFromBuffer(buffer, `${filename}_${stamp}.xlsx`));
+  downloadFromBuffer(await wb.xlsx.writeBuffer(), `${filename}_${stamp}.xlsx`);
 }
 
-/** 多 sheet 导出 */
-export function exportMultiSheet(
+/** 多 sheet 导出；Promise 语义同 exportAOA */
+export async function exportMultiSheet(
   filename: string,
   sheets: { name: string; header: (string | number)[]; rows: (string | number)[][] }[],
-): void {
+): Promise<void> {
   const wb = new ExcelJS.Workbook();
   sheets.forEach((sheet) => {
     const ws = wb.addWorksheet(sheet.name);
@@ -68,7 +70,5 @@ export function exportMultiSheet(
     });
   });
   const stamp = dayjs().format('YYYYMMDDHHmmss');
-  void wb.xlsx
-    .writeBuffer()
-    .then((buffer) => downloadFromBuffer(buffer, `${filename}_${stamp}.xlsx`));
+  downloadFromBuffer(await wb.xlsx.writeBuffer(), `${filename}_${stamp}.xlsx`);
 }
