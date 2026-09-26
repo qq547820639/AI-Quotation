@@ -1659,6 +1659,7 @@
     "networkError": "网络错误，请检查连接",
     "timeout": "请求超时，请稍后重试",
     "conflict": "数据已被他人修改或存在冲突，请刷新后重试",
+    "duplicateQuotation": "该供应商已存在此询价单的报价，请勿重复创建",
     "serviceUnavailable": "服务暂不可用，请稍后重试",
     "unknown": "未知错误",
     "validationFailed": "数据校验失败",

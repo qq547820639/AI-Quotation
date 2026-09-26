@@ -1655,6 +1655,7 @@
     "networkError": "Network error, check connection",
     "timeout": "Request timeout, please retry later",
     "conflict": "Data was modified by others or conflicts, please refresh and retry",
+    "duplicateQuotation": "This supplier already has a quotation for this inquiry, please do not submit a duplicate",
     "serviceUnavailable": "Service temporarily unavailable, please retry later",
     "unknown": "Unknown error",
     "validationFailed": "Validation failed",

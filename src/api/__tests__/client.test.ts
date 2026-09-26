@@ -503,3 +503,53 @@ describe('client 响应拦截器', () => {
     expect(message.error).toHaveBeenCalledWith(i18n.t('errors.timeout'));
   });
 });
+
+/**
+ * R21 残留：门户重复报价的 409 用的是 FastAPI 的 `{"detail": {...}}` 信封
+ * （见 backend/tests/test_invitation_security.py:470 断言的 `r.json()["detail"]["error_type"]`），
+ * 而 `parseApiError` 的状态码分支只看顶层 `data.message`、`extractBackendMessage` 又不看
+ * `detail.message` → 后端专门给的用户文案被丢掉，门户只剩通用「数据冲突」。
+ * 四条各判一件事，最后一条是判别性对照（防止"一律透出后端文本"被当成修好了）。
+ */
+describe('409 detail 信封的用户文案（R21 残留）', () => {
+  const resp409 = (data: unknown) =>
+    Object.assign(new Error('409'), {
+      response: { status: 409, data, statusText: '', headers: {}, config: {} },
+    });
+
+  it('夹具自检：新键确实存在且不同于通用冲突提示', () => {
+    expect(i18n.t('errors.duplicateQuotation')).not.toBe(i18n.t('errors.conflict'));
+    expect(i18n.t('errors.duplicateQuotation')).not.toBe('errors.duplicateQuotation');
+  });
+
+  it('error_type 已知 → 用前端 i18n 文案，不把后端中文原样透出', () => {
+    const err = parseApiError(
+      resp409({
+        detail: {
+          error_type: 'duplicate_quotation',
+          message: 'BACKEND-OWN-TEXT',
+          inquiryId: 'inq-1',
+          supplierId: 'sup-1',
+        },
+      }),
+    );
+    expect(err.code).toBe(ERROR_CODES.CONFLICT);
+    expect(err.message).toBe(i18n.t('errors.duplicateQuotation'));
+    expect(err.message).not.toBe('BACKEND-OWN-TEXT');
+  });
+
+  it('无 error_type、只有 detail.message → 用后端这句话', () => {
+    const err = parseApiError(resp409({ detail: { message: '请修改报价后重新提交' } }));
+    expect(err.message).toBe('请修改报价后重新提交');
+  });
+
+  it('detail 是纯字符串（FastAPI 最常见形状）→ 用它', () => {
+    const err = parseApiError(resp409({ detail: '该询价单已定标' }));
+    expect(err.message).toBe('该询价单已定标');
+  });
+
+  it('判别性对照：detail 里没有可读文案 → 仍回落通用冲突提示', () => {
+    const err = parseApiError(resp409({ detail: { error_type: 'unknown_kind' } }));
+    expect(err.message).toBe(i18n.t('errors.conflict'));
+  });
+});

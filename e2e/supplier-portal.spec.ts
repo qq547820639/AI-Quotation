@@ -52,6 +52,64 @@ test.describe('供应商门户', () => {
     await expect(page.locator('body')).toContainText(/回执|Receipt/, { timeout: 5000 });
   });
 
+  test('门户重复报价被后端 409 拒绝：提示用后端的可执行文案（R21 残留）', async ({ page }) => {
+    await login(page, '王志强');
+    const { inquiryId } = await createAndSendInquiry(page);
+    const invitationToken = await getInvitationToken(page, inquiryId, 'sup-2');
+    await page.goto(`/supplier-portal/${invitationToken}`);
+
+    const unitPriceInput = page.locator('input[id$="-unitPrice"]').first();
+    await expect(unitPriceInput).toBeVisible({ timeout: 10000 });
+    await unitPriceInput.fill('100');
+    const deliveryInput = page.locator('input[id$="-deliveryDays"]').first();
+    await expect(deliveryInput).toBeVisible();
+    await deliveryInput.fill('7');
+
+    // 后端 R21 的重复冲突响应形状（与 backend/tests/test_invitation_security.py 断言的
+    // r.json()["detail"]["error_type"] 同构）：文案在 detail 信封里，不在顶层 message
+    await page.route('**/api/portal/quotations/submit', async (route) => {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          detail: {
+            error_type: 'duplicate_quotation',
+            message: '该供应商已存在此询价单的报价，请勿重复创建',
+            inquiryId,
+            supplierId: 'sup-2',
+          },
+        }),
+      });
+    });
+
+    await tap(page.getByRole('button', { name: /正式提交|Submit/ }));
+    await expect(page.getByText('提交前预览')).toBeVisible();
+    const res = page.waitForResponse((r) => r.url().includes('/api/portal/quotations/submit'), {
+      timeout: 15000,
+    });
+    await tap(page.getByRole('button', { name: /确认提交/ }));
+    // 效力断言：请求确实发出并被拦成 409
+    expect((await res).status()).toBe(409);
+
+    // 用户看到的必须是"请勿重复创建"这句可执行的提示，而不是通用的"数据已被他人修改"
+    await expect(page.locator('.ant-message').first()).toContainText(
+      /请勿重复创建|do not submit a duplicate/,
+      {
+        timeout: 10000,
+      },
+    );
+    // 判别性对照（同一时刻取，上一条刚等到提示出现，所以提示仍在屏上）：
+    // 不得把"刷新重试"这类通用冲突提示当成结论展示。
+    // 注：先前写的 .ant-message-content 在 antd v5 里不存在（正确类名是 .ant-message-notice-content），
+    // 空 locator 会让 not.toContainText 直接报 "element(s) not found"。
+    await expect(page.locator('.ant-message')).not.toContainText(
+      /数据已被他人修改|modified by others/,
+      { timeout: 5000 },
+    );
+    // 提交失败不能把用户带进"已提交"回执态
+    await expect(page.locator('.ant-result-success')).toHaveCount(0);
+  });
+
   test('使用无效邀请令牌访问门户被拒绝', async ({ page }) => {
     // 门户为公开页面，无需采购登录；伪造不可用的邀请令牌应被拒绝，而非展示报价表单
     await page.goto('/supplier-portal/definitely-invalid-token-123');
