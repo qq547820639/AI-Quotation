@@ -2,6 +2,9 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
+  // 起跑前先验"装树 == 锁文件"（见 e2e/global-setup.ts 的理由）：
+  // 依赖漂移会让最后起跑的那个 project 整批红、先跑完的照旧绿，读起来像产品回归。
+  globalSetup: './e2e/global-setup.ts',
   fullyParallel: false, // 串行避免数据冲突
   // 实测同一台机器、同一份代码、同一 60s 挂钟预算下跑满 5 个项目（180 用例）：
   //   workers=2 → 9 个用例重试后仍红（18.7 分钟）；workers=1 → 0 红、8 个首跑抖动靠重试兜住（21.2 分钟）。

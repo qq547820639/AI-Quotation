@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+### 门禁（R36 前置：E2E 采信前的"装树 == 锁文件"预检）+ R35 的 E2E 全量复跑
+
+- **补的门禁**：`scripts/check-e2e-install.mjs` 逐包比对 `package-lock.json` 与
+  `node_modules/**/package.json`，三类判据（版本漂移／锁里有磁盘没有／磁盘多出未在册），
+  退码 `0/1/2`（读不到锁文件判"前提不成立"，不静默通过）。平台专属可选包缺失**不判红**。
+  判据自测 7/7，含两条"必须不开火"臂（平台可选包、在册作用域包）。
+- **为什么要有它**：本轮一次 `npm install --no-save` 在**正在跑 Playwright 的同一棵树**上执行，
+  79 个包被 `^` 区间就地升级（`@playwright/test` 1.62.1→1.63.0），runner 中途被换，
+  最后起跑的 `mobile-ios` 39 条全灭于 `Executable doesn't exist`，先跑完的 4 个 project 照旧绿——
+  读起来像产品回归，实际是被测环境被我换过。**`git status` 看不见这个面**（`node_modules` 未跟踪），
+  所以必须有独立一把尺子。
+- **接线三条路**：`playwright.config.ts` 的 `globalSetup`（`npx playwright test` 也拦得住——
+  事故那条路恰好绕过 npm 生命周期）、`package.json` 的 `pree2e` + `e2e:install:check`、
+  `ci.yml` 的新 step。两极性均实测：指到事故树 → `rc=1` 且日志中真用例结果为 0 行；
+  正常树 → 先绿再跑。
+- **尺子自己的 bug 被自己的控制抓到**：作用域键少切一段导致 133 个在册作用域包全量误报，
+  由"真仓库必须静默"这条臂当场判红发现；修好后把"未在册包必须开火"拆成普通名/作用域名两支，
+  避免它在坏尺子下空开。用事故留档树复放：`✘ 89 处漂移`（79 版本 + 9 嵌套副本 + 1 未在册），
+  并点名 `@playwright/test: 锁=1.62.1 磁盘=1.63.0`。
+- **R35 的全量 E2E 复跑**（后端改了、前端与用例未动）：`193 passed / 0 failed / 2 skipped`、
+  flaky 0、11.7 分钟，起跑前后装树漂移均为 `drift=0`；与五度复评逐项对得上，
+  这次连抖动都没有（宿主 load 6 vs 上次 24，未调任何超时）。
+  同轮顺带更正一条**旧归因错误**：`GET /api/inquiries` 那条的问题不在"列表页没用 `listPage`"
+  （列表页 `src/pages/inquiry/list/index.tsx:253` 确实用了），而在
+  `useInquiryStore.loadFromApi` 的 4 个生产调用点，其中 `src/App.tsx:51` 会**每条 SSE 事件**
+  重拉全表 —— 严重度上调，登记为 R36。
+
 ### 修复（R35：一条坏写让询价列表对所有人 500）
 
 - **写边界不校验、读边界必炸**：`_build_inquiry_items` 把前端值原样写库

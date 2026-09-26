@@ -218,6 +218,16 @@ jobs:
         run: |
           npm run e2e:config:check
           node scripts/check-e2e-demo-password.mjs --self-test
+      - name: Verify installed tree matches the lockfile (drift pre-flight)
+        # 2026-09-27 事故：一次 `npm install --no-save` 在跑测中的同一棵树上把 79 个包按 `^` 区间
+        # 就地升级（含 @playwright/test 1.62.1→1.63.0），runner 被中途换掉，最后起跑的那个 project
+        # 39 条全灭于 "Executable doesn't exist"，先跑完的 4 个 project 照旧绿 —— 读起来像产品回归。
+        # git status 看不见这个面（node_modules 未跟踪），所以要一把独立的尺子。
+        # 本机另有 Playwright 的 globalSetup 兜住 `npx playwright test` 这条路；CI 这条是显式第二步，
+        # 保证即使有人绕过 config 也拦得住。跑尺子自身的 7 条反证（含"必须不开火"的平台可选包臂）。
+        run: |
+          npm run e2e:install:check
+          node scripts/check-e2e-install.mjs --self-test
       - name: Verify E2E write-proof criterion (toast assertions)
         # R34：不指名的 `.ant-message-success` 可见性断言会被上一条还在屏上的 toast 冒充，
         # 于是用例在写请求飞行中就 goto、把请求掐断，表现为偶发红。这里钉住「证明写落地的
