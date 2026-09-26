@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+### R45：e2e 侧接进 eslint-plugin-playwright（限定规则面），当天咬出一条空用例（R46）
+
+- `eslint.config.js` 新增 `files:['e2e/**/*.ts']` 块 `extends:[playwright.configs['flat/recommended']]`，
+  并关 3 条与本仓已验证不变量冲突的规则（撑窗的 `no-wait-for-timeout`、一次性读数的
+  `prefer-to-have-count`、带理由跳过的 `no-skipped-test`，理由写在配置注释里）。
+  命中面是现算的：整包 recommended 在 `e2e/` 上 14 条 → 关 3 条后 9 条 → 9 条处理完 `npm run lint` rc=0。
+  规则块"真接上了"由临时探针双向验：探针报 3 条 warning，而被关掉的 2 条在探针上不开火。
+- **R46（真缺陷）**：`dashboard-workbench.spec.ts` 的
+  `if (count>0) {点卡片验跳转} else {只验页面标题}` 改成断言后当场红 `Received: 0`
+  ⇒ 这条名为"点击可点击的行动卡片跳转到对应筛选结果"的用例每次都走 else，从来没点过卡片。
+  再往下读还分出第二层：红的直接原因是同步 `await count()` 抢在卡片数据落地前读到"全部禁用"。
+  一次性探针按 6 个演示身份实测（李明辉/王志强/周大海/陈晓燕 各 `enabled=4`；张文静/刘建国 无卡片）
+  ⇒ 前提成立，保留无分支的强形状、把读数换成 `expect(clickable).toBeVisible({timeout:15000})`。
+- 另外两处"分支不成立时断言整条不执行"也一并改成无条件：
+  `auth-session-refresh.spec.ts`（先钉住"必须观测到一次 /api/auth/refresh"再判 401）、
+  `permission.spec.ts`（保存按钮断言从 `if (stillOnSettings)` 里挪出来）。
+  4 处确属刻意形状的就地 `eslint-disable` 并写明理由；
+  顺带一条量具自净性质：`--max-warnings=0` 会把挂错行/失效的 disable 注释本身报成
+  `Unused eslint-disable directive`，豁免注释不会静默腐烂。
+- 装树门 694 → **696 条**；这轮改 lock 之前它先把 worktree 的 E2E 拦下过一次（正是它该拦的形状）。
+- 收尾全量（干净 worktree 的 `f995640`，最后一次改动之后取数）：
+  `PW_RC=0`｜`197 passed / 1 flaky / 2 skipped (12.2m)`；
+  `tsc/lint/i18n/toast(站点19·豁免6·自测18)/tsc:cov(164)/装树(696)/vitest(40 files·444 tests)` 全绿。
+  本轮第二例单发抖动登记在案：`[mobile-android] exception-scenarios.spec.ts:303`
+  首试红在 `helpers.ts:264` 等 `input[id$="-unitPrice"]`、retry 绿（与上轮 `[webkit]` 那例不同格）。
+
 ### R44：逐行导出补上按行的 loading 与重入保护（并撤回上一轮"不做"的理由）
 
 - 调用点普查（子代理跑，5 个 `file:line` 我逐个亲手复核）推翻了上一轮登记的理由：
