@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### R36 前提更正（实测）：一次事件不等于一次全表读
+
+- 起了本机栈（后端 `:8080` 走 SQLite 副本 + `vite :5173` 且 `VITE_DEMO_MODE=false`）实测：
+  一条业务动作产生的 **3 个 `quotation_submitted` 事件（服务端发出时刻 19ms / 15ms 间隔）
+  只换来 1 对 GET**。三条独立客户端账本互证：Playwright response、页内
+  `XMLHttpRequest.open` 补丁、`performance.getEntriesByType('resource')`；
+  服务端另开一条裸 SSE 读流证明 3 帧确实发出 ⇒ 合并在客户端。
+- **合并机制**是 `src/api/client.ts` 的 `createDedupAdapter`（幂等 GET 并发相同则合流，
+  key = `method:url:params`），它本就有常驻用例。R36 的放大模型此前没把它算进去。
+- **因此 C（在 SSE handler 里做突发合并）撤销不做**：与既有保证重叠 ⇒ 第二份副本。
+  **B（窄投影）仍是载荷侧唯一杠杆**，但收益口径从"每事件 19–23KB"改成
+  "**每次落在飞行窗口之外的事件** 19–23KB"。
+- 闭合一条上轮登记缺口：**"一次事件两条 GET"的报价那条，浏览器侧现在实测到了**（各账本均 1 条）。
+- 顺带一条读数：同一份 5 行库三次跑分别是 `19,951 / 21,319 / 23,148 B`，
+  只因探针反复提交同批报价在追加日志 ⇒ 单行字节随写增长，
+  之前记过的"3,413 B/行"与"3,852 B/行"都不该当常数引用。
+
 ### R41 收尾 + R34 判据 AST 化
 
 - **R41 调用点全部改完**（`1aa69fd`）：`supplier`、`inquiry/list`（两处）、`inquiry/detail`、
