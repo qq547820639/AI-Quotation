@@ -64,12 +64,31 @@ function boolPrefs(): boolean[] {
   return Object.values(p).filter((v): v is boolean => typeof v === 'boolean');
 }
 
+/**
+ * 提示类断言的口径 = antd `message.error/success` 的实参，而不是 DOM 上的节点数。
+ * 两种 DOM 写法都实测不稳：绝对数会被上一条用例的残留满足（正是 R34 那类假绿），
+ * "相对本条之前"又会被 beforeEach 里 message.destroy() 的异步移除打断
+ * （同一份码本机读到 1→1、干净 worktree 读到 1→0 —— 判据随清理时机漂移）。
+ * notifyError/notifySuccess 就是 message.error/success 的薄封装，spy 它们
+ * 既测得到"页面有没有把结果说出去"，也说得出说的是哪一句。
+ */
+function spyMessageError() {
+  return vi.spyOn(message, 'error');
+}
+
+function spyMessageSuccess() {
+  return vi.spyOn(message, 'success');
+}
+
 describe('通知设置页：偏好写入的结果态', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // antd 的 message 挂在 document.body 的全局 portal 上，不随组件卸载消失，
-    // 也不被 testing-library 的 auto-cleanup 管到 ⇒ 上一条用例留下的错误提示会冒充
-    // 本条的断言（实测：不销毁时"成功路径不得有错误提示"读到 3 个残留节点）。
+    // antd 的 message 挂在 document.body 的全局 portal 上：既不随组件卸载消失，
+    // 也不归 testing-library 的 auto-cleanup 管 ⇒ 上一条用例留下的提示会冒充本条的断言
+    // （实测：不清理时"成功路径不得有错误提示"读到 3 个残留节点）。
+    // 刻意不用 message.destroy() + 手工摘 DOM：摘掉 .ant-message 根之后，antd 复用它
+    // 缓存过的容器，后续 toast 会渲染进已脱离文档的节点 ⇒ Presence 断言反而恒为 0（实测踩过）。
+    // 正解是不清 DOM，而把所有 toast 断言改成"相对本条之前的数量"，与残留和用例顺序都无关。
     message.destroy();
     useNotificationStore.setState({
       notifications: [],
@@ -138,14 +157,14 @@ describe('通知设置页：偏好写入的结果态', () => {
         </I18nextProvider>
       </MemoryRouter>,
     );
+    const okSpy = spyMessageSuccess();
     fireEvent.click(firstSwitch());
     await waitFor(() => expect(mockedApi.updatePreferences).toHaveBeenCalledTimes(1));
-    // 这一条只钉"不得伪造成功"这一条下界。失败到底该怎么提示（toast / 回滚 / 保留拨动）
-    // 属于本页的统一成功/回滚语义，是另一件事，不在本用例的断言面里。
-    expect(document.querySelectorAll('.ant-message-success').length).toBe(0);
+    // 这一条只钉"不得伪造成功"这一条下界（断的是 message.success 没被调用，与 DOM 残留无关）。
+    expect(okSpy, '写入失败却弹了成功提示').not.toHaveBeenCalled();
   });
 
-  it('R43：写入失败必须可见——失败后出现指名文案的错误提示', async () => {
+  it('R43：写入失败必须可见——把服务端原因原样报出去', async () => {
     mockedApi.updatePreferences.mockRejectedValue(new Error('boom'));
     render(
       <MemoryRouter>
@@ -154,16 +173,13 @@ describe('通知设置页：偏好写入的结果态', () => {
         </I18nextProvider>
       </MemoryRouter>,
     );
+    const spy = spyMessageError();
     fireEvent.click(firstSwitch());
     await waitFor(() => expect(mockedApi.updatePreferences).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(document.querySelectorAll('.ant-message-error').length).toBeGreaterThan(0),
-    );
-    // 文案也要指名：只断 `.ant-message-error` 存在，会被同页别的错误提示冒充（R34 同一形状）
-    expect(document.querySelector('.ant-message-error')?.textContent).toContain('boom');
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('boom'));
   });
 
-  it('R43：异常没有原因文本时也要有可读提示，不得弹空气泡', async () => {
+  it('R43：异常没有原因文本时退回通用文案，不得弹空气泡', async () => {
     mockedApi.updatePreferences.mockRejectedValue(new Error('   '));
     render(
       <MemoryRouter>
@@ -172,18 +188,14 @@ describe('通知设置页：偏好写入的结果态', () => {
         </I18nextProvider>
       </MemoryRouter>,
     );
+    const spy = spyMessageError();
     fireEvent.click(firstSwitch());
     await waitFor(() => expect(mockedApi.updatePreferences).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(document.querySelectorAll('.ant-message-error').length).toBeGreaterThan(0),
-    );
-    const text = document.querySelector('.ant-message-error')?.textContent ?? '';
-    // 这条钉的是"提示非空"这个下界：原因空白时退回通用文案（用 `??` 会漏过 ''）。
-    // 刻意不断具体是哪一句 —— 具体文案由服务端原因决定，写死会让用例替实现背书。
-    expect(text.trim().length, `提示是空气泡："${text}"`).toBeGreaterThan(0);
+    // 写回 `??` 时这里收到的是 '   '（空气泡），该臂立刻翻红 —— 变异复验做过。
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('操作失败'));
   });
 
-  it('R43 反向：成功路径不得留下错误提示（否则上一条可以是空转）', async () => {
+  it('R43 反向：成功路径不得调用 message.error（否则上面两条可以是空转）', async () => {
     mockedApi.updatePreferences.mockImplementation(async (data) => ({ ...ALL_TRUE, ...data }));
     render(
       <MemoryRouter>
@@ -192,9 +204,10 @@ describe('通知设置页：偏好写入的结果态', () => {
         </I18nextProvider>
       </MemoryRouter>,
     );
+    const spy = spyMessageError();
     fireEvent.click(firstSwitch());
     await waitFor(() => expect(mockedApi.updatePreferences).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(firstSwitch().getAttribute('aria-checked')).toBe('false'));
-    expect(document.querySelectorAll('.ant-message-error').length).toBe(0);
+    expect(spy, '成功写入却弹了错误提示').not.toHaveBeenCalled();
   });
 });
