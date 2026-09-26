@@ -65,9 +65,9 @@ function AntdConfigProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-enableMocking().then(() => {
+void enableMocking().then(() => {
   // Web Vitals 采集（P5.2）
-  initWebVitals();
+  void initWebVitals();
 
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>

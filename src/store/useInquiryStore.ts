@@ -332,7 +332,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         const inq = inquiries.find((i) => i.id === id);
         if (inq) {
-          useNotificationStore.getState().addNotification({
+          void useNotificationStore.getState().addNotification({
             inquiryId: id,
             type: NotificationType.SYSTEM,
             title: `询价单 ${inq.code} 已取消`,
@@ -405,7 +405,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         const inq = inquiries.find((i) => i.id === id);
         if (inq) {
-          useNotificationStore.getState().addNotification({
+          void useNotificationStore.getState().addNotification({
             inquiryId: id,
             type: NotificationType.INQUIRY_SENT,
             title: `询价单 ${inq.code} 已发送`,
@@ -454,7 +454,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         const inq = inquiries.find((i) => i.id === inquiryId);
         if (inq) {
-          useNotificationStore.getState().addNotification({
+          void useNotificationStore.getState().addNotification({
             inquiryId,
             type: NotificationType.SYSTEM,
             title: `询价单 ${inq.code} 已选定供应商`,
@@ -501,7 +501,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         const inq = inquiries.find((i) => i.id === inquiryId);
         if (inq) {
-          useNotificationStore.getState().addNotification({
+          void useNotificationStore.getState().addNotification({
             inquiryId,
             type: NotificationType.SYSTEM,
             title: `询价单 ${inq.code} 已确认定标`,
@@ -556,7 +556,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         const inq = inquiries.find((i) => i.id === inquiryId);
         if (inq) {
-          useNotificationStore.getState().addNotification({
+          void useNotificationStore.getState().addNotification({
             inquiryId,
             type: NotificationType.APPROVAL,
             title: `询价单 ${inq.code} 待审批`,
@@ -609,7 +609,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         const inq = inquiries.find((i) => i.id === inquiryId);
         if (inq) {
-          useNotificationStore.getState().addNotification({
+          void useNotificationStore.getState().addNotification({
             inquiryId,
             type: NotificationType.APPROVAL,
             title: `询价单 ${inq.code} 审批通过`,
@@ -662,7 +662,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         saveJSON(STORAGE_KEY, inquiries);
         const inq = inquiries.find((i) => i.id === inquiryId);
         if (inq) {
-          useNotificationStore.getState().addNotification({
+          void useNotificationStore.getState().addNotification({
             inquiryId,
             type: NotificationType.APPROVAL,
             title: `询价单 ${inq.code} 审批驳回`,

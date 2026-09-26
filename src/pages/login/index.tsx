@@ -33,7 +33,7 @@ export default function LoginPage() {
     '/dashboard';
   if (isAuthenticated) {
     localStorage.removeItem('redirect_after_login');
-    navigate(from, { replace: true });
+    void navigate(from, { replace: true });
     return null;
   }
 
@@ -52,7 +52,7 @@ export default function LoginPage() {
       if (ok) {
         const target = localStorage.getItem('redirect_after_login') ?? from;
         localStorage.removeItem('redirect_after_login');
-        navigate(target, { replace: true });
+        void navigate(target, { replace: true });
       } else {
         notifyError(t('login.loginFailed'));
       }

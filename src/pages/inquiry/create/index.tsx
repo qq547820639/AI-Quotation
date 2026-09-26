@@ -500,7 +500,7 @@ export default function InquiryCreatePage() {
         removeKey(DRAFT_KEY);
         markDirty(false);
         notifySuccess(t('inquiry.create.sent'));
-        navigate(`/inquiry/detail/${draft.id}`);
+        void navigate(`/inquiry/detail/${draft.id}`);
       },
     });
   }, [
@@ -523,7 +523,7 @@ export default function InquiryCreatePage() {
     const perform = () => {
       removeKey(DRAFT_KEY);
       markDirty(false);
-      navigate('/inquiry/list');
+      void navigate('/inquiry/list');
     };
     if (dirtyRef.current && !readOnly) {
       confirmAction({

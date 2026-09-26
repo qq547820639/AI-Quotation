@@ -228,7 +228,7 @@ export default function MainLayout() {
 
   const onMenuClick: MenuProps['onClick'] = ({ key }) => {
     if (key.startsWith('/')) {
-      navigate(key);
+      void navigate(key);
       if (isMobile) setDrawerOpen(false);
     }
   };
@@ -270,7 +270,7 @@ export default function MainLayout() {
           label: `${u.name}（${t(`enum.role.${u.role}`)}）`,
           onClick: () => {
             switchUser(u.id);
-            navigate('/dashboard');
+            void navigate('/dashboard');
           },
         }));
       items.push({
@@ -287,8 +287,8 @@ export default function MainLayout() {
       label: t('common.logout'),
       danger: true,
       onClick: () => {
-        logout();
-        navigate('/login', { replace: true });
+        void logout();
+        void navigate('/login', { replace: true });
       },
     });
     return items;
@@ -338,8 +338,8 @@ export default function MainLayout() {
               borderRadius: 4,
             }}
             onClick={() => {
-              markRead(n.id);
-              if (n.inquiryId) navigate(`/inquiry/detail/${n.inquiryId}`);
+              void markRead(n.id);
+              if (n.inquiryId) void navigate(`/inquiry/detail/${n.inquiryId}`);
             }}
           >
             <List.Item.Meta

@@ -35,7 +35,7 @@ export function scanDeadlines(): void {
     // 已过期或超出阈值，跳过
     if (diffHours <= 0 || diffHours > thresholdHours) continue;
 
-    addNotification({
+    void addNotification({
       inquiryId: inq.id,
       type: NotificationType.DEADLINE_APPROACHING,
       title: i18n.t('notification.deadlineTitle', { code: inq.code }),

@@ -48,14 +48,14 @@ function App() {
   useEventStream((event) => {
     const { type } = event;
     if (type === 'quotation_submitted' || type === 'inquiry_confirmed') {
-      useInquiryStore.getState().loadFromApi();
-      useQuotationStore.getState().loadFromApi();
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.inquiries });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.quotations });
+      void useInquiryStore.getState().loadFromApi();
+      void useQuotationStore.getState().loadFromApi();
+      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.inquiries });
+      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.quotations });
     }
     if (type === 'notification' || type === 'quotation_submitted') {
-      useNotificationStore.getState().refreshUnreadCount();
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.notifications });
+      void useNotificationStore.getState().refreshUnreadCount();
+      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.notifications });
     }
   }, authenticated);
 

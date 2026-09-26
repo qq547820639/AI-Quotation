@@ -102,7 +102,7 @@ describe('useInquiryStore', () => {
       const existing = makeInquiry({ id: 'inq-old' });
       resetStore([existing]);
       const fresh = makeInquiry({ id: 'inq-new' });
-      useInquiryStore.getState().addInquiry(fresh);
+      void useInquiryStore.getState().addInquiry(fresh);
       const list = useInquiryStore.getState().inquiries;
       expect(list).toHaveLength(2);
       expect(list[0].id).toBe('inq-new');
@@ -114,7 +114,7 @@ describe('useInquiryStore', () => {
     it('更新指定 id 的字段并刷新 updatedAt', () => {
       const inq = makeInquiry();
       resetStore([inq]);
-      useInquiryStore.getState().updateInquiry('inq-test-1', { subject: '新主题' });
+      void useInquiryStore.getState().updateInquiry('inq-test-1', { subject: '新主题' });
       const updated = useInquiryStore.getState().getInquiryById('inq-test-1');
       expect(updated?.subject).toBe('新主题');
       expect(updated?.updatedAt).not.toBe('2026-08-01 10:00:00');
@@ -124,7 +124,7 @@ describe('useInquiryStore', () => {
   describe('deleteInquiry', () => {
     it('从列表移除', () => {
       resetStore([makeInquiry({ id: 'a' }), makeInquiry({ id: 'b' })]);
-      useInquiryStore.getState().deleteInquiry('a');
+      void useInquiryStore.getState().deleteInquiry('a');
       const list = useInquiryStore.getState().inquiries;
       expect(list).toHaveLength(1);
       expect(list[0].id).toBe('b');
@@ -159,7 +159,7 @@ describe('useInquiryStore', () => {
       const inq = makeInquiry({ id: 'inq-cancel', status: InquiryStatus.INQUIRING });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().cancelInquiry('inq-cancel');
+      void useInquiryStore.getState().cancelInquiry('inq-cancel');
       const updated = useInquiryStore.getState().getInquiryById('inq-cancel');
       expect(updated?.status).toBe(InquiryStatus.CANCELLED);
       expect(updated?.logs.some((l) => l.type === LogType.CANCEL)).toBe(true);
@@ -178,7 +178,7 @@ describe('useInquiryStore', () => {
       });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().sendInquiry('inq-send');
+      void useInquiryStore.getState().sendInquiry('inq-send');
       const updated = useInquiryStore.getState().getInquiryById('inq-send');
       expect(updated?.status).toBe(InquiryStatus.INQUIRING);
       expect(updated?.logs.some((l) => l.type === LogType.SEND_INQUIRY)).toBe(true);
@@ -198,7 +198,7 @@ describe('useInquiryStore', () => {
         status: InquiryStatus.ALL_QUOTED,
       });
       resetStore([inq]);
-      useInquiryStore.getState().selectSupplier('inq-sel', 'item-1', 'sup-1');
+      void useInquiryStore.getState().selectSupplier('inq-sel', 'item-1', 'sup-1');
       const updated = useInquiryStore.getState().getInquiryById('inq-sel');
       expect(updated?.selectedSupplierMap['item-1']).toBe('sup-1');
       expect(updated?.status).toBe(InquiryStatus.PENDING_CONFIRM);
@@ -210,7 +210,7 @@ describe('useInquiryStore', () => {
         status: InquiryStatus.PARTIAL_QUOTED,
       });
       resetStore([inq]);
-      useInquiryStore.getState().selectSupplier('inq-sel2', 'item-1', 'sup-2');
+      void useInquiryStore.getState().selectSupplier('inq-sel2', 'item-1', 'sup-2');
       const updated = useInquiryStore.getState().getInquiryById('inq-sel2');
       expect(updated?.status).toBe(InquiryStatus.PARTIAL_QUOTED);
     });
@@ -221,7 +221,7 @@ describe('useInquiryStore', () => {
       const inq = makeInquiry({ id: 'inq-conf', status: InquiryStatus.PENDING_CONFIRM });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().confirmInquiry('inq-conf');
+      void useInquiryStore.getState().confirmInquiry('inq-conf');
       const updated = useInquiryStore.getState().getInquiryById('inq-conf');
       expect(updated?.status).toBe(InquiryStatus.COMPLETED);
       expect(updated?.logs.some((l) => l.type === LogType.CONFIRM_RESULT)).toBe(true);
@@ -234,7 +234,7 @@ describe('useInquiryStore', () => {
       const inq = makeInquiry({ id: 'inq-apv', status: InquiryStatus.PENDING_CONFIRM });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().submitForApproval('inq-apv');
+      void useInquiryStore.getState().submitForApproval('inq-apv');
       const updated = useInquiryStore.getState().getInquiryById('inq-apv');
       expect(updated?.status).toBe(InquiryStatus.PENDING_APPROVAL);
       expect(updated?.approvalNodes).toHaveLength(1);
@@ -251,8 +251,8 @@ describe('useInquiryStore', () => {
       const inq = makeInquiry({ id: 'inq-ok', status: InquiryStatus.PENDING_APPROVAL });
       resetStore([inq]);
       // 先提交审批生成节点
-      useInquiryStore.getState().submitForApproval('inq-ok');
-      useInquiryStore.getState().approveInquiry('inq-ok', '同意');
+      void useInquiryStore.getState().submitForApproval('inq-ok');
+      void useInquiryStore.getState().approveInquiry('inq-ok', '同意');
       const updated = useInquiryStore.getState().getInquiryById('inq-ok');
       expect(updated?.status).toBe(InquiryStatus.PENDING_CONFIRM);
       expect(updated?.approvalNodes.some((n) => n.status === ApprovalNodeStatus.APPROVED)).toBe(
@@ -266,8 +266,8 @@ describe('useInquiryStore', () => {
     it('状态转 RETURNED + 节点转 REJECTED + 追加 REJECT 日志', () => {
       const inq = makeInquiry({ id: 'inq-no', status: InquiryStatus.PENDING_APPROVAL });
       resetStore([inq]);
-      useInquiryStore.getState().submitForApproval('inq-no');
-      useInquiryStore.getState().rejectInquiry('inq-no', '价格过高');
+      void useInquiryStore.getState().submitForApproval('inq-no');
+      void useInquiryStore.getState().rejectInquiry('inq-no', '价格过高');
       const updated = useInquiryStore.getState().getInquiryById('inq-no');
       expect(updated?.status).toBe(InquiryStatus.RETURNED);
       expect(updated?.approvalNodes.some((n) => n.status === ApprovalNodeStatus.REJECTED)).toBe(

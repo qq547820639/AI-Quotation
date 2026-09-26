@@ -903,7 +903,7 @@ export default function DashboardPage() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                navigate('/inquiry/create');
+                void navigate('/inquiry/create');
               }
             }}
           >
@@ -943,7 +943,7 @@ export default function DashboardPage() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                navigate('/quotation/pending');
+                void navigate('/quotation/pending');
               }
             }}
           >
@@ -984,7 +984,7 @@ export default function DashboardPage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  navigate('/approval');
+                  void navigate('/approval');
                 }
               }}
             >
@@ -1025,7 +1025,7 @@ export default function DashboardPage() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                navigate('/notification');
+                void navigate('/notification');
               }
             }}
           >
@@ -1117,7 +1117,7 @@ export default function DashboardPage() {
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            navigate(`/inquiry/detail/${item.id}`);
+                            void navigate(`/inquiry/detail/${item.id}`);
                           }
                         }}
                       >

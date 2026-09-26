@@ -134,7 +134,7 @@ export default function MaterialStep({ items, onChange, editingId, disabled }: M
     multiple: false,
     showUploadList: false,
     beforeUpload: (file) => {
-      handleImport(file);
+      void handleImport(file);
       return false;
     },
   };

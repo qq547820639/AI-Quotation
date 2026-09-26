@@ -196,8 +196,8 @@ export default function ActionWorkbench() {
   );
 
   const retry = () => {
-    useInquiryStore.getState().loadFromApi();
-    useQuotationStore.getState().loadFromApi();
+    void useInquiryStore.getState().loadFromApi();
+    void useQuotationStore.getState().loadFromApi();
   };
 
   // 错误态：后端离线时提供重试
@@ -313,7 +313,7 @@ export default function ActionWorkbench() {
                     ? (e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          navigate(c.jumpPath);
+                          void navigate(c.jumpPath);
                         }
                       }
                     : undefined

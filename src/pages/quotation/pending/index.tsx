@@ -297,7 +297,7 @@ export default function QuotationPendingPage() {
               notFoundContent={t('quotation.pending.noUnquotedSupplier')}
               onChange={(supplierId) => {
                 if (supplierId) {
-                  navigate(`/supplier-portal/${record.id}/${supplierId}`);
+                  void navigate(`/supplier-portal/${record.id}/${supplierId}`);
                 }
               }}
             />
@@ -461,7 +461,7 @@ export default function QuotationPendingPage() {
                       notFoundContent={t('quotation.pending.noUnquotedSupplier')}
                       onChange={(supplierId) => {
                         if (supplierId) {
-                          navigate(`/supplier-portal/${record.id}/${supplierId}`);
+                          void navigate(`/supplier-portal/${record.id}/${supplierId}`);
                         }
                       }}
                     />

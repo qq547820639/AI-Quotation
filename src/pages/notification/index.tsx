@@ -78,9 +78,9 @@ export default function NotificationPage() {
   }, [notifications, readFilter, typeFilter]);
 
   const handleClick = (n: Notification) => {
-    markRead(n.id);
+    void markRead(n.id);
     if (getNotificationLinkStatus(n) === 'ok' && n.inquiryId) {
-      navigate(`/inquiry/detail/${n.inquiryId}`);
+      void navigate(`/inquiry/detail/${n.inquiryId}`);
     }
   };
 
@@ -137,7 +137,7 @@ export default function NotificationPage() {
               <Switch
                 checked={preferences[key] as boolean}
                 onChange={(checked) => {
-                  updatePreferences({ ...preferences, [key]: checked });
+                  void updatePreferences({ ...preferences, [key]: checked });
                 }}
               />
             </Space>
@@ -155,7 +155,7 @@ export default function NotificationPage() {
               value={preferences.deadlineReminderHours}
               onChange={(v) => {
                 if (v != null) {
-                  updatePreferences({ ...preferences, deadlineReminderHours: v });
+                  void updatePreferences({ ...preferences, deadlineReminderHours: v });
                 }
               }}
             />
@@ -234,7 +234,7 @@ export default function NotificationPage() {
                           key="read"
                           onClick={(e) => {
                             e.stopPropagation();
-                            markRead(n.id);
+                            void markRead(n.id);
                           }}
                         >
                           {t('notification.markRead')}

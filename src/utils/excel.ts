@@ -47,7 +47,9 @@ export function exportAOA(
     ws.getColumn(colIdx + 1).width = colWidths[colIdx];
   });
   const stamp = dayjs().format('YYYYMMDDHHmmss');
-  wb.xlsx.writeBuffer().then((buffer) => downloadFromBuffer(buffer, `${filename}_${stamp}.xlsx`));
+  void wb.xlsx
+    .writeBuffer()
+    .then((buffer) => downloadFromBuffer(buffer, `${filename}_${stamp}.xlsx`));
 }
 
 /** 多 sheet 导出 */
@@ -66,5 +68,7 @@ export function exportMultiSheet(
     });
   });
   const stamp = dayjs().format('YYYYMMDDHHmmss');
-  wb.xlsx.writeBuffer().then((buffer) => downloadFromBuffer(buffer, `${filename}_${stamp}.xlsx`));
+  void wb.xlsx
+    .writeBuffer()
+    .then((buffer) => downloadFromBuffer(buffer, `${filename}_${stamp}.xlsx`));
 }

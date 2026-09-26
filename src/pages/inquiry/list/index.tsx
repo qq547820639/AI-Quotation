@@ -1491,7 +1491,7 @@ export default function InquiryListPage() {
                           },
                         ],
                         onClick: ({ key }) => {
-                          if (key === 'edit') navigate(`/inquiry/edit/${record.id}`);
+                          if (key === 'edit') void navigate(`/inquiry/edit/${record.id}`);
                           else if (key === 'copy') handleCopy(record);
                           else if (key === 'cancel') handleCancel(record);
                           else if (key === 'export') handleExport(record);

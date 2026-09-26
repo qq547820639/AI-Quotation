@@ -160,7 +160,7 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
         useInquiryStore
           .getState()
           .addLog(target.inquiryId, LogType.SUBMIT_QUOTATION, `${target.supplierName} 提交报价`);
-        useNotificationStore.getState().addNotification({
+        void useNotificationStore.getState().addNotification({
           inquiryId: target.inquiryId,
           type: NotificationType.QUOTATION_SUBMITTED,
           title: `${target.supplierName} 提交了报价`,

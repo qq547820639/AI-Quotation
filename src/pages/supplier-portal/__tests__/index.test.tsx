@@ -31,7 +31,7 @@ vi.mock('@/api/portal', () => ({
 // mock confirm/utils，避免 antd Modal.confirm 真实渲染
 vi.mock('@/utils/confirm', () => ({
   confirmAction: vi.fn((opts: { onOk?: () => void | Promise<void> }) => {
-    opts.onOk?.();
+    void opts.onOk?.();
   }),
   notifyError: vi.fn(),
   notifySuccess: vi.fn(),
