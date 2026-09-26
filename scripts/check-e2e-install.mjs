@@ -24,8 +24,9 @@
  *
  * 用法：node scripts/check-e2e-install.mjs
  *      node scripts/check-e2e-install.mjs --self-test   # 验证这把尺子会开火
- * 接线：package.json 的 `pree2e`（npm 生命周期：每次 `npm run e2e` 自动先跑），
- *      以及 CI docker-e2e job 里 `e2e:config:check` 之后。
+ * 接线：① `playwright.config.ts` 的 `globalSetup`（e2e/global-setup.ts）——覆盖一切会启动
+ * Playwright 的路径，含 `npx playwright test`；② CI docker-e2e job 的显式一步。
+ * 曾另挂 npm 的 `pree2e` 生命周期，因与 ① 完全重叠（只会让本尺子跑两遍）而删除。
  */
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

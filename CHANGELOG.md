@@ -15,10 +15,11 @@
   最后起跑的 `mobile-ios` 39 条全灭于 `Executable doesn't exist`，先跑完的 4 个 project 照旧绿——
   读起来像产品回归，实际是被测环境被我换过。**`git status` 看不见这个面**（`node_modules` 未跟踪），
   所以必须有独立一把尺子。
-- **接线三条路**：`playwright.config.ts` 的 `globalSetup`（`npx playwright test` 也拦得住——
-  事故那条路恰好绕过 npm 生命周期）、`package.json` 的 `pree2e` + `e2e:install:check`、
-  `ci.yml` 的新 step。两极性均实测：指到事故树 → `rc=1` 且日志中真用例结果为 0 行；
-  正常树 → 先绿再跑。
+- **接线两条路**：`playwright.config.ts` 的 `globalSetup`（事故那条路是 `npx playwright test`，
+  它不走 npm 生命周期，`pree2e` 挡不住；而 globalSetup 覆盖一切会启动 Playwright 的路径，
+  含 `npm run e2e` ⇒ 先加的 `pree2e` 因与它完全重叠、只会让尺子跑两遍，随后删除）、
+  以及 `ci.yml` 的显式新 step（用的命令就是 `e2e:install:check`）。
+  两极性均实测：指到事故树 → `rc=1` 且日志中真用例结果为 0 行；正常树 → 先绿再跑。
 - **尺子自己的 bug 被自己的控制抓到**：作用域键少切一段导致 133 个在册作用域包全量误报，
   由"真仓库必须静默"这条臂当场判红发现；修好后把"未在册包必须开火"拆成普通名/作用域名两支，
   避免它在坏尺子下空开。用事故留档树复放：`✘ 89 处漂移`（79 版本 + 9 嵌套副本 + 1 未在册），
@@ -26,6 +27,16 @@
 - **R35 的全量 E2E 复跑**（后端改了、前端与用例未动）：`193 passed / 0 failed / 2 skipped`、
   flaky 0、11.7 分钟，起跑前后装树漂移均为 `drift=0`；与五度复评逐项对得上，
   这次连抖动都没有（宿主 load 6 vs 上次 24，未调任何超时）。
+- **收尾改从 `87d5f17` 的 `git worktree` 检出复算**（不用工作树）：E2E
+  `192 passed / 1 flaky / 2 skipped / 0 failed`（RC=0，10.9m，前后 `drift=0`）；
+  前端 `lint`/`tsc`/`vitest 431`/`i18n` 与三把判据自测（7/7、toast、demo-password）全绿；
+  后端 `436 passed, 1 skipped`、coverage `85.51% ≥ 80%`。
+  那条 flaky 落在 `helpers.ts:271` 的**豁免位点**上（门户提交回执的泛化 toast 前置断言，
+  load 11 下 10s 没等到），不改超时也不改断言，只把它记成"豁免未实测"这项的新证据。
+- 同轮另登记一条**未闭合的测量学事实**：同一 commit 下 vitest 覆盖率主树 `40.12%` /
+  worktree `42.51%`，两边文件数（111）与**已覆盖语句数（7,630）完全相同**，差的是分母
+  （19,014 vs 17,949）。两个候选解释（`vite.config.js` 遮蔽、宿主 `.env.development*` 内联）
+  均已实测否证，故只记"归因未定"，并把"跨树比覆盖率一律锚已覆盖语句数、不锚百分比"落成规矩。
   同轮顺带更正一条**旧归因错误**：`GET /api/inquiries` 那条的问题不在"列表页没用 `listPage`"
   （列表页 `src/pages/inquiry/list/index.tsx:253` 确实用了），而在
   `useInquiryStore.loadFromApi` 的 4 个生产调用点，其中 `src/App.tsx:51` 会**每条 SSE 事件**

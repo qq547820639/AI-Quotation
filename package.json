@@ -16,7 +16,6 @@
     "test:coverage": "vitest run --coverage",
     "i18n:check": "node scripts/check-i18n.mjs",
     "e2e": "playwright test",
-    "pree2e": "node scripts/check-e2e-install.mjs",
     "e2e:install:check": "node scripts/check-e2e-install.mjs",
     "e2e:config:check": "node scripts/check-e2e-demo-password.mjs",
     "e2e:toast:check": "node scripts/check-e2e-toast-assertions.mjs",
