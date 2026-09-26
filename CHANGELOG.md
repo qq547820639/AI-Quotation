@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+### 取证更正（R36 定案的收益数与成本档次）
+
+- **作废两个字节数**：上轮 R36 选型记的「20,693B → 1,017B（省 95.1%）」与「513B（省 97.5%）」
+  量的是一条**消费者跑不起来的投影**——它裁掉了 `logs` 与 `invitedSupplierIds`，
+  而 `src/pages/dashboard/workbenchActions.ts:46`、`:49`、`:112` 正在读它们。
+  且那两个数出自一次子 Agent 测量，其脚本不在我的复算目录里（`grep -rn "1017" /tmp/qqi-r36/` → 0 相关命中），
+  数据集也不同（报价 6 条 / 我这边 8 条）⇒ 按"无法复开"处理。
+- **换成本地一手读数**（起后端 `DB_PATH=/tmp/qqi-r36/procurement.db` + `python3 /tmp/qqi-r36/proj-restore.py`，
+  校准控制：真实响应 19,267B == 重序列化 19,267B 逐字节对上）：
+  按消费者真读的字段集重裁，**B 只服务 ActionWorkbench ⇒ 2,369B / 省 91.0%**；
+  若投影要覆盖整个 dashboard 页（图表读 `i.items`：`src/pages/dashboard/index.tsx:464`、`:509`）⇒ **5,009B / 省 81.0%**。
+  「三个重嵌套占询价载荷 78%」复核成立（实测 78.7%）。
+- **一次事件是两条 GET 不是一条**：`src/App.tsx:51-52` 同时重取 inquiry 与 quotation store，
+  `useQuotationStore.ts:75` 无缓存短路 ⇒ 两条响应体合计 26,323B / 事件 / 客户端。
+  浏览器侧只实测过 inquiries 那条（计数器 `sse-amp-b2.mjs:74` 的 `^/api/inquiries/?$` 从形状上就排除了报价），
+  quotations 那条按机制核实登记，测法写进登记册的未做清单。
+- **`适配成本` 由"小"改判"中"**：共享整行有 **16 个非测试文件**在消费（判据与三条排除项见登记册），
+  所以 B 不是"给现有取数加个参数"，而是新端点 + 新查询切片 + SSE 失效面按页重划 +
+  一条"规则读的字段 ⊆ 投影字段"的常驻对账。**选型结论不变**（仍 B、仍否 A），
+  C（只合并突发）由"可选叠加"升为可先落地的缓解项。
+- 同一轮里我**第一次复算又造了新错**（把"348KB"当成可由我这 5 行库纠正的数），已按行内更正收回：
+  `3,413 B/行` 与 `348 KB` 各自有自己的语料与一条真读数 `Content-Length: 340,361`，三份语料不能互相覆盖。
+
 ### 修复 + 门禁（R39：一个组件测试文件从未被类型检查过）
 
 - `src/pages/dashboard/__tests__/ActionWorkbench.test.tsx` 与 `actionWorkbench.test.ts`
