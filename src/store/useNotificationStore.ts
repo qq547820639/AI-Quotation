@@ -140,6 +140,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       if (enabled === false) return ok();
     }
     let created: Notification | null = null;
+    let createdId: string | undefined;
     set((state) => {
       const now = dayjs();
       // 统一事件 ID 幂等去重：同一 eventId 只保留一条（邮件与站内通知共享该 ID）
@@ -165,16 +166,32 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
         time: now.toISOString(),
         read: false,
       };
+      createdId = nid;
       const notifications = [created, ...state.notifications].slice(0, MAX_NOTIFICATIONS);
       saveJSON(STORAGE_KEY, notifications);
       return { notifications, unreadCount: state.unreadCount + 1 };
     });
-    // 同步到 API，保证服务端也有该通知；失败返回其结果（本地已持久化）
+    // 同步到 API，保证服务端也有该通知
     if (created) {
       try {
         await notificationApi.create(created);
         return ok();
       } catch (e) {
+        // R42：服务端没接受这条，就得把它占的未读位一起撤回。留在原地会造出一个
+        // "幽灵行"——loadFromApi 的合并规则（localOnly 原样保留）会把它永久养着，
+        // 而 refreshUnreadCount 又按服务端计数 ⇒ 角标与列表自相矛盾。
+        // 只撤这一条、不整体回滚数组：并发的别条写入不该被这次失败连带丢掉。
+        const id = createdId;
+        set((state) => {
+          const target = state.notifications.find((n) => n.id === id);
+          if (!target) return state;
+          const notifications = state.notifications.filter((n) => n.id !== id);
+          saveJSON(STORAGE_KEY, notifications);
+          return {
+            notifications,
+            unreadCount: target.read ? state.unreadCount : Math.max(0, state.unreadCount - 1),
+          };
+        });
         return fail(e);
       }
     }

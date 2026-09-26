@@ -149,6 +149,80 @@ describe('已读操作', () => {
     expect(useNotificationStore.getState().unreadCount).toBe(0);
   });
 
+  it('addNotification 被服务端拒绝时撤回该条与其未读位（R42：幽灵行会被合并规则永久养着）', async () => {
+    const api = vi.mocked(notificationApi.create);
+    const ids = () => useNotificationStore.getState().notifications.map((n) => n.id);
+
+    // 极性 A（不开火则下面全是空转）：成功路径必须真的写入
+    api.mockResolvedValueOnce({} as never);
+    const okRes = await useNotificationStore.getState().addNotification({
+      eventId: 'evt-keep',
+      type: NotificationType.SYSTEM,
+      title: 'K',
+      content: '',
+    });
+    expect(okRes.success).toBe(true);
+    expect(ids()).toEqual(['evt-keep']);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+
+    // 极性 B：服务端 500 ⇒ 该条连同它占的未读位一起撤回，localStorage 也要跟着撤
+    api.mockRejectedValueOnce(new Error('500 boom'));
+    const badRes = await useNotificationStore.getState().addNotification({
+      eventId: 'evt-ghost',
+      type: NotificationType.SYSTEM,
+      title: 'G',
+      content: '',
+    });
+    expect(badRes.success).toBe(false);
+    expect(ids()).toEqual(['evt-keep']);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+    // localStorage 侧：saveJSON 的键带 procurement_ 前缀、值带 {v:2,data} 信封
+    // （`src/utils/storage.ts:4,36-39`）。按裸键名读会得到 null，断言就退化成"两个空数组相等"。
+    const stored = JSON.parse(localStorage.getItem('procurement_notifications') ?? 'null') as {
+      v: number;
+      data: { id: string }[];
+    } | null;
+    expect(stored).not.toBeNull();
+    expect(stored!.v).toBe(2);
+    expect(stored!.data.map((n) => n.id)).toEqual(['evt-keep']);
+  });
+
+  it('R42 撤回只撤失败的那一条，不得连带丢掉等待期间的并发写入', async () => {
+    const api = vi.mocked(notificationApi.create);
+    let rejectSlow: (e: unknown) => void = () => {};
+    api.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSlow = reject;
+        }),
+    );
+
+    const inflight = useNotificationStore.getState().addNotification({
+      eventId: 'evt-slow',
+      type: NotificationType.SYSTEM,
+      title: 'S',
+      content: '',
+    });
+    api.mockResolvedValueOnce({} as never);
+    await useNotificationStore.getState().addNotification({
+      eventId: 'evt-fast',
+      type: NotificationType.SYSTEM,
+      title: 'F',
+      content: '',
+    });
+    // 慢的那条此刻仍在飞，快的已经落地：两条都在列表里、未读位为 2
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toEqual([
+      'evt-fast',
+      'evt-slow',
+    ]);
+    expect(useNotificationStore.getState().unreadCount).toBe(2);
+
+    rejectSlow(new Error('500 boom'));
+    expect((await inflight).success).toBe(false);
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toEqual(['evt-fast']);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+  });
+
   it('markAllRead 将全部置为已读', async () => {
     await useNotificationStore.getState().addNotification({
       eventId: 'evt-1',
