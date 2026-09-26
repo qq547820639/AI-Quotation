@@ -19,13 +19,17 @@ import { login } from './helpers';
  *  ② 指到能唯一区分 B 的完整文案 ⇒ 该窗口内必须还没有它，放行后才出现。
  *
  * 前提用断言钉住：注入必须真的挂住过请求（`held > 0`），否则 ① 会退化成"B 恰好比 A 快"的假绿。
+ *
+ * 身份必须是管理员：第一版写成采购人员 `李明辉`（u-1），他在 `/settings` 上拿到的是
+ * 403 Result 页（真实栈实测：`element(s) not found` + a11y 树里只有"返回首页"），
+ * 于是"两张卡同屏"这个装置前提根本不成立 ⇒ 用 `周大海`（u-6，同 `permission.spec.ts:49`）。
  */
 const SAVE_BTN = /保\s*存|Save/;
 
 test.describe('成功提示冒充机制的实证（R34 豁免清单的地基）', () => {
   test('上一条 toast 会满足未指名断言；能唯一区分的指名不会', async ({ page }) => {
     test.setTimeout(120_000);
-    await login(page, '李明辉');
+    await login(page, '周大海');
     await page.goto('/settings');
 
     const approvalCard = page.locator('.ant-card').filter({ hasText: '审批配置' });
