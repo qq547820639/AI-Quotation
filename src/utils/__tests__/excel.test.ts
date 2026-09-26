@@ -45,13 +45,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const AOA_ARGS = ['f', ['列'], [['1']]] as const;
+// 不要写成 `as const` 的元组：那会让 rows 变成 readonly，
+// 传给 exportAOA(rows: (string|number)[][]) 时 tsc 报 TS4104（vitest 不吃类型，只有 tsc 看得见）
+const AOA_NAME = 'f';
+const AOA_HEADER = ['列'];
+const AOA_ROWS = [['1']];
 const SHEETS = [{ name: 's1', header: ['列'], rows: [['1']] }];
 
 describe('exportAOA / exportMultiSheet 的 Promise 契约（R41）', () => {
   it('必须是异步函数：返回 Promise 而不是 undefined', () => {
     writeBuffer.mockResolvedValue(new Uint8Array([1]));
-    const p = exportAOA(AOA_ARGS[0], [...AOA_ARGS[1]], [AOA_ARGS[2]]);
+    const p = exportAOA(AOA_NAME, AOA_HEADER, AOA_ROWS);
     expect(p).toBeInstanceOf(Promise);
     expect(exportMultiSheet('f', SHEETS)).toBeInstanceOf(Promise);
   });
@@ -64,7 +68,7 @@ describe('exportAOA / exportMultiSheet 的 Promise 契约（R41）', () => {
       }),
     );
     let done = false;
-    const p = exportAOA(AOA_ARGS[0], [...AOA_ARGS[1]], [AOA_ARGS[2]]).then(() => {
+    const p = exportAOA(AOA_NAME, AOA_HEADER, AOA_ROWS).then(() => {
       done = true;
     });
     await Promise.resolve();
@@ -79,7 +83,7 @@ describe('exportAOA / exportMultiSheet 的 Promise 契约（R41）', () => {
 
   it('生成失败必须 reject 给调用方（否则页面的 catch 是装饰性的）', async () => {
     writeBuffer.mockRejectedValue(new Error('boom'));
-    await expect(exportAOA(AOA_ARGS[0], [...AOA_ARGS[1]], [AOA_ARGS[2]])).rejects.toThrow('boom');
+    await expect(exportAOA(AOA_NAME, AOA_HEADER, AOA_ROWS)).rejects.toThrow('boom');
     await expect(exportMultiSheet('f', SHEETS)).rejects.toThrow('boom');
     // 失败时不得触发下载
     expect(createSpy).not.toHaveBeenCalled();
@@ -87,7 +91,7 @@ describe('exportAOA / exportMultiSheet 的 Promise 契约（R41）', () => {
 
   it('成功路径也要把 object URL 释放掉（不 pin 住就没人看见泄漏）', async () => {
     writeBuffer.mockResolvedValue(new Uint8Array([1, 2]));
-    await exportAOA(AOA_ARGS[0], [...AOA_ARGS[1]], [AOA_ARGS[2]]);
+    await exportAOA(AOA_NAME, AOA_HEADER, AOA_ROWS);
     expect(revokeSpy).toHaveBeenCalledTimes(1);
   });
 });
