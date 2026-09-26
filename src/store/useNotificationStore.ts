@@ -182,6 +182,9 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   },
 
   markRead: async (id) => {
+    // 乐观置已读之前的快照：服务端拒绝时要按它回滚（R40）
+    const prevNotifications = get().notifications;
+    const prevUnread = get().unreadCount;
     set((state) => {
       const notifications = state.notifications.map((n) =>
         n.id === id ? { ...n, read: true } : n,
@@ -199,6 +202,11 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       await notificationApi.markRead(id);
       return ok();
     } catch (e) {
+      // 服务端没接受这次已读 ⇒ 界面不得继续声称"已读"。
+      // 回滚放在被调用方而不是三个调用点：调用方一律丢弃 WriteResult，
+      // 只在调用点补提示等于留两处会忘；放在这里，丢弃结果的调用点也自动不再说谎。
+      set({ notifications: prevNotifications, unreadCount: prevUnread });
+      saveJSON(STORAGE_KEY, prevNotifications);
       return fail(e);
     }
   },

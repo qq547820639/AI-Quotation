@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useNotificationStore } from '../useNotificationStore';
 import { useSettingsStore } from '../useSettingsStore';
 import { NotificationType } from '@/types';
+import { notificationApi } from '@/api';
 
 vi.mock('@/api', () => ({
   notificationApi: {
@@ -118,6 +119,33 @@ describe('已读操作', () => {
     await useNotificationStore.getState().markRead('evt-1');
     const n = useNotificationStore.getState().notifications[0];
     expect(n.read).toBe(true);
+    expect(useNotificationStore.getState().unreadCount).toBe(0);
+  });
+
+  it('markRead 被服务端拒绝时回滚乐观状态（R40：调用方丢弃结果也不得让界面说谎）', async () => {
+    await useNotificationStore.getState().addNotification({
+      eventId: 'evt-rb',
+      type: NotificationType.SYSTEM,
+      title: 'R',
+      content: '',
+    });
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+
+    const api = vi.mocked(notificationApi.markRead);
+    api.mockRejectedValueOnce(new Error('500 boom'));
+    const r = await useNotificationStore.getState().markRead('evt-rb');
+
+    expect(r.success).toBe(false);
+    // 关键面：界面不得保留"已读"。这条单独存在时可能是假的——若乐观写从没生效，
+    // 它也会"通过"，所以下面同一份代码再验一次成功路径确实会置已读。
+    expect(useNotificationStore.getState().notifications[0].read).toBe(false);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+
+    // 正向对照：成功路径必须仍然落地
+    api.mockResolvedValueOnce({} as never);
+    const r2 = await useNotificationStore.getState().markRead('evt-rb');
+    expect(r2.success).toBe(true);
+    expect(useNotificationStore.getState().notifications[0].read).toBe(true);
     expect(useNotificationStore.getState().unreadCount).toBe(0);
   });
 
