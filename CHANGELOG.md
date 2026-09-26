@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+### 修复（R21 闭合：门户并发提交让 DB 唯一约束直接穿出 ASGI）
+
+- **并发提交报价时，输掉 check-then-insert 的那一路拿到的是未捕获异常而不是 409（高）**：
+  `portal_save_draft` 与 `portal_submit_quotation` 都是
+  `_find_quotation(...) is None → db.add(...) → db.flush()`，两个并发请求在各自的快照里都看不见对方的行，
+  输家的 INSERT 撞 `uq_quotations_inquiry_id_supplier_id` 后**没有任何 handler 转换它**，
+  异常穿出 ASGI 应用：TestClient 抛回调用线程（只进 warnings，套件照绿），
+  生产 uvicorn 形态等价于 500 + 服务端栈。同表的内部写入口 `POST /api/quotations`
+  早已 `except IntegrityError → 409 duplicate_quotation`，门户这两个口漏了同一步。
+  现在抽出 `_duplicate_quotation_conflict(db, invitation)`（rollback + 与内部口同形的 409）并在两处 flush 各套一层。
+- **登记更正**：R21 原先记作"会话对象被 GC 时的 unraisable flush、归属 `tests/test_task_queue.py`"，
+  两条都是误读 —— 警告类型实为 `PytestUnhandledThreadExceptionWarning`（全量跑 5 条，
+  `grep unraisable` 0 命中），归属 `test_invitation_security.py::test_concurrent_submit_...`；
+  当时读的是 pytest warnings 归因表里 `datetime.utcnow()` DeprecationWarning 的那一组。
+  教训已写进 R21：按警告类型分组读归因表，不要按"谁 warnings 多"。
+- **新增常驻用例两条（先红后绿）**：`test_r21_portal_submit_conflict_returns_409_not_raw_integrity_error`
+  与 `..._save_draft_...`，用 monkeypatch 把 `_find_quotation` 打成"永远看不见"来**确定性**复现输家可见性状态，
+  不靠线程撞概率；修复前两条都断在 `UNIQUE constraint failed: quotations.inquiry_id, quotations.supplier_id`。
+- **收紧既有并发用例**：它此前只断"至少一个 200"，500 或未捕获异常都逃不掉（未捕获异常甚至只进 warnings）。
+  现补 `set(statuses) <= {200, 409}`，并实测该断言非恒真 —— 连跑 4 次分布都是 `[200, 409×5]`。
+- 收尾读数：全量 `pytest` 426 passed / 1 skipped、coverage 85.44%，
+  `IntegrityError` 与 `UnhandledThread` 命中数从 10 / 5 降到 **0 / 0**；`bandit -r app` 退出码 0、Issue 0 条。
+
 ### 修复（收尾审计第三轮：报价对比页把"还在加载"当成"确实没有"）
 
 - **直达/刷新报价对比页会谎报"该询价单暂无已提交报价"（中）**：空态判据是

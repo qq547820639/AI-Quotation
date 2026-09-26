@@ -13,8 +13,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from typing import NoReturn
+
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
 from fastapi.responses import Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import ALLOWED_UPLOAD_EXTENSIONS, ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_SIZE
@@ -250,6 +253,25 @@ def _sync_quote_progress(db: Session, inquiry) -> None:
     inquiry.version = (inquiry.version or 0) + 1
 
 
+def _duplicate_quotation_conflict(db: Session, invitation: SupplierInvitation) -> NoReturn:
+    """把 uq_quotations_inquiry_id_supplier_id 冲突换成与 POST /api/quotations 同形的 409。
+
+    门户的两个写入口是 check-then-insert：`_find_quotation` 看不见 → INSERT →
+    并发的另一路已先提交同一 (询价, 供应商)。此前异常直接穿出 ASGI（生产 = 500 + 服务端栈），
+    见风险文档 R21。
+    """
+    db.rollback()
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "error_type": "duplicate_quotation",
+            "message": "该供应商已存在此询价单的报价，请勿重复创建",
+            "inquiryId": invitation.inquiry_id,
+            "supplierId": invitation.supplier_id,
+        },
+    )
+
+
 def _find_quotation(db: Session, invitation: SupplierInvitation) -> Quotation | None:
     return db.query(Quotation).filter(
         Quotation.inquiry_id == invitation.inquiry_id,
@@ -398,7 +420,10 @@ def portal_save_draft(
             updated_at=now_str(),
         )
         db.add(quotation)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            _duplicate_quotation_conflict(db, invitation)
     else:
         quotation.remark = body.get("remark")
         quotation.updated_at = now_str()
@@ -454,7 +479,10 @@ def portal_submit_quotation(
             updated_at=now_str(),
         )
         db.add(quotation)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            _duplicate_quotation_conflict(db, invitation)
 
     items_data = (body.get("items", []) if isinstance(body, dict) else [])
     new_items = _build_quotation_items(db, invitation, items_data)
