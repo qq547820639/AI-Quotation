@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### R41 收尾 + R34 判据 AST 化
+
+- **R41 调用点全部改完**（`1aa69fd`）：`supplier`、`inquiry/list`（两处）、`inquiry/detail`、
+  `quotation/compare`（含 `exportCompareWorkbook` 这条链）共 5 个导出位点改为
+  `await` 之后才 `notifySuccess`，失败走各页**既有**错误通路（未新增任何 i18n key）。
+  `inquiry/detail` 那个装饰性的 `catch` 从此真能接到异常。
+- **一条反向对照被证明结构性做不到，并已改防线落点**：把 `exportAOA` 改回返回 `void` 之后，
+  删掉调用点的 `await` 不再有任何门禁会红（`await voidExpr` 合法、80007 只是 suggestion、
+  `await-thenable` 未开）。故新增 `src/utils/__tests__/excel.test.ts` 钉契约形状
+  （返回 Promise / 生成未完成前不 resolve / 失败必须 reject）。
+  变异复验：`excel.ts` 换回 fire-and-forget 那份 ⇒ `3 failed | 1 passed`；换回后 `4 passed`。
+- **R34 的 toast 判据从文本面换成 AST 面**（`25e6e5b`，就地替换同一把尺子）：
+  现在认得 ① 模板字符串选择器 ② locator 先赋变量再断言/再 filter ③ `getByText` 实参能吃几条成功文案。
+  档位八种，Σ != 站点数即"读数作废"退 2，文案目录取不到也退 2。
+  真语料读数：`站点 14（named=1 helper=7 negative=1 generic=5）`；与旧判据求差集只有三类
+  （多出 `supplier-portal.spec.ts:50` 一处 generic、7 处 helper 开始计数、`toHaveCount(0)`
+  的缺席断言由新 `negative` 档吸收不占豁免）。自测 **18 臂**全过。
+- **主动不收的一种绕过**：`getByRole(_, {name})` 当 toast 位点在真语料上 FP 2 处 / TP 0 处
+  （`permission.spec.ts:42`、`:60` 的按钮名 `/保\s*存|Save/` 恰好命中三条含"保存"的成功文案）
+  ⇒ 按"FP 普查非 0 就不配当门禁"收回 `getByText`，并把该形状写成自测的一臂钉住。
+
 ### 门禁 + 修复（八度复评：`no-floating-promises` 推到整棵 src/，并修掉 R42）
 
 - `eslint.config.js` 新增全量档 `files: ['src/**/*.{ts,tsx}']` ⇒ 类型感知的
