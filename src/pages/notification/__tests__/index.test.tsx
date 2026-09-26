@@ -13,6 +13,7 @@
  *   反向：API 失败时开关**应当**留在原位置 ⇒ 这才是被断言的那条"应然"。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { message } from 'antd';
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
@@ -66,6 +67,10 @@ function boolPrefs(): boolean[] {
 describe('通知设置页：偏好写入的结果态', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // antd 的 message 挂在 document.body 的全局 portal 上，不随组件卸载消失，
+    // 也不被 testing-library 的 auto-cleanup 管到 ⇒ 上一条用例留下的错误提示会冒充
+    // 本条的断言（实测：不销毁时"成功路径不得有错误提示"读到 3 个残留节点）。
+    message.destroy();
     useNotificationStore.setState({
       notifications: [],
       unreadCount: 0,
@@ -138,5 +143,58 @@ describe('通知设置页：偏好写入的结果态', () => {
     // 这一条只钉"不得伪造成功"这一条下界。失败到底该怎么提示（toast / 回滚 / 保留拨动）
     // 属于本页的统一成功/回滚语义，是另一件事，不在本用例的断言面里。
     expect(document.querySelectorAll('.ant-message-success').length).toBe(0);
+  });
+
+  it('R43：写入失败必须可见——失败后出现指名文案的错误提示', async () => {
+    mockedApi.updatePreferences.mockRejectedValue(new Error('boom'));
+    render(
+      <MemoryRouter>
+        <I18nextProvider i18n={i18n}>
+          <NotificationPage />
+        </I18nextProvider>
+      </MemoryRouter>,
+    );
+    fireEvent.click(firstSwitch());
+    await waitFor(() => expect(mockedApi.updatePreferences).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(document.querySelectorAll('.ant-message-error').length).toBeGreaterThan(0),
+    );
+    // 文案也要指名：只断 `.ant-message-error` 存在，会被同页别的错误提示冒充（R34 同一形状）
+    expect(document.querySelector('.ant-message-error')?.textContent).toContain('boom');
+  });
+
+  it('R43：异常没有原因文本时也要有可读提示，不得弹空气泡', async () => {
+    mockedApi.updatePreferences.mockRejectedValue(new Error('   '));
+    render(
+      <MemoryRouter>
+        <I18nextProvider i18n={i18n}>
+          <NotificationPage />
+        </I18nextProvider>
+      </MemoryRouter>,
+    );
+    fireEvent.click(firstSwitch());
+    await waitFor(() => expect(mockedApi.updatePreferences).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(document.querySelectorAll('.ant-message-error').length).toBeGreaterThan(0),
+    );
+    const text = document.querySelector('.ant-message-error')?.textContent ?? '';
+    // 这条钉的是"提示非空"这个下界：原因空白时退回通用文案（用 `??` 会漏过 ''）。
+    // 刻意不断具体是哪一句 —— 具体文案由服务端原因决定，写死会让用例替实现背书。
+    expect(text.trim().length, `提示是空气泡："${text}"`).toBeGreaterThan(0);
+  });
+
+  it('R43 反向：成功路径不得留下错误提示（否则上一条可以是空转）', async () => {
+    mockedApi.updatePreferences.mockImplementation(async (data) => ({ ...ALL_TRUE, ...data }));
+    render(
+      <MemoryRouter>
+        <I18nextProvider i18n={i18n}>
+          <NotificationPage />
+        </I18nextProvider>
+      </MemoryRouter>,
+    );
+    fireEvent.click(firstSwitch());
+    await waitFor(() => expect(mockedApi.updatePreferences).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(firstSwitch().getAttribute('aria-checked')).toBe('false'));
+    expect(document.querySelectorAll('.ant-message-error').length).toBe(0);
   });
 });
