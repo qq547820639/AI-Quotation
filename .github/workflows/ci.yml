@@ -218,6 +218,14 @@ jobs:
         run: |
           npm run e2e:config:check
           node scripts/check-e2e-demo-password.mjs --self-test
+      - name: Verify E2E write-proof criterion (toast assertions)
+        # R34：不指名的 `.ant-message-success` 可见性断言会被上一条还在屏上的 toast 冒充，
+        # 于是用例在写请求飞行中就 goto、把请求掐断，表现为偶发红。这里钉住「证明写落地的
+        # 提示必须指名文案」，并跑尺子的四条反证（注入未指名/在册位点修好后不清单必须翻红，
+        # 已指名/跨行的无关引号不得误伤）。
+        run: |
+          npm run e2e:toast:check
+          node scripts/check-e2e-toast-assertions.mjs --self-test
       - name: Build & start all services (docker compose)
         # 生产配置在 APP_ENV=prod 下为 fail-fast：compose 的 dev 默认值（SECRET_KEY/
         # DEMO_USER_PASSWORD/CORS/NOTIFY_CHANNEL）会被后端启动守卫拒绝。CI E2E 必须注入

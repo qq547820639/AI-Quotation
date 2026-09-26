@@ -129,6 +129,22 @@ export async function confirmOk(page: Page) {
 }
 
 /**
+ * 等一条**指名文案**的成功提示，用它当作「这一步的写请求已经落地」的凭据。
+ *
+ * 不要用泛化的 `.ant-message-success` 断言：antd 的 message 会停留约 3s，
+ * 上一条操作的提示还挂在屏上时它会立刻通过。实测（HEAD `03beee8`，8/8 次复现）
+ * 「提交审批」之后那条断言命中的是上一步的「已选择推荐供应商」，
+ * 而审批 POST 的响应时刻读数为 -1 —— 请求还没回来就被下一次 `page.goto` 掐断，
+ * 于是 /approval 能不能看见这条单变成掷硬币（全量跑 1/195 的红即此）。
+ * 页面的成功提示都在 `await` 写请求之后才弹，所以按文案指名等就等于等写落地。
+ */
+export async function expectSuccessToast(page: Page, text: RegExp) {
+  await expect(page.locator('.ant-message-success').filter({ hasText: text }).first()).toBeVisible({
+    timeout: 15000,
+  });
+}
+
+/**
  * 通过内部"重新生成邀请链接"接口获取某询价单下某供应商的有效邀请令牌。
  * 需已登录采购账号且 localstorage 持有 Bearer token（procurement_token）。
  * 返回的原始 token 仅经此接口返回一次，不落库；门户侧按 token 哈希校验。
