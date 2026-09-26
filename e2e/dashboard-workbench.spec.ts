@@ -48,16 +48,17 @@ test.describe('工作台行动工作台', () => {
   test('点击可点击的行动卡片跳转到对应筛选结果', async ({ page }) => {
     // 找到任一可点击（aria-disabled=false）的卡片并点击
     const clickable = page.locator('[role="button"][aria-disabled="false"][aria-label]').first();
-    if ((await clickable.count()) > 0) {
-      // 点击前记录 aria-label 对应的目标路径预期（待发送询价 → /inquiry/list?status=PENDING_SEND）
-      await clickable.click();
-      // 跳转后 URL 是询价列表、审批页或报价页其中之一
-      await page.waitForURL(/\/inquiry\/list|\/approval|\/quotation|\/inquiry\/detail/, {
-        timeout: 10000,
-      });
-    } else {
-      // 无任何可点击卡片时，工作台仍正常渲染（空态或全 0 态）
-      await expect(page.locator('body')).toContainText(/行动工作台|Action Workbench/);
-    }
+    // 原来这里写的是 `if (count>0) {…点卡片并验跳转} else {…只验页面标题}`：
+    // 种子数据（demo 里 PENDING_SEND/待审批都有）决定该分支在生产里恒真，
+    // 但"恒真"是读码判定 ⇒ 先把它变成断言，红了再承认这条需要分支。
+    expect(
+      await clickable.count(),
+      '工作台至少要有一张可点击的行动卡片，否则这条用例验不到跳转',
+    ).toBeGreaterThan(0);
+    await clickable.click();
+    // 跳转后 URL 是询价列表、审批页或报价页其中之一
+    await page.waitForURL(/\/inquiry\/list|\/approval|\/quotation|\/inquiry\/detail/, {
+      timeout: 10000,
+    });
   });
 });

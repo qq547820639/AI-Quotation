@@ -27,10 +27,13 @@ test.describe('询价全流程', () => {
     await page.goto('/inquiry/list');
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
     // 点击第一行的查看/详情按钮
+    // 桌面表格给行内「查看」按钮，移动端卡片视图只有「更多」下拉里的同名项，两种入口都算通过。
+    // R45 把这条留成就地豁免而不是关档：新写的用例若没有这种已核实的布局差异，仍会被规则拦住。
     const actionBtn = page
       .locator(DATA_ROW)
       .first()
       .getByRole('button', { name: /查\s*看|详\s*情|View/ });
+    // eslint-disable-next-line playwright/no-conditional-in-test
     if (await actionBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await actionBtn.click();
     } else {

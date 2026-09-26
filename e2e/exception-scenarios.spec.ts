@@ -150,10 +150,14 @@ test.describe('异常场景', () => {
     // WebKit（webkit / mobile-ios 项目）在 15s 之前就先中止了停滞连接，axios 看到的是
     // 网络错误 → 提示"网络错误，请检查连接"（实测）。两种都是"不悬挂、明确告知用户"，
     // 因此跨引擎断言"出现错误提示"，并在 Chromium 项目上继续钉住超时这一具体文案。
+    // 两种文案都实测过（chromium 走 axios 15s 超时、webkit 先掐掉停滞连接走网络错误分支），
+    // 分支依据是 project.name 而不是运行期状态，不属于「看不见就跳过」那种弱断言。
+    /* eslint-disable playwright/no-conditional-in-test -- 分支依据是 project.name（构建期就定），不是运行期状态 */
     const wording =
       test.info().project.name === 'chromium'
         ? /请求超时|Request timeout/
         : /请求超时|网络错误|Request timeout|Network error/i;
+    /* eslint-enable playwright/no-conditional-in-test */
     await expect(page.locator('.ant-message-error').first()).toContainText(wording, {
       timeout: 25000,
     });
@@ -375,6 +379,9 @@ test.describe('异常场景', () => {
       .locator(
         '.ant-modal-confirm-btns .ant-btn-primary, .ant-modal-confirm-btns .ant-btn-dangerous',
       )
+      // 这条用例测的就是「请求飞行中再点确定不该发出第二次」：按钮此刻被遮罩挡住，
+      // 正常点击会因不可命中而失败——force 是这个场景的构造手段，不是掩盖失败的兜底。
+      // eslint-disable-next-line playwright/no-force-option
       .click({ force: true, timeout: 500 })
       .catch(() => {});
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });

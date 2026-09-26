@@ -57,10 +57,15 @@ test.describe('Access Token 自动续期', () => {
     await page.goto('/inquiry/list');
     const refreshResponse = await responsePromise;
 
-    // 没有可用的 refresh token → 续期必须失败（401），不允许被当成同源而放行
-    if (refreshResponse) {
-      expect(refreshResponse.status()).toBe(401);
-    }
+    // 没有可用的 refresh token → 续期必须失败（401），不允许被当成同源而放行。
+    // 原来写成 `if (refreshResponse) { expect(status).toBe(401) }`：一条**根本没发出续期请求**
+    // 的实现同样满足它（`responsePromise` 已被 `.catch(() => null)` 兜成 null），
+    // 这正是 R38 那类"断言只在分支成立时才执行"的形状。改成先无条件钉住请求在场，再判状态码。
+    expect(
+      refreshResponse,
+      '过期 access token 落地时必须观测到一次 /api/auth/refresh 请求，否则"续期失败"根本没被验证',
+    ).not.toBeNull();
+    expect(refreshResponse.status()).toBe(401);
     await expect(page).toHaveURL(/\/login/, { timeout: 30000 });
     await expect(page.locator(DATA_ROW).first(), '未登录不应看到询价数据').toHaveCount(0);
   });

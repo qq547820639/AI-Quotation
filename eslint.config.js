@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import playwright from 'eslint-plugin-playwright';
 import prettierConfig from 'eslint-config-prettier';
 
 export default tseslint.config(
@@ -102,6 +103,31 @@ export default tseslint.config(
     },
     rules: {
       '@typescript-eslint/no-floating-promises': 'error',
+    },
+  },
+
+  // R45：e2e 侧的 Playwright 规范档（选型与实测命中面见风险登记册九度复评《技术选型》一节）。
+  // 决策依据不是文档而是现算读数：整包 flat/recommended 在今天的 e2e/ 上报
+  // 14 条（0 error / 14 warning，7 个文件），而本仓 lint 门是 `--max-warnings=0` ⇒ 14 条今天全算红。
+  // 逐条读完分三类：真债→改测试（no-conditional-expect / no-force-option / no-conditional-in-test
+  // 的命中点，个别确属"按实测选断言"的形状就地 eslint-disable 写理由）；
+  // 下面这三条**关档**，因为它们要禁的正是本仓已经用对照验过的写法：
+  //   · no-wait-for-timeout —— 把写请求挂住之后必须真的等一会儿才构成"窗口"，
+  //     换成 web-first 等待等于窗口不存在（`toast-impersonation.spec.ts` 的承重对照量过：
+  //     没有这个撑窗，删掉注入用例照样绿）。
+  //   · prefer-to-have-count —— 它把一次性 `count()` 读数改回 `toHaveCount(0)`，
+  //     而后者是重试型 matcher，会被"出现过又淡掉"的提示在淡出之后凑成 0（本轮真实踩过）。
+  //   · no-skipped-test —— 本仓唯一的 skip 带布局条件与理由（窄屏没有批量入口），
+  //     禁掉它等于把"哪些格子只在桌面可测"这条信息藏起来。
+  // 其余 recommended 规则今天命中 0（含 missing-playwright-await / no-networkidle /
+  // no-element-handle / no-eval / valid-expect / no-unsafe-references 等），接进来即绿并棘住后续写法。
+  {
+    files: ['e2e/**/*.ts'],
+    extends: [playwright.configs['flat/recommended']],
+    rules: {
+      'playwright/no-wait-for-timeout': 'off',
+      'playwright/prefer-to-have-count': 'off',
+      'playwright/no-skipped-test': 'off',
     },
   },
 );

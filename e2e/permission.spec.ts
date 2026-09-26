@@ -37,12 +37,14 @@ test.describe('RBAC 权限', () => {
       onForbidden || stillOnSettings,
       `采购人员访问 /settings 只应「跳 403」或「留在设置页且无保存权」，实际停在 ${url}`,
     ).toBe(true);
-    if (stillOnSettings) {
-      // 仍在 /settings，验证保存按钮不可见（权限组件拦截）
-      await expect(page.getByRole('button', { name: /保\s*存|Save/ })).not.toBeVisible({
-        timeout: 5000,
-      });
-    }
+    // 两种允许的落点都不该给出"保存"权：跳 403 时页面上没有保存按钮，
+    // 留在设置页时权限组件不渲染它。原来这条包在 `if (stillOnSettings)` 里 ⇒
+    // 一旦落到 403 分支它整条不执行，等于"跳 403"那一半没有牙（R38 的同一形状）。
+    // `not.toBeVisible()` 对"元素不存在"和"元素被隐藏"都成立，所以这里可以无条件断。
+    await expect(
+      page.getByRole('button', { name: /保\s*存|Save/ }),
+      '采购人员在 /settings 的两种允许落点下都不该看到保存按钮',
+    ).not.toBeVisible({ timeout: 5000 });
   });
 
   test('管理员可正常访问设置页', async ({ page }) => {
