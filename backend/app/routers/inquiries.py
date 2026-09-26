@@ -27,11 +27,14 @@ from ..models import (
     User, Inquiry, InquiryItem, InquiryLog, ApprovalNode, Quotation,
     Supplier, AppSettings, SupplierInvitation, QuotationSnapshot,
 )
+from pydantic import ValidationError
+
 from ..schemas import (
     InquirySchema, InquiryCreate, InquiryUpdate, ApprovalAction,
     QuotationSchema, SuccessResult, VersionBody,
     DeliveryRecordSchema, DeliverySummarySchema,
     PaginatedInquiriesSchema, ExportRequest, QuotationSnapshotSchema,
+    InquiryItemSchema,
 )
 from ..auth import get_current_user, require_permission, resolve_permissions
 from ..serializers import inquiry_to_schema, quotation_to_schema, gen_id, now_str
@@ -115,25 +118,63 @@ def _merge_map(db: Session, inquiry: Inquiry, key: str, incoming: dict | None) -
 
 
 def _build_inquiry_items(inquiry_id: str, items_data: list) -> list[InquiryItem]:
-    """从前端 items 构造 ORM InquiryItem 列表（items 含 material 内联对象 + 扁平字段）"""
+    """从前端 items 构造 ORM InquiryItem 列表（items 含 material 内联对象 + 扁平字段）
+
+    写之前先过一遍**读侧**的 InquiryItemSchema（R35）：列是动态类型，写进来的
+    `quantity="NOT-A-NUMBER"` 会原样落库，而 `inquiry_to_schema` 要求 `quantity: int` ——
+    于是这一行让 `GET /api/inquiries` 对所有人抛 ValidationError 500，一次坏写毒掉整个列表页。
+    过读侧 schema 同时带来两个性质：能转换的（"10" → 10）照样接受并按转换后的值落库，
+    不能表示的在**任何写入发生之前**就以 422 拒绝。
+    """
     result = []
-    for it in items_data or []:
+    for idx, it in enumerate(items_data or []):
         material = it.get("material") or {}
+        payload = {
+            "id": it.get("id") or gen_id(f"item-{inquiry_id}"),
+            "inquiryId": inquiry_id,
+            "materialId": material.get("id") or it.get("materialId"),
+            "name": it.get("name", material.get("name", "")),
+            "code": it.get("code", material.get("code", "")),
+            "category": it.get("category", material.get("category", "")),
+            "brand": it.get("brand", material.get("brand", "")),
+            "spec": it.get("spec", material.get("spec", "")),
+            "techParams": it.get("techParams", material.get("techParams", "")),
+            "unit": it.get("unit", material.get("unit", "")),
+            "quantity": it.get("quantity", 0),
+            "targetPrice": it.get("targetPrice"),
+            "expectedDeliveryDate": it.get("expectedDeliveryDate"),
+            "remark": it.get("remark"),
+            "attachments": it.get("attachments", []),
+        }
+        try:
+            v = InquiryItemSchema.model_validate(payload)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error_type": "invalid_inquiry_item",
+                    "index": idx,
+                    "fields": sorted({
+                        ".".join(str(p) for p in err["loc"]) for err in e.errors()
+                    }),
+                    "message": f"第 {idx + 1} 个物料字段不合法，未创建任何数据",
+                },
+            )
         result.append(InquiryItem(
-            id=it.get("id") or gen_id(f"item-{inquiry_id}"),
+            id=v.id,
             inquiry_id=inquiry_id,
-            material_id=material.get("id") or it.get("materialId"),
-            name=it.get("name", material.get("name", "")),
-            code=it.get("code", material.get("code", "")),
-            category=it.get("category", material.get("category", "")),
-            brand=it.get("brand", material.get("brand", "")),
-            spec=it.get("spec", material.get("spec", "")),
-            tech_params=it.get("techParams", material.get("techParams", "")),
-            unit=it.get("unit", material.get("unit", "")),
-            quantity=it.get("quantity", 0),
-            target_price=it.get("targetPrice"),
-            expected_delivery_date=it.get("expectedDeliveryDate"),
-            remark=it.get("remark"),
+            material_id=v.materialId,
+            name=v.name,
+            code=v.code,
+            category=v.category,
+            brand=v.brand,
+            spec=v.spec,
+            tech_params=v.techParams,
+            unit=v.unit,
+            quantity=v.quantity,
+            target_price=v.targetPrice,
+            expected_delivery_date=v.expectedDeliveryDate,
+            remark=v.remark,
         ))
     return result
 
@@ -332,8 +373,10 @@ def create_inquiry(
         )
 
     # 服务端生成唯一编号（Task 7）：并发碰撞时事务内整体重试
+    last_code = None
     for _ in range(5):
-        inq = build_inquiry(_generate_inquiry_code(db))
+        last_code = _generate_inquiry_code(db)
+        inq = build_inquiry(last_code)
         inq.items = _build_inquiry_items(inq_id, data.get("items", []))
         inq.logs = _build_logs(inq_id, data.get("logs", []), default_user=user)
         inq.approval_nodes = _build_approval_nodes(inq_id, data.get("approvalNodes", []))
@@ -348,11 +391,30 @@ def create_inquiry(
             return inquiry_to_schema(inq, db)
         except IntegrityError:
             db.rollback()
+            # 只有"刚生成的编号确实已被占用"才是编号碰撞，换号重试有意义。
+            # 其余完整性冲突（前端自带的子行主键重复、外键不存在等）重试 5 次
+            # 只会撞同一堵墙，把它们一律说成"编号生成冲突"是替用户伪造原因（R35）：
+            # 实测把一条已存在的 COMPLETED 单改 id 后回 POST，因其 items[].id 已存在，
+            # 原实现连撞 5 次后回 500「编号生成冲突重试耗尽」，方向完全错。
+            code_taken = db.query(Inquiry.id).filter(Inquiry.code == last_code).first()
+            if code_taken is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error_type": "inquiry_conflict",
+                        "message": "创建询价单失败：与已有记录冲突（非编号碰撞），请检查物料行 id 等唯一标识",
+                    },
+                )
         except Exception:
             db.rollback()
             raise
-    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="创建询价单失败：编号生成冲突重试耗尽")
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={
+            "error_type": "inquiry_code_exhausted",
+            "message": "创建询价单失败：编号生成冲突重试耗尽",
+        },
+    )
 
 
 @router.put("/{inquiry_id}", response_model=InquirySchema)
