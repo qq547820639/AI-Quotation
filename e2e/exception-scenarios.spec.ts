@@ -25,6 +25,53 @@ const LEAD = '王志强'; // u-2 采购主管，具备 INQUIRY_CONFIRM（定标�
 const PURCHASER = '李明辉'; // u-1 采购人员，无 INQUIRY_APPROVE / SETTINGS_MANAGE
 const SUP1 = '上海恒远工业设备有限公司'; // sup-1，初始 COOPERATING
 
+/**
+ * 从此刻起把页面上出现过的每一条 antd message 记进 `window.__toasts`（按 类型|文案 去重）。
+ * 为什么必须这样取样：message 3 秒自动消失，而 `expect(locator).toHaveCount(0)` 这类
+ * **会重试的负向断言**会在提示淡出之后才判 —— 变异档（不 await 就弹成功）实测就是这样被判成绿的
+ * （`toHaveCount(0)` 先看到 1、等 3 秒元素消失后看到 0）。负向断言只能在"出现的那一刻"判，
+ * 所以这里连续记录，事后对记录做断言。
+ */
+async function recordToasts(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __toasts: string[] };
+    w.__toasts = [];
+    const seen = new Set<string>();
+    const scan = (root: ParentNode | Element) => {
+      root.querySelectorAll?.('.ant-message-custom-content').forEach((el) => {
+        const cls = el.className || '';
+        const type = cls.includes('error')
+          ? 'error'
+          : cls.includes('success')
+            ? 'success'
+            : cls.includes('warning')
+              ? 'warning'
+              : 'other';
+        const key = `${type}|${(el.textContent || '').trim()}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          w.__toasts.push(key);
+        }
+      });
+    };
+    new MutationObserver((ms) =>
+      ms.forEach((m) =>
+        m.addedNodes.forEach((n) => {
+          if (n.nodeType === 1) scan(n as Element);
+        }),
+      ),
+    ).observe(document.body, { childList: true, subtree: true });
+    scan(document.body);
+  });
+}
+
+async function readToasts(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __toasts: string[] }).__toasts ?? []);
+}
+
+/** 定标按钮的可访问名（中英文都可能在 CI 语言下出现） */
+const CONFIRM_AWARD = /确认定标|Confirm Award/;
+
 /** 点击确认弹窗的确定按钮（antd Modal.confirm） */
 async function confirmOk(page: Page) {
   // .first()：前一个确认弹窗退场动画未结束时同时存在两个按钮，
@@ -239,8 +286,11 @@ test.describe('异常场景', () => {
       });
     });
 
-    const confirmBtn = page.getByRole('button', { name: /确认定标|Confirm Award/ });
+    const confirmBtn = page.getByRole('button', { name: CONFIRM_AWARD });
     await expect(confirmBtn).toBeVisible({ timeout: 10000 });
+
+    // 先装记录器再点：否则"弹过又自动消失"的那一条抓不到（见 recordToasts 说明）
+    await recordToasts(page);
 
     const confirmRes = page.waitForResponse(
       (res) => new URL(res.url()).pathname.endsWith('/confirm'),
@@ -251,21 +301,23 @@ test.describe('异常场景', () => {
     // 效力断言：请求确实发出并被拦成 500（与"根本没发请求"的 R28 形态区分开）
     expect((await confirmRes).status()).toBe(500);
 
-    // 出错提示必须出现。注：`parseApiError` 会把后端 `detail` 原样当作 message，
-    // 所以这条弹的是 "boom" 而不是通用「服务器错误」—— 判"有没有弹错"用可见性，
-    // 判"有没有伪造成功"用下面的反向断言。
-    const errToast = page.locator('.ant-message-error').first();
-    await expect(errToast).toBeVisible({ timeout: 10000 });
-    await expect(errToast).toContainText(/boom|服务器错误|Server error/);
-    // 反向断言（本用例的牙齿）：旧实现不 await 写操作结果就弹成功提示，
-    // 接口 500 时用户看到的是「已确认定标」。
-    await expect(
-      page.locator('.ant-message-success').filter({ hasText: /已确认定标|Award confirmed/ }),
-    ).toHaveCount(0);
+    // 两条提示都要给足出现时间（旧实现的成功提示是点击瞬间就弹的）
+    await page.waitForTimeout(1200);
+    const toasts = await readToasts(page);
+    // 牙齿：旧实现不 await 写操作结果就弹成功提示，接口 500 时用户看到「已确认定标」
+    expect(
+      toasts.filter((t) => t.startsWith('success|') && /已确认定标|Award confirmed/.test(t)),
+      `定标失败时不得出现成功提示，实际抓到：${JSON.stringify(toasts)}`,
+    ).toEqual([]);
+    // 注：`parseApiError` 把后端 detail 原样当 message，所以失败提示内容是 "boom" 而非通用文案
+    expect(
+      toasts.some((t) => t.startsWith('error|')),
+      `必须给出失败提示，实际抓到：${JSON.stringify(toasts)}`,
+    ).toBe(true);
 
     // 状态没被改动：重新加载后仍可定标（服务端仍是「报价已完成」）
     await page.reload();
-    await expect(page.getByRole('button', { name: /确认定标|Confirm Award/ })).toBeVisible({
+    await expect(page.getByRole('button', { name: CONFIRM_AWARD })).toBeVisible({
       timeout: 15000,
     });
   });
