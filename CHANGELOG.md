@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+### 门禁 + 修复（八度复评：`no-floating-promises` 推到整棵 src/，并修掉 R42）
+
+- `eslint.config.js` 新增全量档 `files: ['src/**/*.{ts,tsx}']` ⇒ 类型感知的
+  「Promise 必须被消费」不再只管 3 个页面。代价实测 **22 文件 72 处**（非测试 49 / 测试 23；
+  严格"去 void 后逐字相同"口径读到 68，另 4 处是 `if (…) void navigate(…)` 与 prettier 拆行，
+  逐条读过才计入）。
+- 判据的两极性实测：往 `src/` 放裸 `Promise.resolve(1);` → eslint rc=1 点名本规则；
+  加 `void` → rc=0。**19 处是 react-router 的类型假阳性**（`navigate` 声明返回
+  `void | Promise<void>`，本机 `@typescript-eslint@8.65.0` 的 `checkThenables` 默认已 false 仍开火）。
+- 旧棘轮档注释里「未列出的文件不受影响」在全量档下变成假话，就地更正；那份历史 `files`
+  名单保留为决策记录，并注明它已不再决定适用域。
+- **R42 修复**（`c382143`）：`addNotification` 被服务端拒绝后不再留下永久幽灵通知。
+  过去它先乐观写本地数组 + `unreadCount + 1` 再 `await create()`，`catch` 只 `return fail(e)`；
+  而 `loadFromApi` 的 `localOnly` 合并规则（`useNotificationStore.ts:84-85`）会把服务端从未接受的那条
+  **原样保留**，`refreshUnreadCount:106` 又按服务端计数 ⇒ 角标与列表自相矛盾。
+  现按 id 撤该条并按其 `read` 位扣未读（不整体回滚数组，避免连带丢掉等待期间的并发写入）。
+  常驻用例两条（成功/失败两极性 + 并发控制），变异对照：删掉撤回的 `set()` → `2 failed | 8 passed`。
+- **R41 根因侧**（`309a611`）：`exportAOA`/`exportMultiSheet` 改为返回生成完成的 `Promise<void>`。
+  5 个调用点「生成还没完成就 `notifySuccess`」的搬迁在同一次改动里跟进，
+  其中 `src/pages/inquiry/detail/index.tsx:411-413` 那个因拿不到 Promise 而装饰性的 `catch`
+  会因此变成真的能抓到。
+
 ### 取证更正（R36 定案的收益数与成本档次）
 
 - **作废两个字节数**：上轮 R36 选型记的「20,693B → 1,017B（省 95.1%）」与「513B（省 97.5%）」
