@@ -251,10 +251,12 @@ test.describe('异常场景', () => {
     // 效力断言：请求确实发出并被拦成 500（与"根本没发请求"的 R28 形态区分开）
     expect((await confirmRes).status()).toBe(500);
 
-    await expect(page.locator('.ant-message-error').first()).toContainText(
-      /服务器错误|Server error/,
-      { timeout: 10000 },
-    );
+    // 出错提示必须出现。注：`parseApiError` 会把后端 `detail` 原样当作 message，
+    // 所以这条弹的是 "boom" 而不是通用「服务器错误」—— 判"有没有弹错"用可见性，
+    // 判"有没有伪造成功"用下面的反向断言。
+    const errToast = page.locator('.ant-message-error').first();
+    await expect(errToast).toBeVisible({ timeout: 10000 });
+    await expect(errToast).toContainText(/boom|服务器错误|Server error/);
     // 反向断言（本用例的牙齿）：旧实现不 await 写操作结果就弹成功提示，
     // 接口 500 时用户看到的是「已确认定标」。
     await expect(
