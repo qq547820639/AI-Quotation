@@ -113,6 +113,8 @@ export default function InquiryListPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   // R41 之后导出要等真实生成完成 ⇒ 生成期给按钮 loading 并挡住重入
   const [exportingCurrent, setExportingCurrent] = useState(false);
+  // 逐行导出按行记状态：同一行连点挡掉，不同行各转各的（单槽位会让先完成那次清掉别人的标记）
+  const [exportingRows, setExportingRows] = useState<Record<string, boolean>>({});
   const [filterOpen, setFilterOpen] = useState(false);
 
   // ===== Task 19：保存筛选视图 + 默认视图 =====
@@ -576,6 +578,8 @@ export default function InquiryListPage() {
   };
 
   const handleExport = async (inquiry: Inquiry) => {
+    if (exportingRows[inquiry.id]) return;
+    setExportingRows((s) => ({ ...s, [inquiry.id]: true }));
     const header = [
       i18n.t('inquiry.export.materialName'),
       i18n.t('inquiry.export.materialCode'),
@@ -601,6 +605,12 @@ export default function InquiryListPage() {
       notifySuccess(i18n.t('inquiry.export.success'));
     } catch {
       notifyError(i18n.t('inquiry.export.failed'));
+    } finally {
+      setExportingRows((s) => {
+        const next = { ...s };
+        delete next[inquiry.id];
+        return next;
+      });
     }
   };
 
@@ -952,6 +962,7 @@ export default function InquiryListPage() {
             type="link"
             size="small"
             icon={<ExportOutlined />}
+            loading={!!exportingRows[record.id]}
             onClick={() => void handleExport(record)}
           >
             {t('common.export')}
