@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 修复（R21 残留：门户 409 的可执行文案被前端丢掉）
+
+- **FastAPI 的 `detail` 信封没人读**：后端把重复报价的提示写在
+  `{"detail":{"error_type":"duplicate_quotation","message":"...请勿重复创建"}}` 里，
+  而 `parseApiError` 的 409 分支只看顶层 `data.message`，`extractBackendMessage` 又不看
+  `detail.message` → 实测四种 409 载荷全部塌成通用「数据已被他人修改或存在冲突，请刷新后重试」，
+  后端专门写的下一步指引在门户消失。
+  现在 409 按 `i18n(error_type) ?? 顶层 message ?? detail 文案 ?? 通用提示` 取文案，
+  并补 `errors.duplicateQuotation` 中英两份（走文案表而非透出后端中文，英文界面才不会夹中文）。
+  401/403 有意不变：那两类固定用前端文案，已有常驻用例钉着。
+- **常驻用例**：`client.test.ts` 补 5 条（含"映射生效"与"无可读文案仍回落通用"两条极性、
+  以及防两侧都缺键的夹具自检）；`e2e/supplier-portal.spec.ts` 补 1 条真实门户 409 链路
+  （效力断言 + 必须出现"请勿重复创建" + 判别性对照不得出现通用冲突文案 + 不进入已提交回执态）。
+  控制档把 `src/api/errors.ts` 退回改前，该 E2E 确实断在缺提示上。
+
 ### 修复（R32：写操作不 await 就弹成功 + R30 残留的"加载 vs 空"收口）
 
 - **定标/取消在接口失败时给用户伪造结果（高）**：`quotation/compare` 的「确认定标」与
