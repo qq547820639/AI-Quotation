@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### 修复 + 门禁（R39：一个组件测试文件从未被类型检查过）
+
+- `src/pages/dashboard/__tests__/ActionWorkbench.test.tsx` 与 `actionWorkbench.test.ts`
+  **去掉扩展名后大小写不敏感相等**；本 APFS 卷 `useCaseSensitiveFileNames === false`，
+  TS 的 `include` 展开会丢掉后收集的那个 ⇒ `tsc --noEmit` 一直 rc=0、`vitest` 也照常跑它，
+  但这个文件从来没进类型检查面（实测 `--listFiles` 命中数 0）。
+- **修法是改名不是兜底**：`git mv` 把纯逻辑那份改成 `actionWorkbench.pure.test.ts`，
+  而不是给 `tsconfig.json` 补 `files`（改名让这类撞名不再可能复发）。
+  复验：两个文件都进 `--listFiles`（1/1）、`tsc rc=0`、`vitest 3 files / 26 tests passed`。
+- **顺带拆掉我登记的一条假阻塞理由**：原写「`src/pages/**/__tests__` 不在任何 tsconfig include」——
+  实测 `tsconfig.json` 是 `include: ["src"]` 且无 `exclude`，`--listFilesOnly` 收 165 个 src 文件
+  （含全部 `__tests__`）⇒ 那句不成立，真因就是上面的撞名。
+- 新常驻门禁 `scripts/check-tsc-coverage.mjs`：按**两个集合的差**判（`git ls-files src` 的非 `.d.ts`
+  `.ts/.tsx` vs `tsc --listFiles` 落在仓库根下的那批），不看命名规律；三条前提各判 `rc=2`
+  而不折算成通过（`git ls-files` 为空、`tsc` 非 0、分子为空）。判据自测 **6/6**，
+  两极性实测：改名前的 `git worktree` 检出 → `rc=1` 并点名那个 `.tsx`；当前树 → `rc=0`（163 全覆盖）。
+- 已接 `package.json` 的 `tsc:cov:check` 与 `ci.yml` 中 `npx tsc --noEmit` 之后的一步。
+- 这把尺子的第一个 bug 由**事故树复放**抓到：我把仓库目录名当路径标记写死，主树里对、
+  到 worktree 就分子为空判 `rc=2` ⇒ 改成算出来的 `ROOT + '/'`，并给自测补一条
+  「树外路径与别的检出目录不得混进来」的臂。
+
 ### 测试（R37 前置取证：撤回一条我自己登记的行为断言）
 
 - **撤回**：R35 那轮登记里写着「偏好写入失败时 Switch 停在用户刚拨的位置，是界面与后端不一致」。

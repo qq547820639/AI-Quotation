@@ -25,6 +25,13 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+      - name: Verify every tracked source is actually type-checked
+        # 2026-09-27：ActionWorkbench.test.tsx 与 actionWorkbench.test.ts 去扩展名后大小写相等，
+        # TS 在大小写不敏感卷的 include 展开会丢掉后者之一 ⇒ 那个组件测试文件从未被类型检查，
+        # 而 tsc --noEmit 依旧 rc=0、vitest 也照常跑它。这条按"两边集合的差"来判，不看命名规律。
+        run: |
+          npm run tsc:cov:check
+          node scripts/check-tsc-coverage.mjs --self-test
       - name: Frontend unit tests with coverage gate (>=30%)
         run: npx vitest run --coverage
       - run: npm run i18n:check
