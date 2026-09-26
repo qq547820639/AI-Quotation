@@ -68,7 +68,11 @@ export default tseslint.config(
   // 详见风险登记册 R32），故按文件逐个纳入：新页面补齐后加进 files 即可，
   // 未列出的文件不受影响，已列出的文件回归即红。
   {
-    files: ['src/pages/quotation/compare/index.tsx', 'src/pages/inquiry/detail/index.tsx'],
+    files: [
+      'src/pages/quotation/compare/index.tsx',
+      'src/pages/inquiry/detail/index.tsx',
+      'src/pages/supplier/detail/index.tsx',
+    ],
     languageOptions: {
       parserOptions: {
         project: ['./tsconfig.json'],

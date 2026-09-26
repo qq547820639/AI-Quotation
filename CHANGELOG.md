@@ -10,8 +10,11 @@
   `inquiry/detail` 的「取消询价」都是 `onOk: () => { 写操作(id); notifySuccess(成功文案); }` ——
   不 await、不看 `WriteResult`，所以重复提交被拦、记录被并发刷新挤掉（R28 那台机器）、
   版本冲突 409、500 这四类落空全部显示成成功。调用面普查（含 `useInquiryStore((s) => s.X)` 的 22 处订阅
-  与 `approval` 页的 `action` 别名）显示 16 个写操作调用点里恰好这 2 个丢弃返回值，其余 14 个均已 await 并分支。
-  两处改为 await + 三分支，与同文件既有的 `handleSubmitApproval` 写法对齐。
+  与 `approval` 页的 `action` 别名）显示 16 个询价/报价写操作调用点里 2 个丢弃返回值；
+  但那条普查按名字取，真正的分母是类型规则跑出的 55 处非测试命中 —— 逐条读后其中
+  **第三处同形缺陷在 `supplier/detail/index.tsx:104`（停用/启用开关）**，
+  与列表页同一个开关的 await+分支写法不一致，一并修掉并纳入棘轮档。
+  三处统一改为 await + 三分支，与同文件既有的 `handleSubmitApproval` 写法对齐。
 - **防回归判据（零新增依赖）**：启用仓库里已在依赖中的 `@typescript-eslint/no-floating-promises`，
   按文件纳入 `eslint.config.js`（棘轮档，只列本轮清零的两个页面）。
   没自写 AST 脚本，因为标准规则判的是"返回值被丢弃"这个类型事实，而按方法名列名单会随 store 加方法静默漏判。
