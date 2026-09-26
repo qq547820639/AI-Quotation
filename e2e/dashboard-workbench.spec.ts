@@ -48,13 +48,17 @@ test.describe('工作台行动工作台', () => {
   test('点击可点击的行动卡片跳转到对应筛选结果', async ({ page }) => {
     // 找到任一可点击（aria-disabled=false）的卡片并点击
     const clickable = page.locator('[role="button"][aria-disabled="false"][aria-label]').first();
-    // 原来这里写的是 `if (count>0) {…点卡片并验跳转} else {…只验页面标题}`：
-    // 种子数据（demo 里 PENDING_SEND/待审批都有）决定该分支在生产里恒真，
-    // 但"恒真"是读码判定 ⇒ 先把它变成断言，红了再承认这条需要分支。
-    expect(
-      await clickable.count(),
-      '工作台至少要有一张可点击的行动卡片，否则这条用例验不到跳转',
-    ).toBeGreaterThan(0);
+    // 原来这里写的是 `if (count>0) {…点卡片并验跳转} else {…只验页面标题}`。
+    // 本轮把 count>0 改成断言后它红了（Received: 0），顺着读下去同时暴露两件事：
+    //  1) else 才是每次真正走到的分支 ⇒ 这条名为"点击…跳转"的用例从没点过任何卡片；
+    //  2) 红的的直接原因是同步 `await count()` 抢在卡片数据落地前读到了"全部禁用"。
+    //     一次性探针按 6 个演示身份实测：李明辉/王志强/周大海/陈晓燕 各有 4 张可点卡片
+    //     （待发送询价 1、即将截止 1、尚未报价供应商 67、异常报价 2），张文静/刘建国 没有工作台卡片
+    //     ⇒ 前提在种子数据下成立，那就用 web-first 断言等它成立，而不是退回 if/else。
+    await expect(
+      clickable,
+      '种子数据下工作台必须有可点击的行动卡片，否则这条用例验不到跳转',
+    ).toBeVisible({ timeout: 15000 });
     await clickable.click();
     // 跳转后 URL 是询价列表、审批页或报价页其中之一
     await page.waitForURL(/\/inquiry\/list|\/approval|\/quotation|\/inquiry\/detail/, {
