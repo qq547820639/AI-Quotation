@@ -267,6 +267,40 @@ test.describe('异常场景', () => {
     });
   });
 
+  test('报价清单加载失败（500）：不得声称「暂无已提交报价」（R33）', async ({ page }) => {
+    await login(page, LEAD);
+    const { inquiryId } = await createAndSendInquiry(page);
+    await submitQuoteViaPortal(page, inquiryId, 'sup-2', '6000');
+    await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
+
+    // 用 500 而不是 401 注入：401 会走"清会话 + 跳登录"那条既有路径（另有常驻用例钉着），
+    // 根本到不了比价页。500 才是"加载失败但会话仍在"的形状。
+    // 生产形态 MOCK_FALLBACK_ENABLED=false，store 拿不到数据只能留空。
+    await page.route('**/api/quotations', async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'boom' }),
+      });
+    });
+    await page.goto(`/quotation/compare/${inquiryId}`);
+
+    // 产品缺陷面：加载失败不是"没有数据"。旧实现会把 loaded 置真而数据为空，
+    // 于是页面断言「该询价单暂无已提交报价」——把一次同步失败说成业务事实。
+    await expect(page.locator('.ant-empty-description')).not.toContainText(
+      /暂无已提交报价|No submitted quotation/,
+      { timeout: 15000 },
+    );
+    // 必须给出"加载失败/未同步"这一类可恢复提示，而不是空态
+    await expect(
+      page
+        .locator('.ant-card, .ant-result, .ant-alert')
+        .filter({ hasText: /加载失败|未同步|重试|离线|retry|failed/i }),
+    )
+      .first()
+      .toBeVisible({ timeout: 15000 });
+  });
+
   test('定标接口 500：只报失败，不得伪造「已确认定标」（R32）', async ({ page }) => {
     await login(page, LEAD);
 

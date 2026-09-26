@@ -45,6 +45,11 @@ interface QuotationState {
    */
   loading: boolean;
   loaded: boolean;
+  /**
+   * 最近一次列表加载是否失败（失败=手里的数据不代表服务端的真相）。
+   * 页面据此区分「确实没有」与「没拿到」：只判 loaded 会把同步失败说成业务事实（R33）。
+   */
+  loadError: boolean;
   /** W7.4：从 API 加载（失败时降级到 localStorage/mock） */
   loadFromApi: () => Promise<void>;
   getQuotationsByInquiry: (inquiryId: string) => Quotation[];
@@ -61,23 +66,25 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
   quotations: MOCK_FALLBACK_ENABLED ? mergeQuotations() : [],
   loading: false,
   loaded: false,
+  loadError: false,
 
   // W7.4 + P1-10 Task 15：从 API 加载；生产模式失败不静默回退 mock
   loadFromApi: async () => {
     set({ loading: true });
     try {
       const data = await quotationApi.list();
-      set({ quotations: data, loading: false, loaded: true });
+      set({ quotations: data, loading: false, loaded: true, loadError: false });
       saveJSON(STORAGE_KEY, data);
       queryClient.setQueryData(QUERY_KEYS.quotations, data);
       useConnectivityStore.getState().markSynced();
     } catch {
       // 无论成功失败，"这一次加载已经结束"，loaded 都要置真：
       // 否则加载失败会把页面永久钉在骨架屏上，比误报空态更糟。
+      // 但 loaded 只回答"加载结束了"，不回答"数据可信"——后者由 loadError 表达（R33）。
       if (MOCK_FALLBACK_ENABLED) {
-        set({ quotations: mergeQuotations(), loading: false, loaded: true });
+        set({ quotations: mergeQuotations(), loading: false, loaded: true, loadError: true });
       } else {
-        set({ loading: false, loaded: true });
+        set({ loading: false, loaded: true, loadError: true });
         useConnectivityStore.getState().markOffline();
       }
     }

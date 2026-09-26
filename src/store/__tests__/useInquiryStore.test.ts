@@ -588,3 +588,24 @@ describe('询价单列表加载状态（R30 残留）', () => {
     expect(s.loaded).toBe(true);
   });
 });
+
+/** R33：与报价 store 同判据——加载结束 ≠ 数据可信 */
+describe('询价单清单 loadError（R33）', () => {
+  it('初值为 false；加载成功后清掉上一次的失败', () => {
+    expect(useInquiryStore.getInitialState().loadError).toBe(false);
+  });
+
+  it('加载成功 → loadError=false；加载失败 → loaded=true 且 loadError=true', async () => {
+    useInquiryStore.setState({ inquiries: [], loading: false, loaded: false, loadError: true });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([]);
+    await useInquiryStore.getState().loadFromApi();
+    expect(useInquiryStore.getState().loadError).toBe(false);
+
+    useInquiryStore.setState({ loaded: false, loadError: false });
+    vi.mocked(inquiryApi.list).mockRejectedValueOnce(new Error('boom'));
+    await useInquiryStore.getState().loadFromApi();
+    const s = useInquiryStore.getState();
+    expect(s.loaded).toBe(true);
+    expect(s.loadError).toBe(true);
+  });
+});

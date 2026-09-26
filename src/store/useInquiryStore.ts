@@ -123,6 +123,8 @@ interface InquiryState {
    */
   loaded: boolean;
   loading: boolean;
+  /** 最近一次列表加载是否失败（失败时手里的数据不代表服务端真相，见 R33） */
+  loadError: boolean;
   loadInquiries: () => void;
   /** W7.4：从 API 加载数据（失败时降级到 localStorage/mock） */
   loadFromApi: () => Promise<void>;
@@ -162,6 +164,7 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
   // 初值必须是"还没加载过"：把它当"已加载"的页面会在首屏把空数组读成"确实没有数据"（R30）。
   loaded: false,
   loading: false,
+  loadError: false,
 
   loadInquiries: () => set({ inquiries: mergeInquiries(), loaded: true }),
 
@@ -170,18 +173,19 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
     set({ loading: true });
     try {
       const data = await inquiryApi.list();
-      set({ inquiries: data, loaded: true, loading: false });
+      set({ inquiries: data, loaded: true, loading: false, loadError: false });
       saveJSON(STORAGE_KEY, data);
       queryClient.setQueryData(QUERY_KEYS.inquiries, data);
       useConnectivityStore.getState().markSynced();
     } catch {
       // 仅演示模式允许降级到 mock/localStorage；生产模式禁止无提示回退
       if (MOCK_FALLBACK_ENABLED) {
-        set({ inquiries: mergeInquiries(), loaded: true, loading: false });
+        set({ inquiries: mergeInquiries(), loaded: true, loading: false, loadError: true });
       } else {
         // 失败同样算「这次加载结束了」：不置 loaded 会把依赖它的页面永久钉在骨架屏上，
-        // 那比误报空态更糟（与 useQuotationStore.loadFromApi 同判据）。
-        set({ loading: false, loaded: true });
+        // 那比误报空态更糟（与 useQuotationStore.loadFromApi 同判据）；
+        // 同时立起 loadError，让页面能说「没拿到」而不是「没有」（R33）。
+        set({ loading: false, loaded: true, loadError: true });
         useConnectivityStore.getState().markOffline();
       }
     }

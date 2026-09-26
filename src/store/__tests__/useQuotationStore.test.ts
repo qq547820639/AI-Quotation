@@ -283,3 +283,27 @@ describe('报价列表加载状态（R30）', () => {
     expect(s.loaded).toBe(true);
   });
 });
+
+/**
+ * R33：`loaded` 只回答"加载结束了"，不回答"数据可信"。
+ * 生产形态加载失败时列表就是空的，页面若只看 loaded 会把同步失败说成"暂无已提交报价"。
+ */
+describe('报价清单 loadError（R33）', () => {
+  it('初值为 false；加载成功后仍为 false（清掉上一次的失败）', async () => {
+    useQuotationStore.setState({ quotations: [], loading: false, loaded: false, loadError: true });
+    await useQuotationStore.getState().loadFromApi();
+    const s = useQuotationStore.getState();
+    expect(s.loaded).toBe(true);
+    expect(s.loadError).toBe(false);
+  });
+
+  it('加载失败：loaded 与 loadError 同时为真（结束了，但数据不可信）', async () => {
+    useQuotationStore.setState({ quotations: [], loading: false, loaded: false, loadError: false });
+    vi.mocked(quotationApi.list).mockRejectedValueOnce(new Error('boom'));
+    await useQuotationStore.getState().loadFromApi();
+    const s = useQuotationStore.getState();
+    expect(s.loading).toBe(false);
+    expect(s.loaded).toBe(true);
+    expect(s.loadError).toBe(true);
+  });
+});

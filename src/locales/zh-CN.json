@@ -10,6 +10,8 @@
     "create": "创建",
     "update": "更新",
     "retry": "重试",
+    "loadFailed": "数据加载失败",
+    "loadFailedHint": "无法与服务端同步，因此现在还不能判断「有没有数据」。请重试，或检查网络/登录状态。",
     "view": "查看",
     "search": "搜索",
     "filter": "筛选",

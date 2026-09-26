@@ -11,7 +11,7 @@ import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Button, Card, Empty, Select, Space, Spin, Tag, Typography } from 'antd';
+import { Button, Card, Empty, Result, Select, Space, Spin, Tag, Typography } from 'antd';
 import {
   CheckCircleOutlined,
   DownloadOutlined,
@@ -73,6 +73,8 @@ export default function QuotationComparePage() {
   const quotationsLoaded = useQuotationStore((s) => s.loaded);
   const quotationsLoading = useQuotationStore((s) => s.loading);
   const inquiriesLoaded = useInquiryStore((s) => s.loaded);
+  const inquiriesLoadError = useInquiryStore((s) => s.loadError);
+  const quotationsLoadError = useQuotationStore((s) => s.loadError);
   const approvalConfig = useSettingsStore((s) => s.approval);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canConfirmPerm = hasPermission('INQUIRY_CONFIRM');
@@ -299,6 +301,36 @@ export default function QuotationComparePage() {
     return (
       <div style={{ textAlign: 'center', padding: 80 }}>
         <Spin />
+      </div>
+    );
+  }
+
+  // ===== 加载结束了，但这一次是失败的 =====
+  // loaded 只说明"请求回来了"，不说明"数据可信"。生产形态下失败时列表就是空的，
+  // 若继续往下走会渲染成「暂无已提交报价」/「未找到该询价单」——把一次同步失败
+  // 说成了业务事实（R33）。这里给可恢复的失败态与重试入口。
+  if (inquiriesLoadError || quotationsLoadError) {
+    return (
+      <div>
+        <PageHeader title={t('quotation.compare.title')} />
+        <Card>
+          <Result
+            status="warning"
+            title={t('common.loadFailed')}
+            subTitle={t('common.loadFailedHint')}
+            extra={
+              <Button
+                type="primary"
+                onClick={() => {
+                  void useInquiryStore.getState().loadFromApi();
+                  void useQuotationStore.getState().loadFromApi();
+                }}
+              >
+                {t('common.retry')}
+              </Button>
+            }
+          />
+        </Card>
       </div>
     );
   }

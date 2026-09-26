@@ -72,6 +72,7 @@ export default function ApprovalPage() {
   const navigate = useNavigate();
   const approveInquiry = useInquiryStore((s) => s.approveInquiry);
   const rejectInquiry = useInquiryStore((s) => s.rejectInquiry);
+  const inquiriesLoadError = useInquiryStore((s) => s.loadError);
   const currentUser = useAuthStore((s) => s.currentUser);
   const hasPermission = useAuthStore((s) => s.hasPermission);
 
@@ -323,7 +324,12 @@ export default function ApprovalPage() {
                       />
                     }
                     description={
-                      tab === 'pending' ? t('approval.emptyPending') : t('approval.emptyHistory')
+                      // 清单加载失败时不能说「暂无待审批」——那是把一次同步失败说成业务事实（R33）
+                      inquiriesLoadError
+                        ? t('common.loadFailed')
+                        : tab === 'pending'
+                          ? t('approval.emptyPending')
+                          : t('approval.emptyHistory')
                     }
                     style={{ padding: 48 }}
                   />
