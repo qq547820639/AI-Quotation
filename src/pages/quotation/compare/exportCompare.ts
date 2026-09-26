@@ -8,12 +8,12 @@ import { getQuotationItem } from '@/components/quotation/scoreUtils';
 import { formatDate, formatPercent } from '@/utils/format';
 import { exportMultiSheet } from '@/utils/excel';
 
-export function exportCompareWorkbook(
+export async function exportCompareWorkbook(
   t: TFunction,
   inquiry: Inquiry,
   data: CompareData,
   rows: SupplierQuoteRow[],
-): void {
+): Promise<void> {
   // sheet1 按物料对比
   const s1Header: (string | number)[] = [
     t('quotation.compare.excel.materialName'),
@@ -120,7 +120,7 @@ export function exportCompareWorkbook(
     inquiry.purchaserComments?.[r.supplier.id] ?? '',
   ]);
 
-  exportMultiSheet(t('quotation.compare.excel.fileName', { code: inquiry.code }), [
+  await exportMultiSheet(t('quotation.compare.excel.fileName', { code: inquiry.code }), [
     { name: t('quotation.compare.excel.sheet1'), header: s1Header, rows: s1Rows },
     { name: t('quotation.compare.excel.sheet2'), header: s2Header, rows: s2Rows },
     { name: t('quotation.compare.excel.sheet3'), header: s3Header, rows: s3Rows },

@@ -573,7 +573,7 @@ export default function InquiryListPage() {
     });
   };
 
-  const handleExport = (inquiry: Inquiry) => {
+  const handleExport = async (inquiry: Inquiry) => {
     const header = [
       i18n.t('inquiry.export.materialName'),
       i18n.t('inquiry.export.materialCode'),
@@ -594,8 +594,12 @@ export default function InquiryListPage() {
       item.quantity,
       item.targetPrice ?? '',
     ]);
-    exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
-    notifySuccess(i18n.t('inquiry.export.success'));
+    try {
+      await exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
+      notifySuccess(i18n.t('inquiry.export.success'));
+    } catch {
+      notifyError(i18n.t('inquiry.export.failed'));
+    }
   };
 
   // ===== Task 7：快捷视图 / 当前筛选 / 一键清空 / 导出当前筛选结果 =====
@@ -705,7 +709,7 @@ export default function InquiryListPage() {
   }, [applied, t]);
 
   /** 导出当前筛选结果 */
-  const handleExportCurrent = () => {
+  const handleExportCurrent = async () => {
     const header = [
       t('inquiry.list.inquiryCode'),
       t('inquiry.list.subject'),
@@ -728,8 +732,12 @@ export default function InquiryListPage() {
       inq.invitedSupplierIds.length,
       submittedCountMap.get(inq.id) ?? 0,
     ]);
-    exportAOA(t('inquiry.list.pageTitle'), header, rows);
-    notifySuccess(t('table.exportCurrentSuccess'));
+    try {
+      await exportAOA(t('inquiry.list.pageTitle'), header, rows);
+      notifySuccess(t('table.exportCurrentSuccess'));
+    } catch {
+      notifyError(i18n.t('inquiry.export.failed'));
+    }
   };
 
   /** P2-12 Task 17：服务端生成 PDF/Excel 导出（基于报价数据，不依赖浏览器状态） */
@@ -938,7 +946,7 @@ export default function InquiryListPage() {
             type="link"
             size="small"
             icon={<ExportOutlined />}
-            onClick={() => handleExport(record)}
+            onClick={() => void handleExport(record)}
           >
             {t('common.export')}
           </Button>
@@ -1207,7 +1215,7 @@ export default function InquiryListPage() {
             onSetDensity={setDensity}
             onReset={resetTablePrefs}
           />
-          <Button icon={<ExportOutlined />} onClick={handleExportCurrent}>
+          <Button icon={<ExportOutlined />} onClick={() => void handleExportCurrent()}>
             {t('table.exportCurrent')}
           </Button>
         </Space>
@@ -1494,7 +1502,7 @@ export default function InquiryListPage() {
                           if (key === 'edit') void navigate(`/inquiry/edit/${record.id}`);
                           else if (key === 'copy') handleCopy(record);
                           else if (key === 'cancel') handleCancel(record);
-                          else if (key === 'export') handleExport(record);
+                          else if (key === 'export') void handleExport(record);
                           else if (key === 'exportPdf') void exportServer(record, 'pdf');
                         },
                       }}

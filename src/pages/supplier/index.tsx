@@ -279,7 +279,7 @@ export default function SupplierPage() {
   }, [applied, t]);
 
   /** 导出当前筛选结果 */
-  const handleExportCurrent = () => {
+  const handleExportCurrent = async () => {
     const header = [
       t('supplier.list.supplierNumber'),
       t('supplier.list.name'),
@@ -306,8 +306,12 @@ export default function SupplierPage() {
       `${s.avgDeliveryDays} ${t('common.days')}`,
       formatDate(s.lastCooperateTime),
     ]);
-    exportAOA(t('supplier.title'), header, rows);
-    notifySuccess(t('table.exportCurrentSuccess'));
+    try {
+      await exportAOA(t('supplier.title'), header, rows);
+      notifySuccess(t('table.exportCurrentSuccess'));
+    } catch {
+      notifyError(t('common.operateFailed'));
+    }
   };
 
   /** 空状态引导：无数据或筛选无结果时提供「清空筛选」入口 */
@@ -659,7 +663,7 @@ export default function SupplierPage() {
             onSetDensity={setDensity}
             onReset={resetTablePrefs}
           />
-          <Button icon={<ExportOutlined />} onClick={handleExportCurrent}>
+          <Button icon={<ExportOutlined />} onClick={() => void handleExportCurrent()}>
             {t('table.exportCurrent')}
           </Button>
         </Space>

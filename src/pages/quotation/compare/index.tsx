@@ -280,11 +280,11 @@ export default function QuotationComparePage() {
   };
 
   // ===== 导出 Excel =====
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!inquiry || !data || exporting) return;
     setExporting(true);
     try {
-      exportCompareWorkbook(t, inquiry, data, visibleRows);
+      await exportCompareWorkbook(t, inquiry, data, visibleRows);
       notifySuccess(i18n.t('quotation.compare.exportSuccess'));
     } catch {
       notifyError(i18n.t('quotation.compare.exportFailed'));
@@ -454,7 +454,7 @@ export default function QuotationComparePage() {
         showSearch
         optionFilterProp="label"
       />
-      <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
+      <Button icon={<DownloadOutlined />} onClick={() => void handleExport()} loading={exporting}>
         {t('quotation.compare.exportExcel')}
       </Button>
       <Button icon={<FileSearchOutlined />} onClick={() => setSummaryOpen(true)}>

@@ -383,7 +383,7 @@ export default function InquiryDetailPage() {
     });
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (exporting) return;
     setExporting(true);
     try {
@@ -407,7 +407,7 @@ export default function InquiryDetailPage() {
         item.quantity,
         item.targetPrice ?? '',
       ]);
-      exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
+      await exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
       notifySuccess(i18n.t('inquiry.export.success'));
     } catch {
       notifyError(i18n.t('inquiry.export.failed'));
@@ -754,7 +754,7 @@ export default function InquiryDetailPage() {
                   { key: 'pdf', label: t('inquiry.detail.exportPDF'), icon: <FilePdfOutlined /> },
                 ],
                 onClick: ({ key }) => {
-                  if (key === 'excel') handleExport();
+                  if (key === 'excel') void handleExport();
                   else if (key === 'pdf') handleExportPDF();
                 },
               }}
