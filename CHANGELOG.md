@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### R43：通知偏好写入失败不再静默（并修掉一处会随清理时机漂移的断言）
+
+- `src/pages/notification/index.tsx` 两处 `void updatePreferences(...)` 丢掉 `WriteResult`
+  ⇒ 服务端拒了，用户只看到"开关拨了没反应"。新增 `savePreferences`：失败走 `notifyError`，
+  有原因报名词、原因空白退回既有 key `common.operateFailed`（zh/en 都有，未新造文案）。
+  `??` → `.trim() ||` 这一步由变异复验钉住：抛 `Error('   ')` 时 `??` 会弹一个空气泡。
+- **提示类断言的口径改了三次**：DOM 绝对数会被上一条用例在 `document.body` 全局 portal 上的残留满足；
+  改成"相对本条之前"又被 `beforeEach` 的 `message.destroy()` 异步移除打断
+  （本机读到 `1→1`、干净 worktree 读到 `1→0`）⇒ 终版 spy `message.error/success` 的实参，
+  连跑三次 6/6 稳定，两条变异臂各按预期开火。
+- **一条流程账**：`1aa69fd` 把带 4 处 `TS4104` 的测试文件提交进了 HEAD，而那一轮的收尾读数写着
+  "tsc rc=0" —— 读数不假，时点假（那次 tsc 跑在文件创建之前，而 vitest 不做类型检查、
+  提交钩子只跑 eslint+prettier）。已修（`74e07ef`），并把收尾改成
+  **在干净 worktree 的 HEAD 上重取全部读数**：`tsc/lint/i18n/toast(18/18)/cov(164)/install(694)` 全绿，
+  `vitest 40 files / 444 tests passed`。
+
 ### R36 前提更正（实测）：一次事件不等于一次全表读
 
 - 起了本机栈（后端 `:8080` 走 SQLite 副本 + `vite :5173` 且 `VITE_DEMO_MODE=false`）实测：
