@@ -174,7 +174,8 @@ export default function InquiryDetailPage() {
 
   useEffect(() => {
     if (inquiry?.status === InquiryStatus.INQUIRING) {
-      loadDeliveries();
+      // 内部已自带 try/catch，这里不消费结果是有意为之（投递状态到了一定会回填）
+      void loadDeliveries();
     }
   }, [inquiry?.status, loadDeliveries]);
 
@@ -184,7 +185,7 @@ export default function InquiryDetailPage() {
       try {
         await inquiryApi.resendDelivery(id, supplierId);
         notifySuccess(t('inquiry.detail.resendSuccess'));
-        loadDeliveries();
+        void loadDeliveries();
       } catch {
         notifyError(t('inquiry.detail.resendFailed'));
       }
@@ -252,7 +253,7 @@ export default function InquiryDetailPage() {
         const copy = copyInquiry(inquiry.id);
         if (copy) {
           notifySuccess(i18n.t('inquiry.detail.copySuccess', { code: copy.code }));
-          navigate(`/inquiry/detail/${copy.id}`);
+          void navigate(`/inquiry/detail/${copy.id}`);
         }
       },
     });
@@ -264,9 +265,15 @@ export default function InquiryDetailPage() {
       content: i18n.t('inquiry.detail.confirmCancelContent', { code: inquiry.code }),
       okText: i18n.t('inquiry.detail.confirmCancelOk'),
       danger: true,
-      onOk: () => {
-        cancelInquiry(inquiry.id);
-        notifySuccess(i18n.t('inquiry.detail.cancelSuccess'));
+      onOk: async () => {
+        // 同 R32：取消写操作可能落空（版本冲突 / 并发刷新挤出本地缓存 / 网络失败），
+        // 未 await 就弹「取消成功」会让用户以为单据已取消。
+        const result = await cancelInquiry(inquiry.id);
+        if (result.success) {
+          notifySuccess(i18n.t('inquiry.detail.cancelSuccess'));
+        } else if (result.reason !== 'pending') {
+          notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+        }
       },
     });
   };

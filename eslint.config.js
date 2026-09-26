@@ -59,4 +59,24 @@ export default tseslint.config(
       'react-hooks/exhaustive-deps': 'warn',
     },
   },
+
+  // 棘轮档：类型感知的「Promise 必须被消费」检查（R32）
+  // 存在理由：`confirmInquiry(...)` / `cancelInquiry(...)` 这类写操作只返回 Promise，
+  // 调用方不 await 就直接弹成功提示，等于在替用户伪造结果；tsc 抓不到，只有类型推断
+  // 才能判定「这个调用的返回值被丢掉了」。全仓一次性开启的代价已实测（HEAD 10ac8f8 上
+  // 该规则 78 处命中，非测试代码 55 处：src/pages 27、store 8、App/main 8、其余 12，
+  // 详见风险登记册 R32），故按文件逐个纳入：新页面补齐后加进 files 即可，
+  // 未列出的文件不受影响，已列出的文件回归即红。
+  {
+    files: ['src/pages/quotation/compare/index.tsx', 'src/pages/inquiry/detail/index.tsx'],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
+    },
+  },
 );

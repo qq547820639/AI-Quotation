@@ -116,6 +116,11 @@ function mergeInquiries(): Inquiry[] {
 
 interface InquiryState {
   inquiries: Inquiry[];
+  /**
+   * 本次会话是否已完成过一次列表加载（成功或失败都算完成）。
+   * 与 loading 一起区分「还没有数据」和「确实没有数据」：只看在飞会漏掉
+   * 从未发起加载的首帧，只看 loading 会在加载结束后误钉骨架屏（R30）。
+   */
   loaded: boolean;
   loading: boolean;
   loadInquiries: () => void;
@@ -154,7 +159,8 @@ export function filterVisibleInquiries(inquiries: Inquiry[], organization: strin
 export const useInquiryStore = create<InquiryState>((set, get) => ({
   // P1-10 Task 15：生产模式不预置 mock 数据，仅演示模式允许（真实数据与 mock 隔离）
   inquiries: MOCK_FALLBACK_ENABLED ? mergeInquiries() : [],
-  loaded: true,
+  // 初值必须是"还没加载过"：把它当"已加载"的页面会在首屏把空数组读成"确实没有数据"（R30）。
+  loaded: false,
   loading: false,
 
   loadInquiries: () => set({ inquiries: mergeInquiries(), loaded: true }),
@@ -173,7 +179,9 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
       if (MOCK_FALLBACK_ENABLED) {
         set({ inquiries: mergeInquiries(), loaded: true, loading: false });
       } else {
-        set({ loading: false });
+        // 失败同样算「这次加载结束了」：不置 loaded 会把依赖它的页面永久钉在骨架屏上，
+        // 那比误报空态更糟（与 useQuotationStore.loadFromApi 同判据）。
+        set({ loading: false, loaded: true });
         useConnectivityStore.getState().markOffline();
       }
     }

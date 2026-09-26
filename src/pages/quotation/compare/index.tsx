@@ -72,6 +72,7 @@ export default function QuotationComparePage() {
   // 报价列表到货后这个组件不会重渲染，空态会一直挂在屏幕上。
   const quotationsLoaded = useQuotationStore((s) => s.loaded);
   const quotationsLoading = useQuotationStore((s) => s.loading);
+  const inquiriesLoaded = useInquiryStore((s) => s.loaded);
   const approvalConfig = useSettingsStore((s) => s.approval);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canConfirmPerm = hasPermission('INQUIRY_CONFIRM');
@@ -227,9 +228,15 @@ export default function QuotationComparePage() {
       content: i18n.t('quotation.compare.confirmResultContent'),
       okText: i18n.t('quotation.compare.confirmResult'),
       cancelText: i18n.t('common.cancel'),
-      onOk: () => {
-        confirmInquiry(inquiry.id);
-        notifySuccess(i18n.t('quotation.compare.confirmResultSuccess'));
+      onOk: async () => {
+        // 必须等结果再报成功：定标写操作会因版本冲突（409）、并发刷新把这条挤出本地缓存
+        // （not_found）或网络失败而落空，未 await 就弹「定标成功」是在替用户伪造结果（R32）。
+        const result = await confirmInquiry(inquiry.id);
+        if (result.success) {
+          notifySuccess(i18n.t('quotation.compare.confirmResultSuccess'));
+        } else if (result.reason !== 'pending') {
+          notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+        }
       },
     });
   };
@@ -284,6 +291,18 @@ export default function QuotationComparePage() {
     }
   };
 
+  // ===== 两份列表尚未落地 =====
+  // 本页三种"没有"的呈现（可对比卡片列表为空 / 未找到该询价单 / 暂无已提交报价）全部
+  // 派生自 inquiries 与 quotations。直达或刷新比价页时这两个列表还在飞，此刻的"空"
+  // 只说明"还没拿到"，不说明"没有"（R30 及其残留）。
+  if (!inquiriesLoaded || !quotationsLoaded || quotationsLoading) {
+    return (
+      <div style={{ textAlign: 'center', padding: 80 }}>
+        <Spin />
+      </div>
+    );
+  }
+
   // ===== 无 inquiryId：可对比询价单卡片列表 =====
   if (!inquiryId) {
     return (
@@ -326,15 +345,7 @@ export default function QuotationComparePage() {
   }
 
   // ===== 无已提交报价 =====
-  // 报价列表还没落地时不能渲染空态：直达或刷新比价页时 `quotationApi.list()` 还在飞，
-  // 此刻 `submittedRows === 0` 只说明"还没拿到"，不说明"没有"（R30）。
-  if (!quotationsLoaded || quotationsLoading) {
-    return (
-      <div style={{ textAlign: 'center', padding: 80 }}>
-        <Spin />
-      </div>
-    );
-  }
+  // 「报价列表还没落地」已在上方统一挡过（R30），这里的空态因此是真的没有提交。
   if (data.submittedRows.length === 0) {
     return (
       <div>

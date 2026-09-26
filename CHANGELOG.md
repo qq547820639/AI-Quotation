@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+### 修复（R32：写操作不 await 就弹成功 + R30 残留的"加载 vs 空"收口）
+
+- **定标/取消在接口失败时给用户伪造结果（高）**：`quotation/compare` 的「确认定标」与
+  `inquiry/detail` 的「取消询价」都是 `onOk: () => { 写操作(id); notifySuccess(成功文案); }` ——
+  不 await、不看 `WriteResult`，所以重复提交被拦、记录被并发刷新挤掉（R28 那台机器）、
+  版本冲突 409、500 这四类落空全部显示成成功。调用面普查（含 `useInquiryStore((s) => s.X)` 的 22 处订阅
+  与 `approval` 页的 `action` 别名）显示 16 个写操作调用点里恰好这 2 个丢弃返回值，其余 14 个均已 await 并分支。
+  两处改为 await + 三分支，与同文件既有的 `handleSubmitApproval` 写法对齐。
+- **防回归判据（零新增依赖）**：启用仓库里已在依赖中的 `@typescript-eslint/no-floating-promises`，
+  按文件纳入 `eslint.config.js`（棘轮档，只列本轮清零的两个页面）。
+  没自写 AST 脚本，因为标准规则判的是"返回值被丢弃"这个类型事实，而按方法名列名单会随 store 加方法静默漏判。
+  全仓开启的代价已实测：该规则在 HEAD `10ac8f8` 命中 78 处（非测试 55 处），
+  且 `src/pages/**/__tests__` 不在 `tsconfig.json` 内会导致类型解析报错 —— 故登记为后续项而非本轮接。
+  牙齿：把定标改回不 await，`eslint . --max-warnings=0` 退出码 1（`232:9`），复位后 0。
+- **`useInquiryStore.loaded` 是个零读者的假承诺，现已接上（R30 残留）**：该字段初值就是 `true`
+  且生产侧从未被读，所以"改它会影响列表页等多处判断"这句登记理由是假的（波及面恒等于零）。
+  现在初值改 `false`、生产模式失败分支也置 `loaded`，报价对比页把三种"没有"
+  （可对比卡片为空 / 未找到该询价单 / 暂无已提交报价）统一挡在
+  `!inquiriesLoaded || !quotationsLoaded || quotationsLoading → Spin` 之后，
+  直达或刷新比价页不再闪一句「未找到该询价单」。补 3 条 store 用例，变异对照（去掉成功分支的 `loaded`）翻红。
+- **E2E 常驻用例**：`exception-scenarios.spec.ts` 新增「定标接口 500：只报失败，不得伪造已确认定标」，
+  含效力断言（响应状态确为 500，排除"根本没发请求"）与反向断言（成功提示里不得出现「已确认定标」）。
+- **R28 残留取证完成**：8 处同形 `notFound()` 短路逐个查调用面 ——
+  `deleteInquiry` 无 UI 调用点（不可达），其余均有 `await` 且落进 `notifyError(... ?? 操作失败)`。
+  因此"同形即同样危险"更正为"同形但调用面已兜住提示"；把提示文案改成精确的
+  「记录已被并发挤掉，请刷新」需要先裁决"本地短路该不该伪装成 ApiError"（现有用例把
+  `toEqual({success:false, reason:'not_found'})` 钉成了基线），属口径决策，未做。
+
 ### 修复（R31：前端容器健康检查永远判不绿）
 
 - **`frontend` 容器永久 `unhealthy`，而服务其实正常（中）**：nginx 只 `listen 80;`（IPv4），

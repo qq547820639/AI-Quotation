@@ -544,3 +544,47 @@ describe('并发刷新与刚创建实体之间的竞态（R28）', () => {
     expect(after?.version).toBe(2);
   });
 });
+
+/**
+ * R30 残留：`loaded` 此前初值就是 true 且全仓零读者，等于一个没人核对过的假承诺。
+ * 现在它有了读者（报价对比页用它区分「还没拿到列表」和「确实没有这张单」），
+ * 语义必须和 useQuotationStore 的同名标记一致，否则直达/刷新比价页会闪一句
+ * 「未找到该询价单」。
+ */
+describe('询价单列表加载状态（R30 残留）', () => {
+  it('初值是「还没加载过」，不是「已加载且为空」', () => {
+    const initial = useInquiryStore.getInitialState();
+    expect(initial.loaded).toBe(false);
+    expect(initial.loading).toBe(false);
+  });
+
+  it('请求在飞时 loading=true 且 loaded=false；落地后 loading=false、loaded=true', async () => {
+    useInquiryStore.setState({ inquiries: [], loading: false, loaded: false });
+    let release: (v: Inquiry[]) => void = () => {};
+    const gate = new Promise<Inquiry[]>((r) => {
+      release = r;
+    });
+    vi.mocked(inquiryApi.list).mockReturnValueOnce(gate);
+
+    const done = useInquiryStore.getState().loadFromApi();
+    const mid = useInquiryStore.getState();
+    expect(mid.loading).toBe(true);
+    expect(mid.loaded).toBe(false);
+
+    release([makeInquiry({ id: 'inq-load-1' })]);
+    await done;
+    const after = useInquiryStore.getState();
+    expect(after.loading).toBe(false);
+    expect(after.loaded).toBe(true);
+    expect(after.getInquiryById('inq-load-1')).toBeDefined();
+  });
+
+  it('加载失败也要把 loaded 置真，否则页面会被永久钉在骨架屏上', async () => {
+    useInquiryStore.setState({ inquiries: [], loading: false, loaded: false });
+    vi.mocked(inquiryApi.list).mockRejectedValueOnce(new Error('network down'));
+    await useInquiryStore.getState().loadFromApi();
+    const s = useInquiryStore.getState();
+    expect(s.loading).toBe(false);
+    expect(s.loaded).toBe(true);
+  });
+});

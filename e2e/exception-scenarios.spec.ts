@@ -1,5 +1,14 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { login, DATA_ROW, tap, tick } from './helpers';
+import {
+  login,
+  DATA_ROW,
+  tap,
+  tick,
+  createAndSendInquiry,
+  submitQuoteViaPortal,
+  chooseSupplierOnCompare,
+  SUPPLIER_A,
+} from './helpers';
 
 /**
  * E2E：异常场景（Task 11）
@@ -12,6 +21,7 @@ import { login, DATA_ROW, tap, tick } from './helpers';
  */
 
 const ADMIN = '周大海'; // u-6 管理员，具备全部权限（含 SUPPLIER_DISABLE / INQUIRY_CANCEL）
+const LEAD = '王志强'; // u-2 采购主管，具备 INQUIRY_CONFIRM（定标）
 const PURCHASER = '李明辉'; // u-1 采购人员，无 INQUIRY_APPROVE / SETTINGS_MANAGE
 const SUP1 = '上海恒远工业设备有限公司'; // sup-1，初始 COOPERATING
 
@@ -207,6 +217,54 @@ test.describe('异常场景', () => {
 
     await expect(page.locator('.ant-message')).toContainText(/数据已被他人修改|冲突|conflict/, {
       timeout: 10000,
+    });
+  });
+
+  test('定标接口 500：只报失败，不得伪造「已确认定标」（R32）', async ({ page }) => {
+    await login(page, LEAD);
+
+    const { inquiryId } = await createAndSendInquiry(page);
+    // 单价 100 × 数量 10 = 1000，低于审批阈值 50000 → 不必走审批即可定标
+    await submitQuoteViaPortal(page, inquiryId, 'sup-2', '100');
+    await submitQuoteViaPortal(page, inquiryId, 'sup-5', '110');
+    await page.goto(`/quotation/compare/${inquiryId}`);
+    await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
+    await chooseSupplierOnCompare(page, SUPPLIER_A);
+
+    await page.route('**/api/inquiries/*/confirm', async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'boom' }),
+      });
+    });
+
+    const confirmBtn = page.getByRole('button', { name: /确认定标|Confirm Award/ });
+    await expect(confirmBtn).toBeVisible({ timeout: 10000 });
+
+    const confirmRes = page.waitForResponse(
+      (res) => new URL(res.url()).pathname.endsWith('/confirm'),
+      { timeout: 15000 },
+    );
+    await confirmBtn.click();
+    await confirmOk(page);
+    // 效力断言：请求确实发出并被拦成 500（与"根本没发请求"的 R28 形态区分开）
+    expect((await confirmRes).status()).toBe(500);
+
+    await expect(page.locator('.ant-message-error').first()).toContainText(
+      /服务器错误|Server error/,
+      { timeout: 10000 },
+    );
+    // 反向断言（本用例的牙齿）：旧实现不 await 写操作结果就弹成功提示，
+    // 接口 500 时用户看到的是「已确认定标」。
+    await expect(
+      page.locator('.ant-message-success').filter({ hasText: /已确认定标|Award confirmed/ }),
+    ).toHaveCount(0);
+
+    // 状态没被改动：重新加载后仍可定标（服务端仍是「报价已完成」）
+    await page.reload();
+    await expect(page.getByRole('button', { name: /确认定标|Confirm Award/ })).toBeVisible({
+      timeout: 15000,
     });
   });
 
