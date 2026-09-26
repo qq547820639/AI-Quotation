@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### 测试（R37 前置取证：撤回一条我自己登记的行为断言）
+
+- **撤回**：R35 那轮登记里写着「偏好写入失败时 Switch 停在用户刚拨的位置，是界面与后端不一致」。
+  本轮把它写成常驻用例 `src/pages/notification/__tests__/index.test.tsx`（3 条）并实测：
+  失败后 `aria-checked` 仍是原值、store 无一位被改写 ⇒ **该症状描述不成立**。开关完全受控于
+  `preferences`（`index.tsx:138`），store 只在成功分支 `set`（`useNotificationStore.ts:124-132`）。
+  真实缺陷降级为「拨了没反应且无任何提示」，仍留作后续项。
+- 这条否证之所以可信：同文件配了**正向对照**（mock 改为 resolve 后同一开关确实变 `false`），
+  排除了"locator 根本不匹配所以永远'没变'"这一类空转。
+- 写这条用例时踩到并修掉的两个自身问题（都记进了登记册）：
+  ① 按"DOM 第 1 个 `.ant-switch` == 某个 key"绑，而真实渲染顺序与 key 名都和我猜的不同
+  （实为 `inquirySent, quotationSubmitted, deadlineReminder, approvalResult`），
+  用例红在**前提**而不是结论 ⇒ 改为四个布尔位全置 true、按"有没有任何位变 false"判，与顺序解耦；
+  ② 用 `as never` 绕类型时 `vitest` 全绿而 `tsc --noEmit` 报 `TS2698`，两个门禁必须分别取码。
+- 门禁读数：`vitest 434 passed (39 files)`、`lint rc=0`、`tsc rc=0`。
+
 ### 门禁（R36 前置：E2E 采信前的"装树 == 锁文件"预检）+ R35 的 E2E 全量复跑
 
 - **补的门禁**：`scripts/check-e2e-install.mjs` 逐包比对 `package-lock.json` 与
