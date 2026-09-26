@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 修复（R31：前端容器健康检查永远判不绿）
+
+- **`frontend` 容器永久 `unhealthy`，而服务其实正常（中）**：nginx 只 `listen 80;`（IPv4），
+  容器内 `localhost` 同时映射 `127.0.0.1` 与 `::1`，busybox `wget` 先试 `::1` 且不回退，
+  于是 `wget --spider http://localhost` rc=1、`http://127.0.0.1` rc=0（容器内实测成对）。
+  后端那条健康检查用 Python `urllib` 所以一直绿（`socket.create_connection` 会逐族回退）。
+  两个 compose 文件的 frontend healthcheck 改指 `127.0.0.1`；未动 nginx 监听族。
+  影响面是所有"看 compose 健康状态判就绪"的脚本（`up --wait`、`depends_on: service_healthy`）。
+  mailpit 的同形写法本轮无镜像、未实测，按未取证登记在 R31 残留，不改。
+
 ### 修复（R21 闭合：门户并发提交让 DB 唯一约束直接穿出 ASGI）
 
 - **并发提交报价时，输掉 check-then-insert 的那一路拿到的是未捕获异常而不是 409（高）**：

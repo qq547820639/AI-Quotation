@@ -54,7 +54,10 @@ services:
       backend:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost"]
+      # R31：必须写 127.0.0.1。容器内 localhost 先解析到 ::1，而 nginx 只 `listen 80;`（IPv4），
+      # busybox wget 不做 v6→v4 回退（Python urllib 会，所以后端那条健康检查一直是绿的），
+      # 于是服务明明 200、容器却永久 unhealthy。
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1"]
       interval: 30s
       timeout: 5s
       retries: 3
