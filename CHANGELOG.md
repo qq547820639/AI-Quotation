@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 全量套件复跑（含 R65 全部凭据改动）：200/5/1/4，抖从 2 格降到 1 格
+
+- 身份先证：镜像建自 `5c922f2`，`git diff --name-only 5c922f2..HEAD` 在 `src/`+`backend/app/` 命中 0 文件 ⇒ 测的确实是 HEAD 应用代码。
+- **5 failed** 仍是 `auth-session-refresh:17` × 5 project（第 25 行写死 `http://localhost`，非默认端口结构必红）⇒ 单列为装置限制。
+- **1 flaky**（上一档是 2）：`core-flow:33/:94` 这次在"全量末尾"总体里都绿；方向与 R65 一致，但同轮里 `5c922f2` 的序号修复也在场，**两个变量仍未分离**，不归因。
+- 新剩那一格反过来印证 R64 不是孤例：flaky 是 `inquiry-flow:47`——无 id 的**对比选择首屏**读 store 不补拉，
+  而 `useQuotationFreshness` 在 `!inquiryId` 时故意早退（防首屏变轮询）⇒ 登记 R67：首屏要"进入即拉一次"，但仍只能一次。
+- 清场：自建 project 残留 0，`qqi-final-*` 未动。
+
 ### R65 续：core-flow 再换三处写落地凭据，判据站点 20→17
 
 - 两个用例的"提交审批"改等 `POST /api/inquiries/:id/submit-approval`、"确认定标"改等 `.../confirm`（`<300` 才算落地）。
