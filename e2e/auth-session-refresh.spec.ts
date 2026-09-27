@@ -14,36 +14,49 @@ async function expireAccessToken(page: import('@playwright/test').Page) {
 }
 
 test.describe('Access Token 自动续期', () => {
-  test('token 过期后刷新页面：自动续期并重放请求，不被踢回登录页', async ({ page }) => {
-    await login(page, '李明辉');
+  // R66：这一格验的是"默认端口下 Origin 被序列化成 http://localhost"这一形状（R9 白名单要吃的就是它）。
+  // 换宿主端口起第二套栈时它结构必红（origin 会带 :port），于是每轮全量白报 5 条"产品红"。
+  // 前提放在 beforeEach 里声明并跳过（本仓的 playwright/no-conditional-in-test 也要求这么写）；
+  // 关键是**不放宽断言** —— 断言一旦改弱，R9 那条守卫就没有人在真浏览器里守着了。
+  test.describe('需默认端口（:80）', () => {
+    test.beforeEach(async ({ baseURL }) => {
+      const port = baseURL ? new URL(baseURL).port : '';
+      test.skip(!!port && port !== '80', '非默认端口部署：本格需在 :80 上跑，见登记册 R66');
+    });
 
-    // 前提：会话有效（否则下面的"未跳登录页"可能因为压根没登录而假绿）
-    await expect(page).toHaveURL(/\/dashboard/);
+    test('token 过期后刷新页面：自动续期并重放请求，不被踢回登录页', async ({ page }) => {
+      await login(page, '李明辉');
 
-    const browserOrigin = await page.evaluate(() => window.location.origin);
-    // 浏览器对默认端口 http://localhost:80 序列化为不带端口——后端同源校验要吃的就是这个值
-    expect(browserOrigin).toBe('http://localhost');
+      // 前提：会话有效（否则下面的"未跳登录页"可能因为压根没登录而假绿）
+      await expect(page).toHaveURL(/\/dashboard/);
 
-    await expireAccessToken(page);
+      const browserOrigin = await page.evaluate(() => window.location.origin);
+      // 浏览器对默认端口 http://localhost:80 序列化为不带端口——后端同源校验要吃的就是这个值
+      expect(browserOrigin).toBe('http://localhost');
 
-    const refreshResponsePromise = page.waitForResponse('**/api/auth/refresh', { timeout: 30000 });
-    await page.goto('/inquiry/list');
-    const refreshResponse = await refreshResponsePromise;
+      await expireAccessToken(page);
 
-    // 真发生了续期，且后端按同源放行了（403 = Origin 校验把续期挡在门外）
-    // 注：Origin 属浏览器托管头，Playwright 的 request.headers() 不暴露它，
-    // 故以"浏览器实际序列化出的 origin"（上一条断言）+ 续期返回 200 作为同源放行的证据。
-    expect(refreshResponse.status()).toBe(200);
+      const refreshResponsePromise = page.waitForResponse('**/api/auth/refresh', {
+        timeout: 30000,
+      });
+      await page.goto('/inquiry/list');
+      const refreshResponse = await refreshResponsePromise;
 
-    // 原本 401 的请求被自动重放并成功渲染
-    await expect(page).toHaveURL(/\/inquiry\/list/);
-    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 30000 });
+      // 真发生了续期，且后端按同源放行了（403 = Origin 校验把续期挡在门外）
+      // 注：Origin 属浏览器托管头，Playwright 的 request.headers() 不暴露它，
+      // 故以"浏览器实际序列化出的 origin"（上一条断言）+ 续期返回 200 作为同源放行的证据。
+      expect(refreshResponse.status()).toBe(200);
 
-    // 本地 token 已换成新值，会话没被清
-    const storedToken = await page.evaluate(() => localStorage.getItem('procurement_token'));
-    expect(storedToken).toBeTruthy();
-    expect(storedToken).not.toBe('expired-access-token');
-    expect(page.url()).not.toContain('/login');
+      // 原本 401 的请求被自动重放并成功渲染
+      await expect(page).toHaveURL(/\/inquiry\/list/);
+      await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 30000 });
+
+      // 本地 token 已换成新值，会话没被清
+      const storedToken = await page.evaluate(() => localStorage.getItem('procurement_token'));
+      expect(storedToken).toBeTruthy();
+      expect(storedToken).not.toBe('expired-access-token');
+      expect(page.url()).not.toContain('/login');
+    });
   });
 
   test('反向对照：缺少 refresh cookie 时续期失败，仍然要正常登出', async ({ page, context }) => {
