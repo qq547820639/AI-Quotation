@@ -96,10 +96,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
-        with:
-          name: dist
-          path: dist/
+      # 这里原本有一步 upload-artifact（name: dist）。2026-09-27 一手日志把它判死了：
+      # `##[error]Failed to CreateArtifact: Artifact storage quota has been hit.`（PR #5 评论
+      # 21:06:39，Production Build 步位 `failure #6 Run actions/upload-artifact`，
+      # 而 #4 npm ci、#5 npm run build 都是 success）——账号级 500 MB 产物存储满档
+      # （GitHub Free，含所有私有仓库），不是权限、不是磁盘、不是构建。
+      # 删掉而不是加重试：这一步的消费者数量为零，是结构面读出来的
+      # （按 YAML 枚举 steps[].uses 共 19 条，含 download 的 0 条），
+      # 而 compose 侧的镜像构建自己跑 npm ci + npm run build（Dockerfile.frontend:4-12）。
+      # 留着它只有代价（4.4 MB×每轮）没有收益，正是把配额吃满的那一类。
       - name: 失败时把现场贴回 PR（本作业的日志要鉴权才读得到）
         # 为什么要这一步：build 作业连续两次在同一处红（19:08:26→19:09:23、19:45:30→19:46:27，都是 57 s），
         # 而同一台 runner、同一棵树上诊断档镜像跑的 `npm run build` 是 rc=0（PR #5 19:51:37 那条评论），
@@ -194,11 +199,27 @@ jobs:
               echo '- 步位（`steps[]` 的 conclusion，failure 那一行就是出事的步）：'
               gh api "/repos/$GITHUB_REPOSITORY/actions/jobs/$JID" \
                 --jq '.steps[] | "  - \(.conclusion) #\(.number) \(.name)"' 2>&1
-              echo '- 日志结尾（已剥 ANSI）：'
+              echo '- 日志结尾（已剥 ANSI，兜底：时间窗没切出东西时看这里）：'
               L=/tmp/job-$JID.log
               L2=/tmp/job-$JID.clean.log
               gh api --allow-escape-sequences "/repos/$GITHUB_REPOSITORY/actions/jobs/$JID/logs" > "$L" 2>&1
               sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' "$L" > "$L2"
+              # 失败步的**原文块**：步名与日志组头对不上（run 步的组头是 `##[group]Run <脚本首行>`，
+              # 不带自定义 name），所以不靠名字匹配，靠 `steps[]` 的 started_at/completed_at 切时间窗。
+              # 上一轮就是靠尾巴 70 行才漏掉 gitleaks 那一步说了什么（步位判到了 #5，文字没带回来）。
+              W=$(gh api "/repos/$GITHUB_REPOSITORY/actions/jobs/$JID" \
+                --jq '.steps[] | select(.conclusion == "failure") | "\(.started_at // "")\u001f\(.completed_at // "")\u001f\(.name)"' 2>/dev/null)
+              while IFS=$'\037' read -r W0 W1 WNAME; do
+                case "$W0" in '') [ -z "$WNAME" ] || echo "（失败步 ${WNAME} 没有 started_at，切不出时间窗）"; continue ;; esac
+                echo "- 失败步原文（${WNAME}｜时间窗 ${W0} → ${W1:-无上限}，最多 120 行）："
+                echo '```'
+                awk -v a="$W0" -v b="${W1:-9999}" 'BEGIN{sa=substr(a,1,19); sb=substr(b,1,19); n=0}
+                  { t=substr($0,1,19); if (length(t)>=19 && t>=sa && t<=sb) { print; n++; if (n>=120) exit } }' "$L2"
+                echo '```'
+              done <<EOW
+          $W
+          EOW
+              echo '- 日志结尾（已剥 ANSI；时间窗切不出来时看这里）：'
               echo '```'
               echo "（日志共 $(wc -l < "$L2") 行，原始 $(wc -c < "$L") 字节）"
               echo '-- 全部 ##[error] 行（最多 15 条）--'
@@ -491,6 +512,9 @@ jobs:
             playwright-report/
             test-results/
           if-no-files-found: ignore
+          # 默认 90 天是这次配额满档的主要来源（一份带 trace 的报告几十 MB，取证轮一晚跑十几遍）。
+          # 报告只用于当场归因，7 天足够回看；账号存储 500 MB 是所有私有仓库共用的。
+          retention-days: 7
       - name: Dump compose logs on failure
         if: failure()
         run: |
