@@ -329,6 +329,12 @@ jobs:
         env:
           # E2E 登录必须与后端种子用户密码一致（compose 已注入强 DEMO_USER_PASSWORD）。
           DEMO_USER_PASSWORD: ${{ format('ci-e2e-{0}-strong-password', github.run_id) }}
+          # 抖动归因：默认档仍是 config 里的 1 次重试（main 上的读数与历史可比）。
+          # 只有从 qoder/ci-evidence-0928 这条取证分支开出来的 PR 才关成 0——那条分支上
+          # "渲染竞速断言"推广了 26 个站点，需要一次"首跑即绿"的读数才能归因；
+          # 判 head_ref 而不是 ref_name，因为 pull_request 事件下 ref_name 是 refs/pull/N/merge。
+          # 即便这条误合进 main，条件不命中也只是回到 1，不会把主线门禁改松或改严。
+          PLAYWRIGHT_RETRIES: ${{ github.head_ref == 'qoder/ci-evidence-0928' && '0' || '1' }}
         run: npx playwright test --reporter=html,list
       - name: Upload Playwright report on failure
         if: failure()

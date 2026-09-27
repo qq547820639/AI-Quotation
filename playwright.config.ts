@@ -1,5 +1,14 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// retries 默认 1：上面 workers 那条实测里，8 个首跑抖动正是靠这一次重试兜住的。
+// 但代价是"抖动到底修没修好"这个问题在 retries>0 的跑批里结构上无法回答——红了会再跑一次，
+// 绿了看不出是首跑就绿还是重试才绿。所以留一个环境变量口子（PLAYWRIGHT_RETRIES=0 即归因跑）。
+// 只认非负整数字符串，其余一律退回默认：CI 表达式未命中分支时会传进空串，
+// 而 Number('') === 0 —— 不挡住就等于把默认档悄悄改没了。
+const DEFAULT_RETRIES = 1;
+const rawRetries = process.env.PLAYWRIGHT_RETRIES;
+const retries = rawRetries && /^\d+$/.test(rawRetries) ? Number(rawRetries) : DEFAULT_RETRIES;
+
 export default defineConfig({
   testDir: './e2e',
   // 起跑前先验"装树 == 锁文件"（见 e2e/global-setup.ts 的理由）：
@@ -17,7 +26,7 @@ export default defineConfig({
   // 这只放宽挂钟预算，不降低任何断言强度。
   timeout: 60_000,
   expect: { timeout: 10000 },
-  retries: 1,
+  retries,
   reporter: 'html',
   use: {
     baseURL: 'http://localhost:80',
