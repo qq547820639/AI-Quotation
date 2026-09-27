@@ -267,7 +267,11 @@ export default function InquiryCreatePage() {
       cancelText: t('inquiry.create.conflictReload'),
       okType: 'danger',
       onOk: () => {
-        draft.overwrite(buildSnapshot(), editingId);
+        // R51-A：草稿只存本机，"已用本地内容覆盖"必须以写落地为前提
+        if (!draft.overwrite(buildSnapshot(), editingId)) {
+          notifyError(t('storage.writeFailed'));
+          return;
+        }
         notifySuccess(t('inquiry.create.conflictOverwritten'));
       },
       onCancel: () => {

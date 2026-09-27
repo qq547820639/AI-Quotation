@@ -174,5 +174,25 @@ describe('useInquiryDraft', () => {
       expect(result.current.lastError).toBeNull();
       expect(result.current.status).toBe('saved');
     });
+
+    it('overwrite 把写失败传出去（冲突弹窗那条"已用本地内容覆盖"要有凭据）', () => {
+      // R51-A：改前 overwrite 返回 void 且把 saveNow 的布尔丢掉，
+      // 于是 create/index.tsx 的覆盖分支无论落没落地都报成功。
+      const boom = new Error('QuotaExceededError');
+      const spy = makeWritesFail(boom);
+      try {
+        const { result } = renderHook(() => useInquiryDraft());
+        let ok: boolean | undefined;
+        act(() => {
+          ok = result.current.overwrite({ subject: '覆盖' });
+        });
+        expect(ok).toBe(false);
+        expect(result.current.conflict).toBe(false); // 冲突标记仍按原语义清掉
+        expect(result.current.status).toBe('failed');
+        expect(result.current.lastError).toBe(boom.message);
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });

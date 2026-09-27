@@ -46,8 +46,8 @@ export interface UseInquiryDraftResult {
   saveNow: (snapshot: unknown, editingId?: string) => boolean;
   /** 冲突时重新加载本地最新草稿（清冲突标记） */
   reload: () => void;
-  /** 冲突时用本地覆盖（清冲突标记并重新保存） */
-  overwrite: (snapshot: unknown, editingId?: string) => void;
+  /** 冲突时用本地覆盖（清冲突标记并重新保存）；返回值即本次持久化是否落地 */
+  overwrite: (snapshot: unknown, editingId?: string) => boolean;
   clearConflict: () => void;
   /** 保存为询价模板 */
   saveAsTemplate: (name: string, template: InquiryTemplate) => boolean;
@@ -118,9 +118,10 @@ export function useInquiryDraft(): UseInquiryDraftResult {
   }, []);
 
   const overwrite = useCallback(
-    (snapshot: unknown, editingId?: string) => {
+    (snapshot: unknown, editingId?: string): boolean => {
       setConflict(false);
-      saveNow(snapshot, editingId);
+      // 回执必须传出去：调用方（create 页的冲突弹窗）正是拿它决定报"已覆盖"还是报失败的
+      return saveNow(snapshot, editingId);
     },
     [saveNow],
   );

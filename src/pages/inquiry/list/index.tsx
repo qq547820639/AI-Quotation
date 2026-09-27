@@ -416,7 +416,12 @@ export default function InquiryListPage() {
       notifyError(t('inquiry.savedViews.nameRequired'));
       return;
     }
-    saveView(name, serializeFilter(applied));
+    // R51-A：这份视图只有本机这一份，写没成就只在当前页面里活着、刷新即丢。
+    // 失败时不关弹窗、不清输入，用户腾出空间后可以直接重试。
+    if (!saveView(name, serializeFilter(applied)).success) {
+      notifyError(t('storage.writeFailed'));
+      return;
+    }
     notifySuccess(t('inquiry.savedViews.saved', { name }));
     setViewModalOpen(false);
     setViewName('');
@@ -428,7 +433,10 @@ export default function InquiryListPage() {
   };
 
   const handleSetDefaultView = (view: SavedFilterView<SavedViewFilter>) => {
-    setViewDefault(view.id);
+    if (!setViewDefault(view.id).success) {
+      notifyError(t('storage.writeFailed'));
+      return;
+    }
     notifySuccess(t('inquiry.savedViews.defaultSet', { name: view.name }));
   };
 
@@ -438,7 +446,11 @@ export default function InquiryListPage() {
       content: t('inquiry.savedViews.confirmRemove', { name: view.name }),
       danger: true,
       onOk: () => {
-        removeSavedView(view.id);
+        // 删不干净也要说：本机写失败时这条视图刷新后会回来，此时报"已删除"就是替用户撒谎
+        if (!removeSavedView(view.id).success) {
+          notifyError(t('storage.writeFailed'));
+          return;
+        }
         notifySuccess(t('inquiry.savedViews.removed'));
       },
     });
