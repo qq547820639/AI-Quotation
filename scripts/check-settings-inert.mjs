@@ -138,6 +138,8 @@ function analyze(prog) {
   const wide = new Map();
   const testOnly = new Map();
   const uploaded = new Set();
+  /** 通知键在**测试面**的出现位点：宽面排除测试面之后，这个计数器就是"夹具真的写过那个键"的证据 */
+  const testLiteral = new Map();
   const push = (m, k, site) => {
     if (!m.has(k)) m.set(k, []);
     m.get(k).push(site);
@@ -226,6 +228,7 @@ function analyze(prog) {
               ? node.name.text
               : null;
         if (key && !isTestFile(rel)) push(wide, `notifications.${key}`, line(sf, node));
+        else if (key) push(testLiteral, `notifications.${key}`, line(sf, node));
       }
       ts.forEachChild(node, walk);
     };
@@ -244,7 +247,7 @@ function analyze(prog) {
   });
   const tally = {};
   for (const r of rows) tally[r.bucket] = (tally[r.bucket] ?? 0) + 1;
-  return { rows, tally, denominator: units.all.length, inertDeclared: INERT_DECLARED };
+  return { rows, tally, denominator: units.all.length, inertDeclared: INERT_DECLARED, testLiteral };
 }
 
 function enclosingFn(node) {
@@ -379,7 +382,7 @@ export function toAppSettings(s: Settings) {
 }
 const DEFAULTS: Settings = {
   readNarrow: 'a', viaSelector: 'b', inertPlain: 'c', dupNameUnrelated: 'd', uploadedNoReader: 'e',
-  notifications: { timeoutAlert: true, inertKey: true },
+  notifications: { timeoutAlert: true, inertKey: true, testOnlyKey: true },
 };
 export default DEFAULTS;
 `,
@@ -409,6 +412,14 @@ export const c = cfg[KEYS[0]];
 export function use(i: Inquiry) { return i.dupNameUnrelated; }
 `,
     );
+    // 只出现在测试面的通知键：常驻用例常把键名当"禁止上行"的断言串写进去，
+    // 那类出现不是读者 ⇒ 宽面必须把测试面排除在外（本轮真被它误判过一次"清单已过期"）。
+    W(
+      'src/__tests__/fixture.test.ts',
+      `const forbidden = ['testOnlyKey'];
+export const n = forbidden.length;
+`,
+    );
     const parsed = ts.parseJsonConfigFileContent(
       {
         compilerOptions: {
@@ -427,6 +438,7 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
         join(dir, 'src/pages/settings/index.tsx'),
         join(dir, 'src/consumer.ts'),
         join(dir, 'src/other.ts'),
+        join(dir, 'src/__tests__/fixture.test.ts'),
       ],
       { ...parsed.options, noEmit: true },
     );
@@ -467,6 +479,7 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
       'notifications.inertKey': 'local-only',
       notifications: 'local-only',
       uploadedNoReader: 'uploaded-only',
+      'notifications.testOnlyKey': 'inert',
     };
     const bad = [];
     for (const [unit, expect] of Object.entries(want)) {
@@ -478,8 +491,8 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
         );
       }
     }
-    if (res.denominator !== 8)
-      bad.push(`分母期望 8（6 顶层含 notifications 容器 + 2 通知键），实际 ${res.denominator}`);
+    if (res.denominator !== 9)
+      bad.push(`分母期望 9（6 顶层含 notifications 容器 + 3 通知键），实际 ${res.denominator}`);
     // 必开火 ①：未声明的惰性单位 ⇒ 判红
     const missing = judge(
       { rows: res.rows, denominator: res.denominator },
@@ -501,7 +514,7 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
     // 不开火：合规侧全部声明到位 ⇒ 零红
     const okLedger = judge(
       { rows: res.rows, denominator: res.denominator },
-      { inertPlain: '夹具', dupNameUnrelated: '夹具' },
+      { inertPlain: '夹具', dupNameUnrelated: '夹具', 'notifications.testOnlyKey': '夹具' },
       '夹具',
       {
         uploadedNoReader: {
@@ -541,6 +554,20 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
     );
     if (!loStale.some((e) => e.includes('readNarrow') && e.includes('清单已过期')))
       bad.push('必开火失败：把已上行的单位签成 local-only，没被判"清单已过期" ⇒ 台账可以单向撒谎');
+    // 宽面只吃生产侧：testOnlyKey 只在 __tests__ 里出现 ⇒ 必须仍是 inert。
+    // 这条臂的由来是本轮真踩的坑：我自己的用例把 'todoReminder' 当"禁止上行"的断言串写进去，
+    // 宽面把它读成读者，惰性台账被误判"清单已过期"。配一支夹具失效对照，
+    // 防的是"键名根本没出现在夹具里，于是它当然 inert"这种空转绿。
+    const tOnly = res.rows.find((r) => r.unit === 'notifications.testOnlyKey');
+    if (!tOnly) bad.push('分母里没有 notifications.testOnlyKey ⇒ 测试面夹具没被扫到');
+    else {
+      if (tOnly.bucket !== 'inert')
+        bad.push(
+          `宽面吃了测试面：notifications.testOnlyKey 判成 ${tOnly.bucket}（wide=${tOnly.wideSites.join(',')}）`,
+        );
+      if (!(res.testLiteral.get('notifications.testOnlyKey') ?? []).length)
+        bad.push('夹具失效：testOnlyKey 在测试面一次都没出现 ⇒ 这条臂等于没测');
+    }
     // 参数闸门：未知旗标必须退 2，合法旗标必须不退 2，且 --self-test 自己在白名单里
     if (argFault(['--self-tset']) === null)
       bad.push('必开火失败：拼错的 --self-test 没被拒 ⇒ 假绿形状还在');
@@ -620,7 +647,7 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
       .join(' ');
     console.log(
       `✔ 自检通过：夹具 ${res.denominator} 单位四档全对（含"同名不同物不算读者""编辑面不算读者""计算下标靠宽面救回"三极性）、` +
-        `必开火各臂（未声明的惰性 / 谎报惰性 / local-only 未签字 / local-only 谎报 / 跨侧引用三态 / 参数闸门）全开、合规侧零红；` +
+        `必开火各臂（未声明的惰性 / 谎报惰性 / local-only 未签字 / local-only 谎报 / 跨侧引用三态 / 参数闸门 / 宽面只吃生产侧（含夹具非恒真对照））全开、合规侧零红；` +
         `真实仓库 ${real.denominator} 单位（${t}）与台账一致`,
     );
     return 0;
