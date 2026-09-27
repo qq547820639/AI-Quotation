@@ -54,7 +54,15 @@ test.describe('Access Token 自动续期', () => {
     const responsePromise = page
       .waitForResponse('**/api/auth/refresh', { timeout: 30000 })
       .catch(() => null);
-    await page.goto('/inquiry/list');
+    // goto 的"被另一跳打断"要吞掉：本用例的落点**就是**这次被打断的跳转。
+    // 常驻套件里这条已抖过两轮（[webkit]，同一格、同一读法：
+    // `Navigation to ".../inquiry/list" is interrupted by another navigation to ".../login"`）——
+    // 客户端拿到 401 后跳 /login 抢在 load 之前，Playwright 就把 goto 判成失败。
+    // 吞掉的只是这一次导航错误；后面三条（必须观测到续期请求且返回 401、停在 /login、看不到数据）
+    // 仍要求真发生，不会因此把"根本没尝试续期"读成绿。
+    await page.goto('/inquiry/list').catch(() => {
+      /* 守卫的 /login 跳转抢在前面，正是本用例要的结果 */
+    });
     const refreshResponse = await responsePromise;
 
     // 没有可用的 refresh token → 续期必须失败（401），不允许被当成同源而放行。
