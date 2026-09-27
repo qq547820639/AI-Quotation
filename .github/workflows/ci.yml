@@ -458,60 +458,48 @@ jobs:
         run: |
           npm run e2e:toast:check
           node scripts/check-e2e-toast-assertions.mjs --self-test
-      - name: MinIO 镜像源探活并把可达的那个交给 compose（带原文与对照）
-        # 一手起因：上一轮 compose 红在 `Error response from daemon: pull access denied for
-        # minio/mc, repository does not exist or may require 'docker login'`
-        # （PR #5 评论 21:16:11 的失败步原文块，步位 failure #10）。
-        # 再一手：我第一版探活（PR #5 评论 21:38:36）四个候选全 rc=1，但它把 stderr 丢了
-        # （`docker pull -q … >/dev/null 2>&1`），于是"全拉不到"这个读数**不能判**是
-        # "镜像没了"还是"这台 runner 的匿名拉取被限流"——两者对 compose 的含义完全不同。
-        # 所以这一版：① 每个候选都留最后一行原文；② 加两支对照（alpine 与 postgres:16，
-        # 后者本来就是 compose 要的服务）——对照开火（能拉）就说明 Hub 可达，
-        # minio 拉不到才是镜像源侧的事；对照也拉不到就直接读出限流/登录要求。
-        # ③ 候选里补一个我本机确实存在过的固定 tag（`docker images` 里躺着
-        # minio/minio:RELEASE.2025-04-22T22-12-26Z），用来区分"latest 这个 tag 没了"
-        # 与"整个仓库没了"。
-        # 选中的仍经 GITHUB_ENV 交给 compose 的 ${MINIO_IMAGE:-…}/${MC_IMAGE:-…}；
-        # 全不可达时不覆盖默认值——红得和上一轮一样可读，不把前提悄悄换掉。
+      - name: 自建 MinIO 镜像（GitHub release 资产＋sha256 校验）并交给 compose
+        # 为什么自建（三条一手读数，全在 PR #5）：
+        #  - 21:50:22 探活 v2：同一台 runner 上 `alpine:3.20` 与 `postgres:16` 都 rc=0，
+        #    而 `minio/minio:latest` 与固定 tag `minio/minio:RELEASE.2025-04-22T22-12-26Z`
+        #    全回 `pull access denied … repository does not exist or may require 'docker login'`
+        #    ⇒ 不是匿名限流（对照能拉），是整个仓库在 Docker Hub 上不再公开；
+        #    ghcr.io/minio/minio 回 denied、quay.io/minio/minio 回 unauthorized，
+        #    而 `quay.io/api/v1/repository?namespace=minio&public=true` 列出的 69 个仓库里没有 minio/mc。
+        #  - 官方二进制站也下了：`dl.min.io/server/minio/release/linux-amd64/minio` 与
+        #    `dl.min.io/client/mc/release/linux-amd64/mc` 都返回 HTTP 410 Gone（本机 curl -I）。
+        #  - GitHub release 仍公开且有 `.sha256sum`：minio server RELEASE.2025-09-07T16-13-09Z
+        #    （更新的 RELEASE.2025-10-15T17-29-55Z 的 assets 数是 0，所以不取最新）与
+        #    mc RELEASE.2025-08-13T08-35-41Z；两者的 sha256 已在 .ci/Dockerfile.minio 里钉死并在构建内校验。
+        # 语义选择：不换成别的 S3 实现、也不关掉 S3——这条 E2E 场地要证的正是生产形态，
+        # 而 compose 的两处调用（健康检查 `mc ready local`、`mc alias set` + `mc mb`）
+        # 在这个自建镜像上逐字跑通过（本机一手：容器内 `mc ready local` 回
+        # "The cluster 'local' is ready"；`mc mb` 建桶成功；对象写→读→删往返 OK）。
+        # 失败时不覆盖变量：compose 仍按 `${MINIO_IMAGE:-minio/minio:latest}` 的默认值跑，
+        # 于是红和上一轮同形可读，不会把前提悄悄换掉。
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set +e
-          : >/tmp/pullres.txt
-          probe() {
-            rc_line=""
-            timeout 180 docker pull "$1" >/tmp/pull.out 2>&1
-            rc=$?
-            tail -1 /tmp/pull.out | tr -d '\r' > /tmp/pull.last
-            echo "$rc|$1|$(cat /tmp/pull.last)" >> /tmp/pullres.txt
-            return $rc
-          }
-          for img in alpine:3.20 postgres:16; do probe "$img"; done
-          for img in minio/minio:latest \
-                     minio/minio:RELEASE.2025-04-22T22-12-26Z \
-                     minio/mc:latest \
-                     ghcr.io/minio/minio:latest \
-                     quay.io/minio/minio:latest; do
-            probe "$img"
-          done
-          MI=$(awk -F'|' '$1==0 && $2 ~ /minio.minio/ {print $2; exit}' /tmp/pullres.txt)
-          MCI=$(awk -F'|' '$1==0 && $2 ~ /minio.mc/ {print $2; exit}' /tmp/pullres.txt)
-          # minio 的服务镜像里自带 mc：compose 自己的 healthcheck 就在用 `mc ready local`
-          # （docker-compose.yml:160），所以 mc 全拉不到时退回服务镜像跑那条 entrypoint。
-          if [ -z "$MCI" ] && [ -n "$MI" ]; then MCI="$MI"; fi
+          docker build -f .ci/Dockerfile.minio -t qqi-minio:ci .ci > /tmp/mbuild.log 2>&1
+          rc=$?
           {
-            echo '### MinIO 镜像源探活 v2（一手：rc + 原文尾行 + 两支对照）'
-            echo "- 选定 MINIO_IMAGE=${MI:-（候选全拉不到，compose 用默认值）}"
-            echo "- 选定 MC_IMAGE=${MCI:-（候选全拉不到，compose 用默认值）}"
-            echo '- 逐条 `rc|镜像|输出最后一行`（前两条是对照：alpine 与 postgres:16）：'
+            echo '### 自建 MinIO 镜像（runner 侧一手）'
+            echo "- docker build rc=$rc"
+            echo '- 构建输出结尾 20 行（含镜像内的 `minio --version` / `mc --version` 与 sha256sum -c 的结果）：'
             echo '```'
-            cat /tmp/pullres.txt
+            tail -20 /tmp/mbuild.log
             echo '```'
           } > /tmp/minio.md
+          if [ "$rc" = "0" ]; then
+            echo "MINIO_IMAGE=qqi-minio:ci" >> "$GITHUB_ENV"
+            echo "MC_IMAGE=qqi-minio:ci" >> "$GITHUB_ENV"
+            echo "- 已导出 MINIO_IMAGE/MC_IMAGE=qqi-minio:ci" >> /tmp/minio.md
+          else
+            echo "- 构建失败：不覆盖变量，compose 用默认值（红会与上一轮同形）" >> /tmp/minio.md
+          fi
           cat /tmp/minio.md
-          [ -n "$MI" ] && echo "MINIO_IMAGE=$MI" >> "$GITHUB_ENV"
-          [ -n "$MCI" ] && echo "MC_IMAGE=$MCI" >> "$GITHUB_ENV"
           PR=""
           if [ -n "$HEAD_REF" ]; then
             PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_REF" --state open --json number --jq '.[0].number' 2>/dev/null)

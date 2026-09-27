@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint . --max-warnings=0",
     "gates": "node scripts/check-gates.mjs",
+    "minio:image": "docker build -f .ci/Dockerfile.minio -t qqi-minio:ci .ci",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\" \"*.{json,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,md}\"",

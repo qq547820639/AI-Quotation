@@ -145,6 +145,12 @@ services:
     restart: unless-stopped
 
   # P0：对象存储（MinIO，S3 兼容）。可选服务：可通过置空 S3_* 环境变量禁用（后端回退本地 UPLOAD_DIR）。
+  # 镜像来源注意（2026-09-27 一手）：Docker Hub 上的 minio/minio 与 minio/mc 已不再匿名公开
+  # （CI 上同一 runner 拉 alpine/postgres 成功而这两个仓库回 `pull access denied … repository
+  # does not exist`，固定 tag 也一样；dl.min.io 的 release 路径返回 HTTP 410）。
+  # 因此 CI 用 `.ci/Dockerfile.minio` 从 GitHub release 的、经 sha256 校验的官方资产自建镜像，
+  # 再经下面两个 ${VAR:-默认} 覆盖进来。本机/dev 同样可用：
+  #   npm run minio:image && MINIO_IMAGE=qqi-minio:ci MC_IMAGE=qqi-minio:ci docker compose up -d
   minio:
     image: ${MINIO_IMAGE:-minio/minio:latest}
     command: server /data --console-address ":9001"
