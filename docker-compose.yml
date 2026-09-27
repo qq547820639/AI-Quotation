@@ -146,7 +146,7 @@ services:
 
   # P0：对象存储（MinIO，S3 兼容）。可选服务：可通过置空 S3_* 环境变量禁用（后端回退本地 UPLOAD_DIR）。
   minio:
-    image: minio/minio:latest
+    image: ${MINIO_IMAGE:-minio/minio:latest}
     command: server /data --console-address ":9001"
     expose:
       - "9000"
@@ -167,7 +167,7 @@ services:
   # P0：MinIO 存储桶初始化（一次性）。等待 minio 就绪后创建 S3_BUCKET（幂等，--ignore-existing）。
   # 可选：置空 S3_BUCKET 或定位为可选时，该服务可同样被禁用（minio 未启用时后端走本地 UPLOAD_DIR）。
   minio-init:
-    image: minio/mc:latest
+    image: ${MC_IMAGE:-minio/mc:latest}
     depends_on:
       minio:
         condition: service_healthy

@@ -320,6 +320,14 @@ jobs:
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0 (node24)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 关掉动作内部的 sarif 产物上传。一手日志（PR #5 评论 21:16:11 的失败步原文块）：
+          # gitleaks 自己扫得干干净净（`30 commits scanned.` / `no leaks found`），紧接着死在
+          # 它替我上传 sarif 的那一下：`Failed to CreateArtifact: Artifact storage quota has been hit.`
+          # 账号级 500 MB 满档不是这条门禁该判红的事，也不该由我修；扫描本身的判定
+          # （`--exit-code=2`，命中泄漏即红）一个字没动。
+          # 开关判据一手重开：src/index.js:24 读 GITLEAKS_ENABLE_UPLOAD_ARTIFACT=="false"，README:80 同名。
+          # 代价：sarif 不再作为 artifact 留档（命中时仍写进作业 summary）。
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
       - name: Python SAST (bandit)
         run: |
           cd backend && pip install bandit
@@ -443,6 +451,52 @@ jobs:
         run: |
           npm run e2e:toast:check
           node scripts/check-e2e-toast-assertions.mjs --self-test
+      - name: MinIO 镜像源探活并把可达的那个交给 compose（只报读数，不改判定）
+        # 一手起因：上一轮 compose 红在 `Error response from daemon: pull access denied for
+        # minio/mc, repository does not exist or may require 'docker login'`
+        # （PR #5 评论 21:16:11 的失败步原文块，步位 failure #10）。
+        # 为什么这一步必须在 runner 上探而不是本机：这台机器对 Docker Hub 两条路都不通
+        # （registry-1.docker.io 的 manifest 与 hub.docker.com 的 API 一律连不上，
+        # 连 alpine:latest 都取不到），本机探出来的"拉不到"是网络盲区，不是"镜像不存在"。
+        # 候选是写死的白名单；选中的经 GITHUB_ENV 交给 compose 的 ${MINIO_IMAGE:-…}/${MC_IMAGE:-…}
+        # （两行默认值就是原镜像名，不设变量时行为一字不变）。全拉不到时不覆盖——
+        # compose 仍按默认值跑，红得和上一轮一样可读，不会把前提悄悄换掉。
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set +e
+          : >/tmp/pullres.txt
+          for img in minio/minio:latest quay.io/minio/minio:latest minio/mc:latest quay.io/minio/mc:latest; do
+            timeout 150 docker pull -q "$img" >/dev/null 2>&1
+            echo "$? $img" >> /tmp/pullres.txt
+          done
+          MI=$(awk '$1==0 && $2 ~ /minio.minio/ {print $2; exit}' /tmp/pullres.txt)
+          MCI=$(awk '$1==0 && $2 ~ /minio.mc/ {print $2; exit}' /tmp/pullres.txt)
+          # minio 的服务镜像里自带 mc：compose 自己的 healthcheck 就在用 `mc ready local`
+          # （docker-compose.yml:160），所以 mc 全拉不到时退回服务镜像跑那条 entrypoint。
+          if [ -z "$MCI" ] && [ -n "$MI" ]; then MCI="$MI"; fi
+          {
+            echo '### MinIO 镜像源探活（一手，runner 侧）'
+            echo "- MINIO_IMAGE=${MI:-（候选全拉不到，compose 用默认值）}"
+            echo "- MC_IMAGE=${MCI:-（候选全拉不到，compose 用默认值）}"
+            echo '- 逐个 rc（0=可拉，非 0=不可拉）：'
+            echo '```'
+            cat /tmp/pullres.txt
+            echo '```'
+          } > /tmp/minio.md
+          cat /tmp/minio.md
+          [ -n "$MI" ] && echo "MINIO_IMAGE=$MI" >> "$GITHUB_ENV"
+          [ -n "$MCI" ] && echo "MC_IMAGE=$MCI" >> "$GITHUB_ENV"
+          PR=""
+          if [ -n "$HEAD_REF" ]; then
+            PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_REF" --state open --json number --jq '.[0].number' 2>/dev/null)
+          fi
+          case "$PR" in
+            ''|*[!0-9]*) echo 'PR 编号取不到（读数已打进本作业输出）' ;;
+            *) gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/minio.md || echo '贴评论失败，读数已打进本作业输出' ;;
+          esac
+          exit 0
       - name: Build & start all services (docker compose)
         # 生产配置在 APP_ENV=prod 下为 fail-fast：compose 的 dev 默认值（SECRET_KEY/
         # DEMO_USER_PASSWORD/CORS/NOTIFY_CHANNEL）会被后端启动守卫拒绝。CI E2E 必须注入
