@@ -26,15 +26,7 @@ import dayjs from 'dayjs';
 import PageHeader from '@/components/PageHeader';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useSettingsStore } from '@/store/useSettingsStore';
-import {
-  Currency,
-  InquiryStatus,
-  LogType,
-  type Inquiry,
-  type InquiryItem,
-  type InquiryLog,
-} from '@/types';
+import { InquiryStatus, LogType, type Inquiry, type InquiryItem, type InquiryLog } from '@/types';
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
 import { loadJSON, removeKey } from '@/utils/storage';
 import { useInquiryDraft } from '@/hooks/useInquiryDraft';
@@ -46,6 +38,7 @@ import PreviewStep from './PreviewStep';
 import {
   buildInquiryCode,
   buildLog,
+  defaultBasicInfo,
   deserializeBasicInfo,
   inquiryToBasicInfo,
   serializeBasicInfo,
@@ -56,26 +49,6 @@ import {
 const { Text } = Typography;
 
 const DRAFT_KEY = 'inquiry_draft';
-
-/** 默认基本信息（报价截止时间取自系统设置 deadlineLeadDays） */
-function defaultBasicInfo(): BasicInfoForm {
-  const { deadlineLeadDays } = useSettingsStore.getState();
-  const user = useAuthStore.getState().currentUser;
-  return {
-    subject: '',
-    organization: user.organization,
-    ownerName: user.name,
-    currency: Currency.CNY,
-    deadline: dayjs().add(deadlineLeadDays, 'day'),
-    expectedDeliveryDate: null,
-    deliveryAddress: '',
-    contact: user.name,
-    paymentTerms: '款到发货',
-    invoiceRequirement: '增值税专用发票13%',
-    description: '',
-    attachments: [],
-  };
-}
 
 export default function InquiryCreatePage() {
   const { t } = useTranslation();

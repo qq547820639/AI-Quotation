@@ -3,6 +3,8 @@
  */
 import dayjs, { type Dayjs } from 'dayjs';
 import i18n from '@/i18n';
+import { useAuthStore } from '@/store/useAuthStore';
+import { useSettingsStore } from '@/store/useSettingsStore';
 import {
   CooperationStatus,
   Currency,
@@ -264,6 +266,30 @@ export function inquiryToBasicInfo(inquiry: Inquiry): BasicInfoForm {
     invoiceRequirement: inquiry.invoiceRequirement,
     description: inquiry.description,
     attachments: inquiry.attachments ?? [],
+  };
+}
+
+/**
+ * 新建询价单的默认基本信息
+ * 币种与报价截止提前天数都取系统设置（store 初值同步来自 localStorage，故须在调用时读，
+ * 不能在模块顶层快照——那样设置页改过的值永远进不来回填）。
+ */
+export function defaultBasicInfo(): BasicInfoForm {
+  const { currency, deadlineLeadDays } = useSettingsStore.getState();
+  const user = useAuthStore.getState().currentUser;
+  return {
+    subject: '',
+    organization: user.organization,
+    ownerName: user.name,
+    currency,
+    deadline: dayjs().add(deadlineLeadDays, 'day'),
+    expectedDeliveryDate: null,
+    deliveryAddress: '',
+    contact: user.name,
+    paymentTerms: '款到发货',
+    invoiceRequirement: '增值税专用发票13%',
+    description: '',
+    attachments: [],
   };
 }
 
