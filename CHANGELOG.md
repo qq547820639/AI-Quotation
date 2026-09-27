@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### R47：导出提示改成"已开始下载"——blob 交付这条路没有落盘回执可拿
+
+- 上一节留下的"未证面"本轮量出来了：一次性探针对批量导出用 `test.use({ acceptDownloads: false })`
+  造浏览器拒收，读数
+  `failure="Pass { acceptDownloads: true } …" path() 不可用（已取消） name=询价单管理_20260927084401.xlsx toastInDom=1`
+  且 1.2s 后仍在 ⇒ 文件没落盘、成功提示照样在屏上。页面侧对 `a.click()` 交付没有任何回执可读，
+  所以能修的是"说"：`table.exportCurrentSuccess` → 当前筛选结果已开始下载、
+  `inquiry.export.success` → 文件已开始下载（en 同）；`src/utils/excel.ts` 注释同步改口径。
+- 两条新文案互不为子串——toast 判据的 `ambiguous` 档会把"命中 ≥2 条成功文案"的过滤串判红，
+  都叫"已开始下载"就会自踩。改后读数：`i18n rc=0`、`toast 站点 21（named=7）·豁免 6·目录 17`。
+- 失败路径不动（`writeBuffer` 抛错仍 `notifyError`），宣称变窄不等于坏消息变少。
+
+### 门户共享步骤那格抖动：三次复现都不红 ⇒ 修法定为"红了能归因"，而不是加大超时
+
+- `helpers.ts:264`（等门户单价输入框）是全量套件里唯一读到过 `element(s) not found` 的共享步骤。
+  本轮 `--grep "定标接口 500" --project=mobile-android --repeat-each=5 --retries=0` → **5 passed**；
+  `--project=mobile-android --retries=0`（整 project）→ **39 passed / 3 skipped**；
+  并排除一个猜测：容器内 `procurement.db` 现读 `inquiries=13 / quotations=18`，数据量小，
+  "累积行数拖慢门户渲染"在当前体积下不成立。
+- 因此不改 10s 超时（加大超时是掩盖），改为失败时把 `page.url()` 与 `body` 前 240 字并进错误信息，
+  让下一次红能自己说清现场。登记仍留"历史仅 1 次红"的口径。
+- 同批把全量套件在 **`--retries=0`** 下跑了一次：**`200 passed (10.9m)`、`PW_RC=0`**（本轮第一次关重试全绿）。
+  服务产物双证：36 个哈希文件名与容器求差为空；新文案能在 `index-BLKdbTwh.js` grep 到、旧文案计数 0。
+
 ### 导出链路补上浏览器级覆盖；四臂量出"组件 loading 先吞、handler 守卫在后"；webkit 抖动连根收掉
 
 - 起点读数 `grep -rniE "导出|xlsx|download" e2e/` = **0**：R41（提示早于生成）与 R44（连点叠发）
