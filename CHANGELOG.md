@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 十二度：全量套件落在含本轮改动的构建上——199/5/2/4，抖动换了格子而没消失
+
+- 装置身份先证：镜像建自 `5c922f2`，而 `git diff --name-only 5c922f2..HEAD` 里 `src/`+`backend/app/` **0 个文件**
+  （其后三笔只动 e2e/、compose、文书）⇒ 这一跑测的就是 HEAD 的应用代码。
+- 读数：**199 passed / 5 failed / 2 flaky / 4 skipped，12.8 分钟**（retries=1 默认）。
+- 5 条红全是 `auth-session-refresh:17` × 5 project，即上一轮定性的端口形状限制（第 25 行写死 `http://localhost`）
+  ——单列，既不算产品缺陷也不算通过。
+- 两条 flaky 换成了 `exception-scenarios:303`（定标接口 500）与 `i18n-theme:14`（语言切换，首跑 23.7 s），
+  而十一度红过的 `core-flow:33/:94` 在全量末尾这个总体里绿了 ⇒ 抖动是搬家不是消失，
+  支持"负载吃预算是全局性质"。R65 的修法因此该**推广到其余 toast 凭据位点**，而不是当已闭。
+- 处置照旧：不调超时、不改断言、不 grep-invert。R54/R64 继续开放；登记 R66（`:17` 需要 :80 上的 HEAD 栈才能验）。
+
 ### R65 修复并取证：审批凭据从瞬时 toast 换成写响应，n=30 由 3/60 变 0/60
 
 - `e2e/helpers.ts` 新增 `expectWriteLanded`（先挂监听、再执行点击、断到 <300），`core-flow` 第 7 步改用它，
