@@ -7,6 +7,7 @@
 import { http, HttpResponse } from 'msw';
 import dayjs from 'dayjs';
 import { paginate } from '@/api/searchApi';
+import type { AppSettings } from '@/api/settingsApi';
 import { inquiries as mockInquiries } from '@/mock/inquiries';
 import { suppliers as mockSuppliers } from '@/mock/suppliers';
 import { materials as mockMaterials } from '@/mock/materials';
@@ -39,7 +40,10 @@ const tablePreferences: Record<string, Record<string, unknown>> = {};
 const quotationSnapshots: Record<string, Array<Record<string, unknown>>> = {};
 
 // 设置：内存持久化（与真实后端 AppSettings 单行表对齐）
-let settingsState = {
+// 显式标注成 AppSettings：过去这里少一个 ai，而 loadFromApi 会把 remote.ai 原样 set 进 store
+// ⇒ 演示模式下 AI 配置被 undefined 覆盖，且 tsc 不会响（mock 是无类型字面量）。
+// 类型在这里就是契约检查：真实 schema 加一组，这里不加就编译失败，不再靠人记。
+let settingsState: AppSettings = {
   approval: {
     enabled: true,
     amountThreshold: 50000,
@@ -50,6 +54,19 @@ let settingsState = {
     deadlineReminderHours: 24,
     quotationSubmitted: true,
     approvalResult: true,
+  },
+  ai: {
+    provider: 'demo',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    model: 'doubao-seed-2-1-pro-260628',
+    apiKey: '',
+    hasApiKey: false,
+    structuredOutput: true,
+  },
+  basic: {
+    systemName: '采购询价系统',
+    currency: 'CNY',
+    deadlineLeadDays: 3,
   },
 };
 
@@ -604,6 +621,24 @@ export const handlers = [
 
   // ===== 设置 =====
   http.get(`${baseUrl}/settings`, () => HttpResponse.json(settingsState)),
+
+  // PUT 是这个端点的真实方法（settingsApi.update 用 client.put）。过去只挂了 POST，
+  // 于是演示模式下每一次"保存设置"都穿透到 dev server 拿 404，页面弹的是失败——
+  // 而这条路径从来没有常驻用例走过，所以它一直没人知道。
+  http.put(`${baseUrl}/settings`, async ({ request }) => {
+    const body = (await request.json()) as Partial<AppSettings> | null;
+    // 与后端同形：PUT 是整体替换，少任何一组都是 422，不是"那组保持不变"
+    if (!body?.approval || !body?.notification || !body?.ai || !body?.basic) {
+      return HttpResponse.json({ detail: '设置分组不完整' }, { status: 422 });
+    }
+    settingsState = {
+      approval: body.approval,
+      notification: body.notification,
+      ai: body.ai,
+      basic: body.basic,
+    };
+    return HttpResponse.json(settingsState);
+  }),
 
   http.post(`${baseUrl}/settings`, async ({ request }) => {
     const body = (await request.json()) as typeof settingsState;

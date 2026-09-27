@@ -54,6 +54,11 @@ def update_settings(
     s.ai_base_url = body.ai.baseUrl
     s.ai_model = body.ai.model
     s.ai_structured_output = body.ai.structuredOutput
+    # 基本信息/询价规则里有读者的三项（R49→R57 续）：过去只落 localStorage，
+    # 换浏览器/换设备就回到默认值，而设置页那句"设置已保存"与真入库的两张卡一模一样。
+    s.system_name = body.basic.systemName
+    s.default_currency = body.basic.currency
+    s.inquiry_deadline_lead_days = body.basic.deadlineLeadDays
     db.commit()
     db.refresh(s)
     return settings_to_schema(s)

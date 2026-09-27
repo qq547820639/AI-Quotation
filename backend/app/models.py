@@ -264,6 +264,11 @@ class AppSettings(Base):
     ai_model = Column(String, nullable=False, default="")
     ai_api_key = Column(String, nullable=False, default="")
     ai_structured_output = Column(Boolean, nullable=False, default=True)
+    # 基本信息/询价规则（R49→R57 续）：这三项都有生产读者（标题、新建单据默认币种与默认截止日），
+    # 过去只落 localStorage ⇒ "设置已保存"在换设备/换浏览器时是假的。零读者的字段一律不进库。
+    system_name = Column(String, nullable=False, default="采购询价系统")
+    default_currency = Column(String, nullable=False, default="CNY")
+    inquiry_deadline_lead_days = Column(Integer, nullable=False, default=3)
 
 
 class UserNotificationPreference(Base):

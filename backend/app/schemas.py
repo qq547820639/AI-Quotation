@@ -336,10 +336,45 @@ class AISettings(BaseModel):
     structuredOutput: bool = True
 
 
+SUPPORTED_CURRENCIES: tuple[str, ...] = ("CNY", "USD", "EUR")
+MAX_DEADLINE_LEAD_DAYS = 365
+
+
+class BasicSettings(BaseModel):
+    """基本信息 / 询价规则里**有生产读者**的那三项（R49→R57 续）。
+
+    币种取值域与前端 `src/types/index.ts` 的 `enum Currency` 必须一致，
+    这条对账不靠注释自觉，由 `tests/test_settings_basic.py` 逐字重开那个文件比集合。
+    写边界必须拒绝坏值而不是静默退回默认（R35 的家规）：坏币种会被渲染成裸串，
+    负数/超期的 lead days 会让新建单据的默认截止日落到过去而没人报错。
+    取值域以服务端为准（前端设置页的 InputNumber 今天没有上界，见 settings/index.tsx:217-221），
+    越界返回 422，前端 `handleSaveRules` 已按 result.success 分叉弹错，不会被静默吞掉。
+    """
+
+    systemName: str = "采购询价系统"
+    currency: str = "CNY"
+    deadlineLeadDays: int = 3
+
+    @field_validator("currency")
+    @classmethod
+    def _currency_supported(cls, v: str) -> str:
+        if v not in SUPPORTED_CURRENCIES:
+            raise ValueError(f"currency 必须是 {list(SUPPORTED_CURRENCIES)} 之一，收到 {v!r}")
+        return v
+
+    @field_validator("deadlineLeadDays")
+    @classmethod
+    def _lead_days_in_range(cls, v: int) -> int:
+        if not 0 <= v <= MAX_DEADLINE_LEAD_DAYS:
+            raise ValueError(f"deadlineLeadDays 必须在 0..{MAX_DEADLINE_LEAD_DAYS}，收到 {v}")
+        return v
+
+
 class AppSettingsSchema(BaseModel):
     approval: ApprovalSettings
     notification: NotificationSettings
     ai: AISettings
+    basic: BasicSettings
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -201,7 +201,10 @@ function analyze(prog) {
           if (isTestFile(rel)) push(testOnly, u, line(sf, node));
           else push(narrow, u, line(sf, node));
         }
-        // 宽面：通知键以字符串字面量或对象键出现在非编辑面
+        // 宽面：通知键以字符串字面量或对象键出现在非编辑面。
+        // 测试面必须排除在外（本轮被自己的用例抓到）：常驻用例里出现键名往往是**断言它不许上行**
+        // （useSettingsStoreSync.test.ts 的 forbidden 列表），把它当读者会把台账判成"已过期"——
+        // 测试侧与生产侧的责任含义不同，宽面只吃生产侧。
         const key =
           ts.isStringLiteral(node) && notifSet.has(node.text)
             ? node.text
@@ -210,7 +213,7 @@ function analyze(prog) {
                 notifSet.has(node.name.text)
               ? node.name.text
               : null;
-        if (key) push(wide, `notifications.${key}`, line(sf, node));
+        if (key && !isTestFile(rel)) push(wide, `notifications.${key}`, line(sf, node));
       }
       ts.forEachChild(node, walk);
     };

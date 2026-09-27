@@ -19,7 +19,7 @@ from .schemas import (
     InquirySchema, InquiryItemSchema, InquiryLogSchema, ApprovalNodeSchema,
     QuotationSchema, QuotationItemSchema, SupplierSchema, MaterialSchema, UserSchema,
     NotificationSchema, AppSettingsSchema, ApprovalSettings, NotificationSettings,
-    AISettings, AttachmentSchema,
+    AISettings, AttachmentSchema, BasicSettings,
 )
 
 
@@ -251,5 +251,10 @@ def settings_to_schema(s: AppSettings) -> AppSettingsSchema:
             apiKey=_mask_key(s.ai_api_key),
             hasApiKey=bool(s.ai_api_key),
             structuredOutput=s.ai_structured_output,
+        ),
+        basic=BasicSettings(
+            systemName=s.system_name,
+            currency=s.default_currency,
+            deadlineLeadDays=s.inquiry_deadline_lead_days,
         ),
     )
