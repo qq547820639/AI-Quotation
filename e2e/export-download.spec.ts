@@ -21,15 +21,20 @@ import { login, DATA_ROW } from './helpers';
  * 于是"提示早于生成"与"生成只花了几毫秒"两种情况在同一形状下不可区分。
  * 改成页内单一时钟的累加器（performance.now 序），先后关系由**记录顺序**给出，不跨时钟比较。
  *
- * 只在 chromium 项目跑：`download` 事件在 webkit 上的落地语义与文件名处理不同；
- * mobile-android 虽是 chromium 引擎但列表走卡片布局，工具栏那颗按钮不在。
- * 注意 skip 谓词只能拿到 fixture（第二参数不是 testInfo），所以 project 名要在用例体内
- * 用 `test.info()` 读——写成 describe 级的 `(_, testInfo) => …` 会在每个 project 里直接抛
- * `Cannot read properties of undefined (reading 'project')`（本轮实测）。
+ * 适用域是量出来的，不是猜的：把跳过临时全关后跑一遍 5 个 project，读数 **8 passed / 2 failed**，
+ * 两个失败恰好都是"逐行导出"那一格、恰好都在移动 project（`mobile-android` / `mobile-ios`）——
+ * 因为窄屏列表是卡片 + 「更多」下拉，行内没有那颗「导出」按钮。
+ * ⇒ 批量导出与顺序断言（①②）在 5 个 project 全绿，**不挑引擎**（webkit 的 download 语义一并验过）；
+ *   逐行重入那一格（③）只对桌面 project 成立，且移动端的两次点击天然落在不同代生成
+ *   （下拉必须重开，见登记册 R44 一节），窗口打不到 ⇒ 按 project 名跳过，而不是全关。
+ * 另记一条 Playwright API 形状：`test.skip` 的谓词第二参数**不是** testInfo，
+ * 写成 describe 级 `(_, testInfo) => …` 会在每个 project 直接抛
+ * `Cannot read properties of undefined (reading 'project')`（实测）；project 名只能在用例体内 `test.info()` 读。
  */
 const BULK_TOAST = '当前筛选结果已开始下载';
 const ROW_TOAST = '文件已开始下载';
-const ONLY_CHROMIUM = '下载事件语义只在 chromium 项目验过，其余 project 不并入本轮读数';
+const DESKTOP_ONLY =
+  '逐行导出的行内按钮只在桌面布局存在（窄屏是卡片 + 「更多」下拉），移动端这一格打不到重入窗口';
 
 /**
  * 页内计数器：`downloadFromBuffer` 每次生成都会 `URL.createObjectURL(blob)` 一次
@@ -106,7 +111,7 @@ async function readOrder(page: import('@playwright/test').Page): Promise<string[
 
 test.describe('Excel 导出的浏览器级落地（R41 顺序 + R44 重入）', () => {
   test('导出当前筛选结果：真出文件，且成功提示排在下载之后', async ({ page }) => {
-    test.skip(test.info().project.name !== 'chromium', ONLY_CHROMIUM);
+    // 5 个 project 全绿（含 webkit），所以这一格不设适用域闸门
     test.setTimeout(120_000);
     await login(page, '李明辉');
     await page.goto('/inquiry/list');
@@ -141,7 +146,7 @@ test.describe('Excel 导出的浏览器级落地（R41 顺序 + R44 重入）', 
   });
 
   test('逐行导出连点两次只出一份文件（R44 的守卫）', async ({ page }) => {
-    test.skip(test.info().project.name !== 'chromium', ONLY_CHROMIUM);
+    test.skip(test.info().project.name.startsWith('mobile'), DESKTOP_ONLY);
     test.setTimeout(120_000);
     await login(page, '李明辉');
     await page.goto('/inquiry/list');
