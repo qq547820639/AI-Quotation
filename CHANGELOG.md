@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### R64：污染解释也被否证（干净容器内 DB 仍 6/6 撞 403），停止手拼仪器
+
+- 自证新库：`DB_PATH=/tmp/r64c.db`（不经宿主 backend/data），起栈后 `inquiries 8 / suppliers 8`＝种子量，无我今天任何残留。
+- 同一 scratch spec 在这套干净栈上 **6/6 仍 403**（load 3.94/10 核）⇒ 共享库污染排除；
+  加上上一片 `git diff bded3ac..HEAD` 里 inquiries/auth/permissions/database **零改动** ⇒ HEAD 回归也排除。
+- 剩余差异收窄到我的 spec 自己：helpers:161 的 regenerate 是 `getInvitationToken` 的**兜底分支**，
+  真流程里 token 已在 UI 上拿到、不会走这条；同一形状栈上真实 core-flow 跑得通（本 session 在其上跑过全量与 webkit 复跑）。
+- 决策：不再手拼流程。下一片给真实 core-flow 加 `--tracing=on --retries=0 --project=webkit --repeat-each=5`，
+  从 trace 的 network 时间线读 submit 响应与买家 list 响应/条数的配对；若仍取不到，问题在**产品可观测性**而不是测试装置。
+
 ### R64 测法更正：403 出自资源级受邀名单校验，改用 `--tracing=on` 读真实用例的 trace
 
 - 上一片把 403 归给"仪器用错账号"，换成 core-flow 真用的 王志强 后仍全红 ⇒ 那支解释也撤回。
