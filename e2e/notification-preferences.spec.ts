@@ -202,66 +202,89 @@ test.describe('R62 通知偏好：真后端写穿与一次性迁移', () => {
   });
 
   test('本机独有的关闭一次性搬到服务端；服务端已关时不补发写请求', async ({ browser }) => {
-    // 正例在前：先证明这根线真的能开火，再信后面那条"没有 PUT"的缺席断言。
-    const ctxA = await browser.newContext();
-    const pA = await ctxA.newPage();
-    await seedLocalToggleOff(pA);
-    const getA = pA.waitForResponse(
-      (r) => r.request().method() === 'GET' && PREFS_RE.test(r.url()),
-      { timeout: 20000 },
-    );
-    const putA = pA.waitForResponse(
-      (r) => r.request().method() === 'PUT' && PREFS_RE.test(r.url()),
-      { timeout: 20000 },
-    );
-    await login(pA, MIGRATION_USER);
-    // 迁移发生在那次读之后，所以 GET 的响应体就是"搬之前服务端本来是什么"——还原要用它，
-    // 不能拿事后的值当基线（那会把本次改动读成没改动）。
-    const baseline = (await (await getA).json()) as Prefs;
-    const putARes = await putA;
-    expect(putARes.status()).toBe(200);
-    const bodyA = (await putARes.request().postDataJSON()) as Prefs;
-    expect(bodyA.inquirySent, '迁移只把本机的 false 推上去').toBe(false);
-    // 标记只在写成功之后才打：没有这一步，下次启动会白跑一趟
-    await expect
-      .poll(async () => await pA.evaluate((k) => localStorage.getItem(k), MIGRATED_KEY), {
-        message: '迁移完成后才会落下一次性标记',
-      })
-      .toBeTruthy();
-    const afterA = await prefsApi(pA, 'GET');
-    expect(afterA.inquirySent).toBe(false);
-    // ctxA 留到收尾再用：还原服务端值需要一次带 Bearer 的写，而 pA 是本档唯一还活着的页
+    // 前提必须自己造：迁移只在"服务端是 true 而本机是 false"时才发那次 PUT。
+    // 把它交给"上一次运行结束时状态还留着 true"，等于让这一格的可跑性取决于别人的收尾——
+    // 2026-09-27 就是这一格在整项目零重试档里红了一次（`:213` 等 PUT 20 s 超时），
+    // 而那次运行的 GET 一切正常：说明服务端那时已经是 false，迁移无事可搬、按设计根本不发 PUT。
+    // 所以先读回真值、再显式置 true，最后无论红绿都在 finally 里还回去。
+    const ctx0 = await browser.newContext();
+    const p0 = await ctx0.newPage();
+    await login(p0, MIGRATION_USER);
+    const original = await prefsApi(p0, 'GET');
+    const forced = await prefsApi(p0, 'PUT', { ...original, inquirySent: true } as Prefs);
+    expect(forced.inquirySent, '前提：把服务端的这一位置成开，迁移才有东西可搬').toBe(true);
+    await ctx0.close();
 
-    // 反向对照：服务端此刻已经是 false，本机再"关"一次——正确行为是什么都不写。
-    // 若迁移实现成了"把本地整份覆盖上去/把 true 也推一遍"，这一格就会开火。
-    const putSeen: string[] = [];
-    const ctxB = await browser.newContext();
-    const pB = await ctxB.newPage();
-    pB.on('response', (r) => {
-      if (r.request().method() === 'PUT' && PREFS_RE.test(r.url())) putSeen.push(r.url());
-    });
-    await seedLocalToggleOff(pB);
-    const getB = pB.waitForResponse(
-      (r) => r.request().method() === 'GET' && PREFS_RE.test(r.url()),
-      { timeout: 20000 },
-    );
-    await login(pB, MIGRATION_USER);
-    const getBRes = await getB;
-    expect(getBRes.status()).toBe(200);
-    // 缺席断言要有落定的判据：迁移这条路径跑完的标志是标记落盘，等它而不是等挂钟
-    await expect
-      .poll(async () => await pB.evaluate((k) => localStorage.getItem(k), MIGRATED_KEY), {
-        message: '迁移分支执行完毕（无事可搬也要打标记）',
-      })
-      .toBeTruthy();
-    expect(putSeen, `服务端已关，不该再补发 PUT：${JSON.stringify(putSeen)}`).toHaveLength(0);
-    expect(((await prefsApi(pB, 'GET')) as Prefs).inquirySent).toBe(false);
-    await ctxB.close();
+    try {
+      // 正例在前：先证明这根线真的能开火，再信后面那条"没有 PUT"的缺席断言。
+      const ctxA = await browser.newContext();
+      const pA = await ctxA.newPage();
+      await seedLocalToggleOff(pA);
+      const getA = pA.waitForResponse(
+        (r) => r.request().method() === 'GET' && PREFS_RE.test(r.url()),
+        { timeout: 20000 },
+      );
+      const putA = pA.waitForResponse(
+        (r) => r.request().method() === 'PUT' && PREFS_RE.test(r.url()),
+        { timeout: 20000 },
+      );
+      await login(pA, MIGRATION_USER);
+      // 迁移发生在那次读之后，所以 GET 的响应体就是"搬之前服务端本来是什么"——还原要用它，
+      // 不能拿事后的值当基线（那会把本次改动读成没改动）。
+      const baseline = (await (await getA).json()) as Prefs;
+      const putARes = await putA;
+      expect(putARes.status()).toBe(200);
+      const bodyA = (await putARes.request().postDataJSON()) as Prefs;
+      expect(bodyA.inquirySent, '迁移只把本机的 false 推上去').toBe(false);
+      // 标记只在写成功之后才打：没有这一步，下次启动会白跑一趟
+      await expect
+        .poll(async () => await pA.evaluate((k) => localStorage.getItem(k), MIGRATED_KEY), {
+          message: '迁移完成后才会落下一次性标记',
+        })
+        .toBeTruthy();
+      const afterA = await prefsApi(pA, 'GET');
+      expect(afterA.inquirySent).toBe(false);
+      // ctxA 留到收尾再用：还原服务端值需要一次带 Bearer 的写，而 pA 是本档唯一还活着的页
 
-    // 还原成本格开始前的值：别把这个偏好永久留在关，否则下一次跑这一格就以"反正已经关了"假绿
-    const restored = await prefsApi(pA, 'PUT', baseline);
-    expect(restored.inquirySent).toBe(baseline.inquirySent);
-    await ctxA.close();
+      // 反向对照：服务端此刻已经是 false，本机再"关"一次——正确行为是什么都不写。
+      // 若迁移实现成了"把本地整份覆盖上去/把 true 也推一遍"，这一格就会开火。
+      const putSeen: string[] = [];
+      const ctxB = await browser.newContext();
+      const pB = await ctxB.newPage();
+      pB.on('response', (r) => {
+        if (r.request().method() === 'PUT' && PREFS_RE.test(r.url())) putSeen.push(r.url());
+      });
+      await seedLocalToggleOff(pB);
+      const getB = pB.waitForResponse(
+        (r) => r.request().method() === 'GET' && PREFS_RE.test(r.url()),
+        { timeout: 20000 },
+      );
+      await login(pB, MIGRATION_USER);
+      const getBRes = await getB;
+      expect(getBRes.status()).toBe(200);
+      // 缺席断言要有落定的判据：迁移这条路径跑完的标志是标记落盘，等它而不是等挂钟
+      await expect
+        .poll(async () => await pB.evaluate((k) => localStorage.getItem(k), MIGRATED_KEY), {
+          message: '迁移分支执行完毕（无事可搬也要打标记）',
+        })
+        .toBeTruthy();
+      expect(putSeen, `服务端已关，不该再补发 PUT：${JSON.stringify(putSeen)}`).toHaveLength(0);
+      expect(((await prefsApi(pB, 'GET')) as Prefs).inquirySent).toBe(false);
+      await ctxB.close();
+
+      // 还原成本格开始前的值：别把这个偏好永久留在关，否则下一次跑这一格就以"反正已经关了"假绿
+      const restored = await prefsApi(pA, 'PUT', baseline);
+      expect(restored.inquirySent).toBe(baseline.inquirySent);
+      await ctxA.close();
+    } finally {
+      // 上面那句还原不在 finally 里：中途任何一条断言红掉，服务端就被留在"关"，
+      // 下一次运行就以"无事可搬"为由结构性地等不到 PUT。这里兜一道，让失败不外溢。
+      const ctxR = await browser.newContext();
+      const pR = await ctxR.newPage();
+      await login(pR, MIGRATION_USER);
+      await prefsApi(pR, 'PUT', original as Prefs);
+      await ctxR.close();
+    }
   });
 
   test('偏好为关时真实发送询价不再铸出该条通知；偏好为开时会铸（R62 的效果面）', async ({
@@ -286,30 +309,36 @@ test.describe('R62 通知偏好：真后端写穿与一次性迁移', () => {
 
     const original = await setPref(true);
 
-    const runOnce = async (windowMs: number) => {
-      const ctx = await browser.newContext();
-      const page = await ctx.newPage();
-      await login(page, MIGRATION_USER);
-      const { inquiryId } = await createAndSendInquiry(page);
-      const r = await inquirySentRowFor(page, inquiryId, windowMs);
-      await ctx.close();
-      return r;
-    };
+    try {
+      const runOnce = async (windowMs: number) => {
+        const ctx = await browser.newContext();
+        const page = await ctx.newPage();
+        await login(page, MIGRATION_USER);
+        const { inquiryId } = await createAndSendInquiry(page);
+        const r = await inquirySentRowFor(page, inquiryId, windowMs);
+        await ctx.close();
+        return r;
+      };
 
-    const on = await runOnce(20000);
-    expect(on.hits, '偏好为开：发送询价应当在服务端留下那条 inquiry_sent 通知').toBeGreaterThan(0);
+      const on = await runOnce(20000);
+      expect(on.hits, '偏好为开：发送询价应当在服务端留下那条 inquiry_sent 通知').toBeGreaterThan(
+        0,
+      );
 
-    // 关档窗口 = 开档实测的 3 倍，下限 5 s、上限 20 s：
-    // 写成固定 20 s 会让这一格在慢引擎上单纯因为"两档各等满 20 s"而撞挂钟上限；
-    // 但也不能短于开档实际耗时，否则"读不到"可能只是读早了。
-    const offWindow = Math.min(20000, Math.max(5000, on.waitedMs * 3));
-    await setPref(false);
-    const off = await runOnce(offWindow);
-    expect(
-      off.hits,
-      `偏好为关：同一条铸造路径不该落库（观测窗 ${offWindow} ms，开档实测 ${on.waitedMs} ms）`,
-    ).toBe(0);
-
-    await setPref(original.inquirySent);
+      // 关档窗口 = 开档实测的 3 倍，下限 5 s、上限 20 s：
+      // 写成固定 20 s 会让这一格在慢引擎上单纯因为"两档各等满 20 s"而撞挂钟上限；
+      // 但也不能短于开档实际耗时，否则"读不到"可能只是读早了。
+      const offWindow = Math.min(20000, Math.max(5000, on.waitedMs * 3));
+      await setPref(false);
+      const off = await runOnce(offWindow);
+      expect(
+        off.hits,
+        `偏好为关：同一条铸造路径不该落库（观测窗 ${offWindow} ms，开档实测 ${on.waitedMs} ms）`,
+      ).toBe(0);
+    } finally {
+      // 这一句原先挂在末尾：中途红一次（比如开档那档就是红的），服务端就被留在"关"，
+      // 而同一用户的迁移格下一次运行就以"无事可搬"为由等不到 PUT——失败会外溢成别人的前提破损。
+      await setPref(original.inquirySent);
+    }
   });
 });

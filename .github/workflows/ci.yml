@@ -86,6 +86,46 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: 失败时把现场贴回 PR（本作业的日志要鉴权才读得到）
+        # 为什么要这一步：build 作业连续两次在同一处红（19:08:26→19:09:23、19:45:30→19:46:27，都是 57 s），
+        # 而同一台 runner、同一棵树上诊断档镜像跑的 `npm run build` 是 rc=0（PR #5 19:51:37 那条评论），
+        # 本机 Linux/Node24/lab 装树复算 `tsc -b --force` 与 `vite build` 也全 rc=0。
+        # 剩下的唯一未取证步骤是 upload-artifact，但 Actions 日志要登录才读得到、MCP 也没有取日志的工具，
+        # 所以让**这一步自己把话带回来**：清点 dist、看磁盘、把 build 原样重跑一遍并如实报退码。
+        # 重跑若 rc=0，就把"失败不在 build、而在 build 之后那一步"这条推断变成读数；仍非零则带回结尾 40 行。
+        # 只在 failure() 时跑，不参与判定；事件字段一律走 env，不拼进 shell（见 PostToolUse 那条提示）。
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_NAME: ${{ github.job }}
+        run: |
+          set +e
+          {
+            echo "### build 作业失败现场（一手取证，只回话不改判）"
+            echo "- job=$JOB_NAME run=$RUN_ID head_ref=${HEAD_REF:-（push 事件无此值）}"
+            echo "- node=$(node -v 2>/dev/null) npm=$(npm -v 2>/dev/null)"
+            echo "- dist：$([ -d dist ] && echo 存在 || echo 不存在)｜文件数 $(find dist -type f 2>/dev/null | wc -l)｜体积 $(du -sh dist 2>/dev/null | cut -f1)"
+            echo "- 磁盘：$(df -h "$PWD" | tail -1)"
+            echo "- 重跑 \`npm run build\` 的结尾 40 行："
+            echo '```'
+            npm run build > /tmp/buildagain.log 2>&1
+            rcagain=$?
+            tail -40 /tmp/buildagain.log
+            echo "重跑 rc=$rcagain"
+            echo '```'
+            echo "- 判读：重跑 rc=0 ⇒ 失败不在 npm ci/build（这两步已在同型环境各自证过），落在本作业 build 之后唯一未取证的那一步；rc≠0 ⇒ 结尾 40 行就是原因。"
+          } > /tmp/buildfail.md
+          PR=""
+          if [ -n "$HEAD_REF" ]; then
+            PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_REF" --state open --json number --jq '.[0].number' 2>/dev/null)
+          fi
+          case "$PR" in
+            ''|*[!0-9]*) echo "PR 编号取不到（=$PR），把现场打进日志"; cat /tmp/buildfail.md ;;
+            *) gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/buildfail.md || cat /tmp/buildfail.md ;;
+          esac
+          exit 0
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
         with:
           name: dist
