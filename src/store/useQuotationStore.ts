@@ -157,6 +157,11 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
         return { quotations };
       });
       if (target) {
+        await quotationApi.submit(quotationId);
+      }
+      // R53：日志行与"提交了报价"这条通知都是"提交已发生"的主张，
+      // 改前铸在 await quotationApi.submit 之前，而被 catch 回滚时两者都不撤 ⇒ 被拒的提交留下永久旁证。
+      if (target) {
         useInquiryStore
           .getState()
           .addLog(target.inquiryId, LogType.SUBMIT_QUOTATION, `${target.supplierName} 提交报价`);
@@ -166,7 +171,6 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
           title: `${target.supplierName} 提交了报价`,
           content: `报价金额：${target.totalAmount.toFixed(2)}`,
         });
-        await quotationApi.submit(quotationId);
       }
       syncCache(get().quotations);
       return ok();

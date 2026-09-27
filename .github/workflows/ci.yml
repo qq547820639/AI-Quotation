@@ -43,6 +43,13 @@ jobs:
         run: |
           npm run storage:check
           node scripts/check-storage-receipt.mjs --self-test
+      - name: Verify past-tense notifications aren't minted inside an optimistic state recipe
+        # R53：8 个写入口把「询价单 X 已取消」这类过去式通知铸在 set(状态配方) 体内，
+        # 而 catch 只回滚实体、仓里没有删通知的 API ⇒ 被拒的动作留下永久旁证。
+        # 自测三臂：夹具 2 处必须开火、合规侧 2 处不掉档、换成"4 次铸造全在配方之外"的逆语料必须 0 处。
+        run: |
+          npm run notify-mint:check
+          node scripts/check-notification-optimistic-mint.mjs --self-test
       - name: Upload frontend test logs on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)

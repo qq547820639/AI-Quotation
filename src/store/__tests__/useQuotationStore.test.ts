@@ -115,7 +115,7 @@ describe('useQuotationStore', () => {
       expect(updated?.submittedAt).toBeTruthy();
     });
 
-    it('提交报价：发送 QUOTATION_SUBMITTED 通知', () => {
+    it('提交报价：发送 QUOTATION_SUBMITTED 通知', async () => {
       const q = makeQuotation({
         id: 'quo-ntf',
         status: QuotationStatus.DRAFT,
@@ -123,17 +123,17 @@ describe('useQuotationStore', () => {
       });
       resetStore([q]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      void useQuotationStore.getState().submitQuotation('quo-ntf');
+      await useQuotationStore.getState().submitQuotation('quo-ntf');
       expect(addNotification).toHaveBeenCalledWith(
         expect.objectContaining({ type: NotificationType.QUOTATION_SUBMITTED }),
       );
     });
 
-    it('提交报价：记录 SUBMIT_QUOTATION 日志', () => {
+    it('提交报价：记录 SUBMIT_QUOTATION 日志', async () => {
       const q = makeQuotation({ id: 'quo-log', status: QuotationStatus.DRAFT });
       resetStore([q]);
       const addLog = vi.spyOn(useInquiryStore.getState(), 'addLog');
-      void useQuotationStore.getState().submitQuotation('quo-log');
+      await useQuotationStore.getState().submitQuotation('quo-log');
       expect(addLog).toHaveBeenCalledWith(
         'inq-test-1',
         expect.anything(),

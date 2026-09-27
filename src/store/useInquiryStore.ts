@@ -330,18 +330,20 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
-        const inq = inquiries.find((i) => i.id === id);
-        if (inq) {
-          void useNotificationStore.getState().addNotification({
-            inquiryId: id,
-            type: NotificationType.SYSTEM,
-            title: `询价单 ${inq.code} 已取消`,
-            content: inq.subject,
-          });
-        }
         return { inquiries };
       });
       applyServerInquiry(await inquiryApi.cancel(id));
+      // R53：服务端接受了这次取消才铸通知。改之前它在乐观 set() 体内先铸，
+      // 而 catch 只回滚 inquiries ⇒ 被拒的取消会在通知中心留下永久的"已取消"记录（且无删除通知的 API 可撤）。
+      const inq = get().getInquiryById(id);
+      if (inq) {
+        void useNotificationStore.getState().addNotification({
+          inquiryId: id,
+          type: NotificationType.SYSTEM,
+          title: `询价单 ${inq.code} 已取消`,
+          content: inq.subject,
+        });
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -403,18 +405,18 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
-        const inq = inquiries.find((i) => i.id === id);
-        if (inq) {
-          void useNotificationStore.getState().addNotification({
-            inquiryId: id,
-            type: NotificationType.INQUIRY_SENT,
-            title: `询价单 ${inq.code} 已发送`,
-            content: `已向 ${inq.invitedSupplierIds.length} 家供应商发送询价`,
-          });
-        }
         return { inquiries };
       });
       applyServerInquiry(await inquiryApi.send(id));
+      const inq = get().getInquiryById(id);
+      if (inq) {
+        void useNotificationStore.getState().addNotification({
+          inquiryId: id,
+          type: NotificationType.INQUIRY_SENT,
+          title: `询价单 ${inq.code} 已发送`,
+          content: `已向 ${inq.invitedSupplierIds.length} 家供应商发送询价`,
+        });
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -452,15 +454,6 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
-        const inq = inquiries.find((i) => i.id === inquiryId);
-        if (inq) {
-          void useNotificationStore.getState().addNotification({
-            inquiryId,
-            type: NotificationType.SYSTEM,
-            title: `询价单 ${inq.code} 已选定供应商`,
-            content: `明细 ${itemId} 已选定供应商 ${supplierId}`,
-          });
-        }
         return { inquiries };
       });
       const updated = get().inquiries.find((i) => i.id === inquiryId);
@@ -468,6 +461,15 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
         applyServerInquiry(
           await inquiryApi.update(inquiryId, { selectedSupplierMap: updated.selectedSupplierMap }),
         );
+      }
+      const inq = get().getInquiryById(inquiryId);
+      if (inq) {
+        void useNotificationStore.getState().addNotification({
+          inquiryId,
+          type: NotificationType.SYSTEM,
+          title: `询价单 ${inq.code} 已选定供应商`,
+          content: `明细 ${itemId} 已选定供应商 ${supplierId}`,
+        });
       }
       return ok();
     } catch (e) {
@@ -499,18 +501,18 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
-        const inq = inquiries.find((i) => i.id === inquiryId);
-        if (inq) {
-          void useNotificationStore.getState().addNotification({
-            inquiryId,
-            type: NotificationType.SYSTEM,
-            title: `询价单 ${inq.code} 已确认定标`,
-            content: '定标结果已确认，询价流程完成',
-          });
-        }
         return { inquiries };
       });
       applyServerInquiry(await inquiryApi.confirm(inquiryId));
+      const inq = get().getInquiryById(inquiryId);
+      if (inq) {
+        void useNotificationStore.getState().addNotification({
+          inquiryId,
+          type: NotificationType.SYSTEM,
+          title: `询价单 ${inq.code} 已确认定标`,
+          content: '定标结果已确认，询价流程完成',
+        });
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -554,18 +556,23 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
-        const inq = inquiries.find((i) => i.id === inquiryId);
-        if (inq) {
-          void useNotificationStore.getState().addNotification({
-            inquiryId,
-            type: NotificationType.APPROVAL,
-            title: `询价单 ${inq.code} 待审批`,
-            content: `${inq.subject}（审批人：${approver.name}）`,
-          });
-        }
         return { inquiries };
       });
       applyServerInquiry(await inquiryApi.submitApproval(inquiryId));
+      // 审批人按与乐观写同一套规则取（settings 里的审批人，缺省回退主管），
+      // 原来这行是在 set() 体内算的，挪出来必须自带，否则读不到作用域里的 approver
+      const approver =
+        users.find((u) => u.id === useSettingsStore.getState().approval.approverId) ??
+        supervisorUser;
+      const inq = get().getInquiryById(inquiryId);
+      if (inq) {
+        void useNotificationStore.getState().addNotification({
+          inquiryId,
+          type: NotificationType.APPROVAL,
+          title: `询价单 ${inq.code} 待审批`,
+          content: `${inq.subject}（审批人：${approver.name}）`,
+        });
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -607,18 +614,18 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
-        const inq = inquiries.find((i) => i.id === inquiryId);
-        if (inq) {
-          void useNotificationStore.getState().addNotification({
-            inquiryId,
-            type: NotificationType.APPROVAL,
-            title: `询价单 ${inq.code} 审批通过`,
-            content: '审批已通过，可进行定标确认',
-          });
-        }
         return { inquiries };
       });
       applyServerInquiry(await inquiryApi.approve(inquiryId, comment));
+      const inq = get().getInquiryById(inquiryId);
+      if (inq) {
+        void useNotificationStore.getState().addNotification({
+          inquiryId,
+          type: NotificationType.APPROVAL,
+          title: `询价单 ${inq.code} 审批通过`,
+          content: '审批已通过，可进行定标确认',
+        });
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });
@@ -660,18 +667,18 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
           };
         });
         saveJSON(STORAGE_KEY, inquiries);
-        const inq = inquiries.find((i) => i.id === inquiryId);
-        if (inq) {
-          void useNotificationStore.getState().addNotification({
-            inquiryId,
-            type: NotificationType.APPROVAL,
-            title: `询价单 ${inq.code} 审批驳回`,
-            content: comment || '审批已驳回，请重新评估',
-          });
-        }
         return { inquiries };
       });
       applyServerInquiry(await inquiryApi.reject(inquiryId, comment));
+      const inq = get().getInquiryById(inquiryId);
+      if (inq) {
+        void useNotificationStore.getState().addNotification({
+          inquiryId,
+          type: NotificationType.APPROVAL,
+          title: `询价单 ${inq.code} 审批驳回`,
+          content: comment || '审批已驳回，请重新评估',
+        });
+      }
       return ok();
     } catch (e) {
       set({ inquiries: snapshot });

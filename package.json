@@ -16,6 +16,7 @@
     "test:coverage": "vitest run --coverage",
     "i18n:check": "node scripts/check-i18n.mjs",
     "storage:check": "node scripts/check-storage-receipt.mjs",
+    "notify-mint:check": "node scripts/check-notification-optimistic-mint.mjs",
     "e2e": "playwright test",
     "e2e:install:check": "node scripts/check-e2e-install.mjs",
     "tsc:cov:check": "node scripts/check-tsc-coverage.mjs",

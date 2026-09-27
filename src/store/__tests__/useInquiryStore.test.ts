@@ -155,11 +155,11 @@ describe('useInquiryStore', () => {
   });
 
   describe('cancelInquiry', () => {
-    it('状态转 CANCELLED + 追加 CANCEL 日志 + 发送 SYSTEM 通知', () => {
+    it('状态转 CANCELLED + 追加 CANCEL 日志 + 发送 SYSTEM 通知', async () => {
       const inq = makeInquiry({ id: 'inq-cancel', status: InquiryStatus.INQUIRING });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      void useInquiryStore.getState().cancelInquiry('inq-cancel');
+      await useInquiryStore.getState().cancelInquiry('inq-cancel');
       const updated = useInquiryStore.getState().getInquiryById('inq-cancel');
       expect(updated?.status).toBe(InquiryStatus.CANCELLED);
       expect(updated?.logs.some((l) => l.type === LogType.CANCEL)).toBe(true);
@@ -167,10 +167,25 @@ describe('useInquiryStore', () => {
         expect.objectContaining({ type: NotificationType.SYSTEM }),
       );
     });
+
+    it('取消被后端拒绝时不得留下"已取消"通知（R53：可重试的失败不写终态旁证）', async () => {
+      // 改前这条必红：通知是在乐观 set() 体内铸的，catch 只回滚 inquiries，
+      // 于是 409/网络失败之后通知中心与本机存储都留着一条"已取消"，且仓里没有删除通知的 API 可撤。
+      const inq = makeInquiry({ id: 'inq-cancel-fail', status: InquiryStatus.INQUIRING });
+      resetStore([inq]);
+      const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
+      vi.mocked(inquiryApi.cancel).mockRejectedValueOnce(new Error('boom'));
+      const r = await useInquiryStore.getState().cancelInquiry('inq-cancel-fail');
+      expect(r.success).toBe(false);
+      expect(useInquiryStore.getState().getInquiryById('inq-cancel-fail')?.status).toBe(
+        InquiryStatus.INQUIRING,
+      );
+      expect(addNotification).not.toHaveBeenCalled();
+    });
   });
 
   describe('sendInquiry', () => {
-    it('状态转 INQUIRING + 追加 SEND_INQUIRY 日志 + 发送 INQUIRY_SENT 通知', () => {
+    it('状态转 INQUIRING + 追加 SEND_INQUIRY 日志 + 发送 INQUIRY_SENT 通知', async () => {
       const inq = makeInquiry({
         id: 'inq-send',
         status: InquiryStatus.PENDING_SEND,
@@ -178,7 +193,7 @@ describe('useInquiryStore', () => {
       });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      void useInquiryStore.getState().sendInquiry('inq-send');
+      await useInquiryStore.getState().sendInquiry('inq-send');
       const updated = useInquiryStore.getState().getInquiryById('inq-send');
       expect(updated?.status).toBe(InquiryStatus.INQUIRING);
       expect(updated?.logs.some((l) => l.type === LogType.SEND_INQUIRY)).toBe(true);
@@ -217,11 +232,11 @@ describe('useInquiryStore', () => {
   });
 
   describe('confirmInquiry', () => {
-    it('状态转 COMPLETED + 追加 CONFIRM_RESULT 日志 + 通知', () => {
+    it('状态转 COMPLETED + 追加 CONFIRM_RESULT 日志 + 通知', async () => {
       const inq = makeInquiry({ id: 'inq-conf', status: InquiryStatus.PENDING_CONFIRM });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      void useInquiryStore.getState().confirmInquiry('inq-conf');
+      await useInquiryStore.getState().confirmInquiry('inq-conf');
       const updated = useInquiryStore.getState().getInquiryById('inq-conf');
       expect(updated?.status).toBe(InquiryStatus.COMPLETED);
       expect(updated?.logs.some((l) => l.type === LogType.CONFIRM_RESULT)).toBe(true);
@@ -230,11 +245,11 @@ describe('useInquiryStore', () => {
   });
 
   describe('submitForApproval', () => {
-    it('状态转 PENDING_APPROVAL + 新增 PENDING 审批节点 + APPROVAL 通知', () => {
+    it('状态转 PENDING_APPROVAL + 新增 PENDING 审批节点 + APPROVAL 通知', async () => {
       const inq = makeInquiry({ id: 'inq-apv', status: InquiryStatus.PENDING_CONFIRM });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      void useInquiryStore.getState().submitForApproval('inq-apv');
+      await useInquiryStore.getState().submitForApproval('inq-apv');
       const updated = useInquiryStore.getState().getInquiryById('inq-apv');
       expect(updated?.status).toBe(InquiryStatus.PENDING_APPROVAL);
       expect(updated?.approvalNodes).toHaveLength(1);
