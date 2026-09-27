@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### R64 改判：`d8efbbb` 的补拉只是表面修复，真因假设移到提交侧的"写落地凭据"
+
+- 动手钉接线之前先核提交侧，读到 `e2e/helpers.ts` 的 `submitQuoteViaPortal` 最后一步是
+  `.ant-result-success, .ant-message-success` 可见——**没等过提交请求的响应**，
+  这正是 R34 记过的形状，而 helpers 这一处本就是 toast 判据豁免清单里的位点（当时还写着"豁免理由从未被实测"）。
+- 买家 `page.goto()` 加载全新文档，`App.tsx` 的 `bootstrapStores()` 里本来就有 quotation 的 `loadFromApi`
+  ⇒ "进页面没发过报价请求"这个假设站不住，`d8efbbb` 的 mount 补拉改按"**未证明能治这条红**"记账
+  （它消除的是另一类风险：买家视图依赖更早一次加载的快照，本身值得留，但不算 R64 闭合）。
+- 下一片先测后改：scratch spec 记 `/api/quotations` 到达时刻与条数、门户提交的请求/响应配对，跑 ≥6 次；
+  红的那些次若 list 发生在两次提交响应之前 ⇒ 改 helpers 等提交响应（与 R34 同形，不加超时），
+  并作废那条 toast 豁免；若 list 在提交之后仍返回 0 ⇒ 才轮到后端可见性。
+
 ### R64：R54 那条红换手法抓到了现场，结论是 R30 的空态守卫有洞
 
 - 上一轮 `--retries=0` 结构上拿不到 trace/video ⇒ 只有时长没有成因。本轮 `--repeat-each=5 --retries=0` 跑 webkit，
