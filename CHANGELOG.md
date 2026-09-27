@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### R64 计时测量：仪器先在 regenerate invitation 上撞 403，本轮未出读数
+
+- 隔离栈上 8 次全红在同一步（`e2e/helpers.ts:161` 的 regenerate fetch → 403），两个账号各跑都一样；
+  同一个 helper 在 `qqi-final-*`（服务 bded3ac）上跑得通。
+- **没有据此下结论**：装置配置差异、HEAD 侧真实回归、共享宿主 SQLite 目录被三个 project 同挂 —— 三种解释还没区分。
+  下一片先在 bded3ac 的同端口栈跑同一个 spec 来二分；若只有新栈红，这条的优先级高于 R64。
+- 清场：自建 project 全部 down（残留 0），并发会话在用的 qqi-final-* 未动。
+
 ### R64 改判：`d8efbbb` 的补拉只是表面修复，真因假设移到提交侧的"写落地凭据"
 
 - 动手钉接线之前先核提交侧，读到 `e2e/helpers.ts` 的 `submitQuoteViaPortal` 最后一步是
