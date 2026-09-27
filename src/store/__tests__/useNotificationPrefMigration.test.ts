@@ -89,6 +89,16 @@ describe('本机通知开关的一次性迁移（R62 步骤一）', () => {
     expect(useNotificationStore.getState().notifications).toHaveLength(before);
   });
 
+  it('⑤ 迁移被拒 ⇒ preferencesLoaded 收回假（"拿到了偏好"不等于"可以只认偏好侧"）', async () => {
+    api.getPreferences.mockResolvedValueOnce({ ...SERVER_ON, deadlineReminderHours: 9 });
+    api.updatePreferences.mockRejectedValueOnce(new Error('boom'));
+    useSettingsStore.setState((s) => ({ notifications: { ...s.notifications, approval: false } }));
+    await useNotificationStore.getState().loadPreferences();
+
+    expect(loadJSON<boolean>(FLAG, false)).toBe(false);
+    expect(useNotificationStore.getState().preferencesLoaded).toBe(false);
+  });
+
   it('④ 迁移只发生一次：标记已存在时不再发 PUT', async () => {
     saveJSON(FLAG, true);
     api.getPreferences.mockResolvedValueOnce(SERVER_ON);

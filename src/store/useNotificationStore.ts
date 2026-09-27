@@ -141,11 +141,16 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     try {
       const prefs = await notificationApi.getPreferences();
       set({ preferences: prefs, preferencesLoaded: true });
+      // R62 步骤①（只改这一件事）：`preferencesLoaded` 的含义是"可以只认偏好侧"，
+      // 而本机已关的位还没搬成功时它并不成立 ⇒ 迁移没确认完成就把旗标收回假。
+      // 注意：这一步**不**改变抑制行为（并集仍在），所以现有用例不该因此变动。
+      // 先落这一行、单独跑测，再谈"不挪 set""加缓存"，避免一次改两件事。
       // R62 步骤一：先搬家，再拆旧房子。
       // 设置页那张卡在 fda48eb 之前只把开关写进 localStorage，服务端对应位仍是 true；
       // 若此刻就收回并集（只认偏好侧），这些用户已关的抑制会无声消失——又是一次"主张与凭据脱钩"。
       // 因此：只降不升（把本地显式 false 推到服务端），成功才打一次性标记，失败不打标记、下次再试。
-      await get().migrateLocalNotificationToggles(prefs);
+      const migrated = await get().migrateLocalNotificationToggles(prefs);
+      if (!migrated.success) set({ preferencesLoaded: false });
     } catch {
       // 保留默认值，但**不再静默**：旗标留假，写穿路径据此拒绝保存（R62 前置）。
       set({ preferencesLoaded: false });
