@@ -100,7 +100,9 @@ test.describe('Access Token 自动续期', () => {
       refreshResponse,
       '过期 access token 落地时必须观测到一次 /api/auth/refresh 请求，否则"续期失败"根本没被验证',
     ).not.toBeNull();
-    expect(refreshResponse.status()).toBe(401);
+    // 上一行已经无条件钉住"请求在场"，这里只看它的状态码；写 `?.` 不是为了放过 null，
+    // 而是让 TS 不再要求第二次判空（判空责任已经在上一条断言里尽了）。
+    expect(refreshResponse?.status()).toBe(401);
     await expect(page).toHaveURL(/\/login/, { timeout: 30000 });
     await expect(page.locator(DATA_ROW).first(), '未登录不应看到询价数据').toHaveCount(0);
   });

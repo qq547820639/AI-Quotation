@@ -73,8 +73,11 @@ async function armOrderRecorder(page: import('@playwright/test').Page, toastNeed
     const stamp = () => `${Math.round(performance.now())}ms`;
     const scan = (root: ParentNode | Element) => {
       const hits: Element[] = [];
-      if (root.matches?.('a[download]')) hits.push(root as Element);
-      if (root.matches?.('.ant-message-success')) hits.push(root as Element);
+      // `matches` 只在 Element 上存在（ParentNode 上没有），所以先过 instanceof 再调用：
+      // 原来写 `root.matches?.()` 是拿可选链把一个类型错误咽掉了（该文件此前不在 tsc 面内）。
+      const asEl = root instanceof Element ? root : null;
+      if (asEl?.matches('a[download]')) hits.push(asEl);
+      if (asEl?.matches('.ant-message-success')) hits.push(asEl);
       root.querySelectorAll?.('a[download]').forEach((el) => hits.push(el));
       root.querySelectorAll?.('.ant-message-success').forEach((el) => hits.push(el));
       for (const el of hits) {

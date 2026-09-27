@@ -85,6 +85,12 @@ jobs:
           run1 "npm run storage:check" npm run storage:check
           run1 "npm run settings:inert:check" npm run settings:inert:check
           run1 "npm run notify-mint:check" npm run notify-mint:check
+          # ---- 顺带镜像 ci.yml 的 build 作业 ----
+          # 2026-09-27 19:09：quality 转绿后 build 第一次真跑就红（57 s），而本机
+          # `npx tsc -b --force && npx vite build` 两步全 rc=0 ⇒ 差值在 Linux 侧，
+          # 光看退码定不了因。build 作业本身不回话（日志要鉴权才读得到），
+          # 所以把它那条 `npm run build` 也放进这个"逐步记 rc + 带回结尾"的循环里。
+          run1 "npm run build（镜像 build 作业）" npm run build
           # ---- 逐把尺子单独跑一遍本体与自测 ----
           # 为什么不能只看 `npm run gates`：聚合闸给每根失败只留子进程输出的一行摘录，
           # 于是"自测档里到底是第几条判据开的火"在聚合面上永远看不见——2026-09-27 CI 的
@@ -117,7 +123,7 @@ jobs:
           exit 0
 
       - name: 把 rc 一览与首条失败的结尾贴成 PR 评论
-        if: always()   # 少了这行，前面任一 step 非零就会把"带话"这一步整条跳过（上一版就是这么哑的）
+        if: always() # 少了这行，前面任一 step 非零就会把"带话"这一步整条跳过（上一版就是这么哑的）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FIRST_FAILED: ${{ steps.steps.outputs.first_failed }}

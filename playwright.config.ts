@@ -29,7 +29,11 @@ export default defineConfig({
   retries,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:80',
+    // 默认仍是 compose 的 :80（CI 的 docker-e2e 走这条）。留环境变量的口子是因为本机同时挂着
+    // 两套栈：:80 背后是 11:16 的旧镜像、:18090 才是当前树的 build，
+    // 而"URL 稳定"会让人误以为测的是同一份代码（2026-09-27 三格 20 s 超时的真因，
+    // 核验与指纹见 e2e/global-setup.ts）。
+    baseURL: process.env.E2E_BASE_URL || 'http://localhost:80',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'on-first-retry',
