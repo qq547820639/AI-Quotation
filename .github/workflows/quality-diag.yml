@@ -1,0 +1,107 @@
+name: Quality Diagnosis (branch only)
+
+# 为什么要有这个 workflow：
+# PR #5 上 `Lint + TypeCheck + Unit Test` 判了 failure，但本机把 ci.yml 的每一步都跑过一遍全是绿的
+# （lint / tsc --noEmit / tsc:cov:check + 自测 / vitest 503 / i18n:check + 自测 / gates 18 项）。
+# ⇒ 差异在平台上（CI 是区分大小写的 ext4 干净检出，本机是大小写不敏感的 APFS），
+#   而 Actions 的日志要登录才能读（浏览器未登录取到 404，gh 也未认证，MCP 没有日志接口）。
+# 所以让 runner 自己把"每一步的 rc + 首个失败步骤的结尾读数"贴回 PR —— PR 评论我用 API 读得到。
+# 只在取证分支上跑，不进 main，也不与 ci.yml 的判定混在一起。
+
+on:
+  push:
+    branches:
+      - qoder/ci-evidence-0928
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  diag:
+    name: 逐步复算 ci.yml 的 quality 步骤并把读数贴回 PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0 (node24)
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0 (node24)
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 环境自报身份（不认身份就不配当凭据）
+        id: env
+        run: |
+          echo "os=$ImageOS kernel=$(uname -r) arch=$(uname -m)"
+          echo "case-sensitive fs? $(touch ./__cs_probe 2>/dev/null; ls ./__CS_PROBE 2>/dev/null >/dev/null && echo YES || echo NO); rm -f ./__cs_probe" | tee -a "$GITHUB_ENV"
+          node -v; npm -v; git --version
+          echo "core.ignorecase=$(git config --get core.ignorecase || echo unset)"
+
+      - run: npm ci
+
+      - name: 逐步跑，逐步记 rc（退出码不经过管道）
+        id: steps
+        run: |
+          set +e
+          : > /tmp/steps.txt
+          run1() {
+            name="$1"; shift
+            out="/tmp/step-$(echo "$name" | tr ' /:' '___').log"
+            "$@" > "$out" 2>&1
+            rc=$?
+            printf '%s\t%s\n' "$rc" "$name" >> /tmp/steps.txt
+            echo "::group::$name → rc=$rc"
+            tail -25 "$out"
+            echo "::endgroup::"
+          }
+          run1 "npm run lint" npm run lint
+          run1 "npx tsc --noEmit" npx tsc --noEmit
+          run1 "npm run tsc:cov:check" npm run tsc:cov:check
+          run1 "check-tsc-coverage --self-test" node scripts/check-tsc-coverage.mjs --self-test
+          run1 "npx vitest run --coverage" npx vitest run --coverage
+          run1 "npm run i18n:check" npm run i18n:check
+          run1 "check-i18n --self-test" node scripts/check-i18n.mjs --self-test
+          run1 "npm run gates" npm run gates
+          run1 "npm run storage:check" npm run storage:check
+          run1 "npm run settings:inert:check" npm run settings:inert:check
+          run1 "npm run notify-mint:check" npm run notify-mint:check
+          echo "----- rc 一览 -----"
+          cat /tmp/steps.txt
+          echo "----- 首个非零 rc -----"
+          awk -F'\t' '$1!=0 {print; exit}' /tmp/steps.txt
+          first=$(awk -F'\t' '$1!=0 {print $2; exit}' /tmp/steps.txt)
+          echo "first_failed=${first}" >> "$GITHUB_OUTPUT"
+          # 诊断档本身不许把流水线判红：它只负责把读数带回来，判定仍归 ci.yml
+          exit 0
+
+      - name: 把 rc 一览与首条失败的结尾贴成 PR 评论
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIRST_FAILED: ${{ steps.steps.outputs.first_failed }}
+        run: |
+          set -e
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head qoder/ci-evidence-0928 --state open --json number --jq '.[0].number')
+          # 只接受纯数字：评论接口的参数不该拿任意字符串去拼
+          case "$PR" in
+            ''|*[!0-9]*) echo "PR 编号取不到或不是数字（=$PR），跳过贴评论"; exit 0 ;;
+          esac
+          {
+            echo "### quality 步骤逐步复算（runner 侧一手读数）"
+            echo
+            echo "- 检出是否区分大小写：见下面 env 步骤自报（core.ignorecase / __cs_probe）"
+            echo "- 首个失败步骤：\`${FIRST_FAILED:-（无：全绿）}\`"
+            echo
+            echo '```'
+            cat /tmp/steps.txt
+            echo '```'
+            if [ -n "$FIRST_FAILED" ]; then
+              f="/tmp/step-$(echo "$FIRST_FAILED" | tr ' /:' '___').log"
+              if [ -f "$f" ]; then
+                echo
+                echo "#### 首个失败步骤结尾"
+                echo '```'
+                tail -40 "$f"
+                echo '```'
+              fi
+            fi
+          } > /tmp/report.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
