@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint . --max-warnings=0",
+    "gates": "node scripts/check-gates.mjs",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\" \"*.{json,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,md}\"",
