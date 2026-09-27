@@ -38,6 +38,7 @@ import PageHeader from '@/components/PageHeader';
 import Permission from '@/components/Permission';
 import { InquiryStatusTag } from '@/components/StatusTag';
 import { useInquiryStore } from '@/store/useInquiryStore';
+import { useEnterRefresh } from '@/hooks/useEnterRefresh';
 import { useAuthStore } from '@/store/useAuthStore';
 import {
   ApprovalNodeStatus,
@@ -73,6 +74,9 @@ export default function ApprovalPage() {
   const approveInquiry = useInquiryStore((s) => s.approveInquiry);
   const rejectInquiry = useInquiryStore((s) => s.rejectInquiry);
   const inquiriesLoadError = useInquiryStore((s) => s.loadError);
+  // R69：本页 dataSource 直取 store，进入时必须自己补拉一次（每次挂载恰好一次）
+  useEnterRefresh(() => useInquiryStore.getState().loadFromApi());
+
   const currentUser = useAuthStore((s) => s.currentUser);
   const hasPermission = useAuthStore((s) => s.hasPermission);
 
