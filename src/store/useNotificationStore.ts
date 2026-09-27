@@ -34,6 +34,20 @@ const TYPE_TO_SETTING_KEY: Partial<Record<NotificationType, string>> = {
   [NotificationType.APPROVAL]: 'approval',
 };
 
+/**
+ * 通知类型 → 每用户偏好字段（R62）。
+ * 这张表存在的理由是**两侧名字不同源**：设置侧叫 `timeoutAlert`/`approval`，
+ * 偏好侧（服务端 `user_notification_preferences` 的真列）叫 `deadlineReminder`/`approvalResult`。
+ * 用名字对名字会静默错配两类，所以按语义逐条写死，并由用例分别钉住。
+ */
+const TYPE_TO_PREF_KEY: Partial<Record<NotificationType, keyof UserNotificationPreferencesSchema>> =
+  {
+    [NotificationType.INQUIRY_SENT]: 'inquirySent',
+    [NotificationType.QUOTATION_SUBMITTED]: 'quotationSubmitted',
+    [NotificationType.DEADLINE_APPROACHING]: 'deadlineReminder',
+    [NotificationType.APPROVAL]: 'approvalResult',
+  };
+
 export interface NotificationPayload {
   inquiryId?: string;
   type: NotificationType;
@@ -133,12 +147,14 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
   // Task 4：本地持久化 + 服务端同步，失败返回 WriteResult（不静默吞掉）
   addNotification: async (payload) => {
-    // W6：检查设置开关，关闭的类型不写入（SYSTEM 始终写入）
+    // W6 + R62：抑制取两处的"任一为关即关"——每用户偏好（服务端入库那侧）与设置页开关（本机那侧）。
+    // 为什么不一次把权威搬走：搬走 = 用户在设置页关过的开关静默失效（本机值不再被读），
+    // 而偏好侧那几位在此之前从来没被读过；两边都不是用户此刻理解的"我关过的那个"。
+    // 先让入库的值真的有消费者（R61 的第一层缺陷），UI 合并留作单独一片。
     const settingKey = TYPE_TO_SETTING_KEY[payload.type];
-    if (settingKey) {
-      const enabled = useSettingsStore.getState().notifications[settingKey];
-      if (enabled === false) return ok();
-    }
+    if (settingKey && useSettingsStore.getState().notifications[settingKey] === false) return ok();
+    const prefKey = TYPE_TO_PREF_KEY[payload.type];
+    if (prefKey && get().preferences[prefKey] === false) return ok();
     let created: Notification | null = null;
     let createdId: string | undefined;
     set((state) => {

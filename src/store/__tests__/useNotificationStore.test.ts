@@ -6,7 +6,7 @@
  * - 类型偏好开关关闭时不写入
  * - 未读数维护
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useNotificationStore } from '../useNotificationStore';
 import { useSettingsStore } from '../useSettingsStore';
 import { NotificationType } from '@/types';
@@ -103,6 +103,87 @@ describe('addNotification 旧流程时间窗去重', () => {
       title: '询价已发送',
       content: '',
     });
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+});
+
+/**
+ * R62：服务端入库的那份每用户偏好此前**零消费者**（列写全了没人读）。
+ * 这里量的就是它开始起作用，且两侧名字不同源的那两对必须各自钉住——
+ * 靠名字对齐的写法会静默错配 DEADLINE_APPROACHING 与 APPROVAL 两类。
+ */
+const DEFAULT_PREFS_FOR_TEST = {
+  deadlineReminder: true,
+  deadlineReminderHours: 24,
+  quotationSubmitted: true,
+  approvalResult: true,
+  inquirySent: true,
+};
+
+describe('通知抑制也读每用户偏好（R62，偏好侧与设置侧任一为关即抑制）', () => {
+  const payload = (type: NotificationType, eventId: string) => ({
+    eventId,
+    type,
+    title: 't',
+    content: '',
+  });
+  const allOnSettings = {
+    inquirySent: true,
+    quotationSubmitted: true,
+    timeoutAlert: true,
+    todoReminder: false,
+    approval: true,
+  };
+
+  afterEach(() => {
+    useNotificationStore.setState({
+      preferences: { ...DEFAULT_PREFS_FOR_TEST },
+    });
+    useSettingsStore.setState({ notifications: { ...allOnSettings } });
+  });
+
+  it('偏好侧 inquirySent=false ⇒ INQUIRY_SENT 不写入（改前这一格必红：偏好从来没被读）', async () => {
+    useNotificationStore.setState({
+      preferences: { ...DEFAULT_PREFS_FOR_TEST, inquirySent: false },
+    });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.INQUIRY_SENT, 'e-pref-1'));
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('别名映射：偏好侧关的是 deadlineReminder，抑制的必须是 DEADLINE_APPROACHING', async () => {
+    useNotificationStore.setState({
+      preferences: { ...DEFAULT_PREFS_FOR_TEST, deadlineReminder: false },
+    });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.DEADLINE_APPROACHING, 'e-pref-2'));
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('别名映射第二对：偏好侧 approvalResult=false 抑制 APPROVAL', async () => {
+    useNotificationStore.setState({
+      preferences: { ...DEFAULT_PREFS_FOR_TEST, approvalResult: false },
+    });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.APPROVAL, 'e-pref-3'));
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('两侧都开 ⇒ 照写（对照组，防"永远抑制"也能让上面三格绿）', async () => {
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.INQUIRY_SENT, 'e-pref-4'));
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toContain('e-pref-4');
+  });
+
+  it('本机设置侧关掉仍然抑制（既有行为不得因这次改动回退）', async () => {
+    useSettingsStore.setState({ notifications: { ...allOnSettings, quotationSubmitted: false } });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.QUOTATION_SUBMITTED, 'e-pref-5'));
     expect(useNotificationStore.getState().notifications).toHaveLength(0);
   });
 });

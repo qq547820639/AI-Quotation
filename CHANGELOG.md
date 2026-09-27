@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### R62（部分）：入库的每用户通知偏好终于有了消费者
+
+- `addNotification` 的抑制条件改成**偏好侧与设置侧任一为 false 即抑制**，先让服务端那三列真的起作用，
+  而不是把权威一次搬走——搬走会让用户在设置页关过的开关静默失效，而偏好侧那几位此前从来没被读过。
+- 新增 `TYPE_TO_PREF_KEY` 逐条写死映射，因为两侧名字不同源（`timeoutAlert↔deadlineReminder`、
+  `approval↔approvalResult`）；类型标注 `keyof UserNotificationPreferencesSchema` 是第三道锁
+  （变异时要 `as never` 才能过编译）。
+- 牙：M1 删偏好查询 ⇒ 3 failed；M2 配错两个别名 ⇒ 2 failed；对照组不红；`cmp -s` 证还原。
+  全量 `vitest 481 passed (46 files)`、lint/tsc rc=0，`check-settings-inert` 读数不变（14 单位同档）。
+- 剩下一半（合并两处入口的 UI、连带 `settings.saveSuccess` 三处与 e2e 冒充装置）留在 R62，
+  台账里那条 local-only 签字会在权威真正统一那天判"清单已过期"——那是期望的红。
+
 ### R61 / R62：每用户通知偏好被量成"三层假物"，本轮只换掉没有争议的那一层
 
 - 量 `inquirySent` 的归属时读到底，三层同时不成立（各有 file:line 在登记册十一度节）：
