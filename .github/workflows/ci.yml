@@ -77,6 +77,7 @@ jobs:
       - name: Upload frontend test logs on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        continue-on-error: true # 账号级产物存储满档（GitHub Free 500 MB，全私有仓库共用）不该把质量/安全作业判红；判定由前面的扫描与断言步做，产物只供事后排查
         with:
           name: frontend-test-logs
           path: |
@@ -290,6 +291,7 @@ jobs:
       - name: Upload backend test logs on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        continue-on-error: true # 账号级产物存储满档（GitHub Free 500 MB，全私有仓库共用）不该把质量/安全作业判红；判定由前面的扫描与断言步做，产物只供事后排查
         with:
           name: backend-test-logs
           path: backend/.pytest_cache/
@@ -357,6 +359,7 @@ jobs:
       - name: Upload SBOM
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        continue-on-error: true # 账号级产物存储满档（GitHub Free 500 MB，全私有仓库共用）不该把质量/安全作业判红；判定由前面的扫描与断言步做，产物只供事后排查
         with:
           name: sbom
           path: |
@@ -368,6 +371,7 @@ jobs:
       - name: Upload scan reports (always, even on failure)
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        continue-on-error: true # 账号级产物存储满档（GitHub Free 500 MB，全私有仓库共用）不该把质量/安全作业判红；判定由前面的扫描与断言步做，产物只供事后排查
         with:
           name: security-scan-reports
           path: |
@@ -506,6 +510,7 @@ jobs:
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        continue-on-error: true # 账号级产物存储满档（GitHub Free 500 MB，全私有仓库共用）不该把质量/安全作业判红；判定由前面的扫描与断言步做，产物只供事后排查
         with:
           name: playwright-report
           path: |
