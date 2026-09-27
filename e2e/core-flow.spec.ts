@@ -48,8 +48,17 @@ test.describe('核心业务链路', () => {
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
 
     // 4. 为物料选择推荐供应商（触发 selectedSupplierMap）
-    await chooseSupplierOnCompare(page, SUPPLIER_A);
-    await expectSuccessToast(page, /已选择推荐供应商|Recommended supplier selected/);
+    // R65：这一格换成等 PUT /api/inquiries/:id（inquiryApi.update 带 selectedSupplierMap）返回 <300。
+    // 两处同形（本用例与"审批驳回后不可定标"）一起换：各自下一步都只在选择真落地后才存在
+    // （下一步是"提交审批"按钮的可见性），所以撤掉瞬时提示不撤覆盖。
+    await expectWriteLanded(
+      page,
+      /\/api\/inquiries\/[^/]+$/,
+      async () => {
+        await chooseSupplierOnCompare(page, SUPPLIER_A);
+      },
+      'PUT',
+    );
 
     // 5. 填写评审意见（CommentEditor 自动保存）
     const comment = page.locator('textarea').first();
@@ -110,8 +119,17 @@ test.describe('核心业务链路', () => {
     // 进入对比页，选择供应商并提交审批
     await page.goto(`/quotation/compare/${inquiryId}`);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
-    await chooseSupplierOnCompare(page, SUPPLIER_A);
-    await expectSuccessToast(page, /已选择推荐供应商|Recommended supplier selected/);
+    // R65：这一格换成等 PUT /api/inquiries/:id（inquiryApi.update 带 selectedSupplierMap）返回 <300。
+    // 两处同形（本用例与"审批驳回后不可定标"）一起换：各自下一步都只在选择真落地后才存在
+    // （下一步是"提交审批"按钮的可见性），所以撤掉瞬时提示不撤覆盖。
+    await expectWriteLanded(
+      page,
+      /\/api\/inquiries\/[^/]+$/,
+      async () => {
+        await chooseSupplierOnCompare(page, SUPPLIER_A);
+      },
+      'PUT',
+    );
 
     const submitApprovalBtn = page.getByRole('button', { name: /提交审批|Submit Approval/ });
     await expect(submitApprovalBtn).toBeVisible({ timeout: 5000 });
