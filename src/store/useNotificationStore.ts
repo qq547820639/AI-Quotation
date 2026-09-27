@@ -207,14 +207,19 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
   // Task 4：本地持久化 + 服务端同步，失败返回 WriteResult（不静默吞掉）
   addNotification: async (payload) => {
-    // W6 + R62：抑制取两处的"任一为关即关"——每用户偏好（服务端入库那侧）与设置页开关（本机那侧）。
-    // 为什么不一次把权威搬走：搬走 = 用户在设置页关过的开关静默失效（本机值不再被读），
-    // 而偏好侧那几位在此之前从来没被读过；两边都不是用户此刻理解的"我关过的那个"。
-    // 先让入库的值真的有消费者（R61 的第一层缺陷），UI 合并留作单独一片。
-    const settingKey = TYPE_TO_SETTING_KEY[payload.type];
-    if (settingKey && useSettingsStore.getState().notifications[settingKey] === false) return ok();
+    // R62 步骤②：权威按状态分。
+    // 已拿到偏好（且迁移确认完成）⇒ 只认偏好侧；此时设置侧的 false 不再参与判断，
+    //   因为它的值已经写穿/迁移到偏好侧，再读一次就是"同一概念两个权威"（R61 的病根）。
+    // 没拿到偏好（离线、首启动、迁移未完成）⇒ 回退读设置侧，宁可多抑制一层，
+    //   也不能把"用户关过"当成"没关"（步骤①的缓存正是为这条回退准备的基线）。
     const prefKey = TYPE_TO_PREF_KEY[payload.type];
-    if (prefKey && get().preferences[prefKey] === false) return ok();
+    if (get().preferencesLoaded) {
+      if (prefKey && get().preferences[prefKey] === false) return ok();
+    } else {
+      const settingKey = TYPE_TO_SETTING_KEY[payload.type];
+      if (settingKey && useSettingsStore.getState().notifications[settingKey] === false)
+        return ok();
+    }
     let created: Notification | null = null;
     let createdId: string | undefined;
     set((state) => {

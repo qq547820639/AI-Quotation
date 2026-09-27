@@ -120,7 +120,7 @@ const DEFAULT_PREFS_FOR_TEST = {
   inquirySent: true,
 };
 
-describe('通知抑制也读每用户偏好（R62，偏好侧与设置侧任一为关即抑制）', () => {
+describe('通知抑制的权威按状态分（R62 步骤②：拿到偏好认偏好，没拿到回退设置侧）', () => {
   const payload = (type: NotificationType, eventId: string) => ({
     eventId,
     type,
@@ -138,12 +138,14 @@ describe('通知抑制也读每用户偏好（R62，偏好侧与设置侧任一�
   afterEach(() => {
     useNotificationStore.setState({
       preferences: { ...DEFAULT_PREFS_FOR_TEST },
+      preferencesLoaded: false,
     });
     useSettingsStore.setState({ notifications: { ...allOnSettings } });
   });
 
   it('偏好侧 inquirySent=false ⇒ INQUIRY_SENT 不写入（改前这一格必红：偏好从来没被读）', async () => {
     useNotificationStore.setState({
+      preferencesLoaded: true,
       preferences: { ...DEFAULT_PREFS_FOR_TEST, inquirySent: false },
     });
     await useNotificationStore
@@ -154,6 +156,7 @@ describe('通知抑制也读每用户偏好（R62，偏好侧与设置侧任一�
 
   it('别名映射：偏好侧关的是 deadlineReminder，抑制的必须是 DEADLINE_APPROACHING', async () => {
     useNotificationStore.setState({
+      preferencesLoaded: true,
       preferences: { ...DEFAULT_PREFS_FOR_TEST, deadlineReminder: false },
     });
     await useNotificationStore
@@ -164,6 +167,7 @@ describe('通知抑制也读每用户偏好（R62，偏好侧与设置侧任一�
 
   it('别名映射第二对：偏好侧 approvalResult=false 抑制 APPROVAL', async () => {
     useNotificationStore.setState({
+      preferencesLoaded: true,
       preferences: { ...DEFAULT_PREFS_FOR_TEST, approvalResult: false },
     });
     await useNotificationStore
@@ -179,12 +183,26 @@ describe('通知抑制也读每用户偏好（R62，偏好侧与设置侧任一�
     expect(useNotificationStore.getState().notifications.map((n) => n.id)).toContain('e-pref-4');
   });
 
-  it('本机设置侧关掉仍然抑制（既有行为不得因这次改动回退）', async () => {
+  it('回退分支：没拿到偏好时（离线/首启动/迁移未完成）本机设置侧仍然兜住抑制', async () => {
+    useNotificationStore.setState({ preferencesLoaded: false });
     useSettingsStore.setState({ notifications: { ...allOnSettings, quotationSubmitted: false } });
     await useNotificationStore
       .getState()
       .addNotification(payload(NotificationType.QUOTATION_SUBMITTED, 'e-pref-5'));
     expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('步骤②：已拿到偏好时权威只在偏好侧——设置侧的 false 不再参与判断', async () => {
+    useNotificationStore.setState({
+      preferencesLoaded: true,
+      preferences: { ...DEFAULT_PREFS_FOR_TEST },
+    });
+    useSettingsStore.setState({ notifications: { ...allOnSettings, quotationSubmitted: false } });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.QUOTATION_SUBMITTED, 'e-auth-move'));
+    // 不再抑制：这条不是"放宽"，而是"同一概念只剩一个权威"——值已由写穿/迁移搬到偏好侧
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toContain('e-auth-move');
   });
 });
 
