@@ -7,7 +7,12 @@ pytest-cov==7.1.0
 httpx==0.28.1
 bcrypt==4.2.1
 # 对称加密（加密存储演示密钥，解密密钥 FERNET_KEY 走环境变量）
-cryptography==44.0.1
+# 50.0.1：pip-audit 门禁在 CI 上报 `Found 10 known vulnerabilities in 1 package`，包名就是 cryptography 44.0.1
+# （一手：PR #5 评论 21:38:52 的失败步原文块；本机同版本量具复算 `uvx pip-audit@2.10.1 -r requirements.txt`
+#   得同一判决：10 条全落在 cryptography==44.0.1，修复版本分别是 46.0.5 / 46.0.6 / 48.0.1 / 49.0.0 / 50.0.0，
+#   取覆盖全部的最高要求 50.0.0 之上的当前补丁版）。
+# 本仓只用它的 Fernet 一处（app/config.py:304），API 跨 44→50 未变。
+cryptography==50.0.1
 alembic==1.14.0
 python-multipart==0.0.31
 # 传递依赖安全修复（pip-audit 门禁）：
