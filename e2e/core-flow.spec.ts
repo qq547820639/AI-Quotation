@@ -41,7 +41,18 @@ test.describe('核心业务链路', () => {
     await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
 
     // 3. 采购查看报价对比
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：先等"喂这块视图的那次读"落地，再断渲染。
+    // 这样断言测的是"数据到了却没渲染"（真缺陷），而不是"读+渲染没挤进 10 s"（环境竞速）；
+    // 渲染断言本身保留——去掉它就等于不再检查渲染，那是放宽而不是修准。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     await expect(page.locator('.ant-statistic').first()).toBeVisible({ timeout: 10000 });
     // 对比表出现（含供应商列）
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
@@ -74,7 +85,16 @@ test.describe('核心业务链路', () => {
     });
 
     // 7. 审批通过
-    await page.goto('/approval');
+    // R65 续三：同上，先等 /api/inquiries 的读落地，再断表格渲染（今天 4/12 与 1/16 的红都在这一格）
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/approval'),
+    ]);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 5000 });
