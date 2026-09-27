@@ -114,7 +114,11 @@ export default function SettingsPage() {
       title: i18n.t('settings.dataManagement.clearDraftTitle'),
       content: i18n.t('settings.dataManagement.clearDraftContent'),
       onOk: () => {
-        removeKey('inquiry_draft');
+        const receipt = removeKey('inquiry_draft');
+        if (!receipt.success) {
+          notifyError(i18n.t('storage.writeFailed'));
+          return;
+        }
         notifySuccess(i18n.t('settings.dataManagement.clearDraftSuccess'));
       },
     });
@@ -126,7 +130,12 @@ export default function SettingsPage() {
       content: i18n.t('settings.dataManagement.resetAllContent'),
       danger: true,
       onOk: () => {
-        clearAll();
+        const receipt = clearAll();
+        if (!receipt.success) {
+          // 不刷新：reload 会把这条失败提示连同用户的重试机会一起抹掉
+          notifyError(i18n.t('storage.writeFailed'));
+          return;
+        }
         notifySuccess(i18n.t('settings.dataManagement.resetAllSuccess'));
         window.location.reload();
       },

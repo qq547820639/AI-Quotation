@@ -1655,6 +1655,9 @@
       "disclaimer": "（本结论由系统智能分析生成，仅供决策参考，最终定标请结合实际业务需求。）"
     }
   },
+  "storage": {
+    "writeFailed": "本机存储写入失败，请检查浏览器存储空间是否已满"
+  },
   "errors": {
     "unauthorized": "未授权，请登录",
     "forbidden": "无权限访问",

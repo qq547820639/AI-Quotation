@@ -35,6 +35,14 @@ jobs:
       - name: Frontend unit tests with coverage gate (>=30%)
         run: npx vitest run --coverage
       - run: npm run i18n:check
+      - name: Verify local-storage writes don't announce success without a receipt
+        # R50：storage.ts 的 saveJSON/removeKey/clearAll 过去把 QuotaExceededError/SecurityError
+        # 就地吞掉并返回 void ⇒ 调用方没有任何凭据，却能弹"已保存/已清空/已删除"。
+        # 判据按函数粒度走 AST：丢弃回执 + 同函数后跟 notifySuccess + 无其他凭据（await / .success 读）⇒ 红。
+        # 自测臂：注入 3 处必须开火、删掉成功提示必须降到 quiet（证明它不把"丢弃结果"本身当违规）。
+        run: |
+          npm run storage:check
+          node scripts/check-storage-receipt.mjs --self-test
       - name: Upload frontend test logs on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
