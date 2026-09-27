@@ -39,7 +39,21 @@ test.describe('Access Token 自动续期', () => {
       const refreshResponsePromise = page.waitForResponse('**/api/auth/refresh', {
         timeout: 30000,
       });
-      await page.goto('/inquiry/list');
+      // R65 续三：同一次 goto 由两个等待器共享。第二个等"喂这次列表渲染的那次读"落地
+      // （GET /api/inquiries 的列表端点形状，排除 401 那一趟——本用例里它必然先 401 再被续期重放），
+      // 于是下面的渲染断言测的是"数据到了却没渲染"，而不是"读+渲染没挤进 30 s"。断言原样保留。
+      const dataListResponsePromise = page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          r.status() < 400 &&
+          /\/api\/inquiries(\?|$)/.test(r.url()),
+        { timeout: 20000 },
+      );
+      await Promise.all([
+        refreshResponsePromise,
+        dataListResponsePromise,
+        page.goto('/inquiry/list'),
+      ]);
       const refreshResponse = await refreshResponsePromise;
 
       // 真发生了续期，且后端按同源放行了（403 = Origin 校验把续期挡在门外）

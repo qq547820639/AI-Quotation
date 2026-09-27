@@ -110,7 +110,16 @@ async function toggleSupplierRow(page: Page, row: Locator) {
 }
 
 async function openSupplierPageAndToggle(page: Page) {
-  await page.goto('/supplier');
+  // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染，改在这里＝六个调用点一起受益。
+  // 这些调用点的 page.route 都只对 PUT 动手（注入的正是那次写），GET 一律 route.continue()；
+  // 且列表读 /api/suppliers 不匹配 glob `**/api/suppliers/*`（要求 suppliers 后还有一段），没人拦它。
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+      { timeout: 20000 },
+    ),
+    page.goto('/supplier'),
+  ]);
   await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
   const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
   await expect(row).toBeVisible({ timeout: 5000 });
@@ -140,7 +149,16 @@ test.describe('异常场景', () => {
     });
 
     await login(page, ADMIN);
-    await page.goto('/supplier');
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染。
+    // 上面那条 route 挂的是 PUT（"后端挂起"是这一格的注入点），GET 走 route.continue()；
+    // 且列表读 /api/suppliers 不匹配 glob `**/api/suppliers/*`，等的是真后端那一次。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
     const row = page.locator(DATA_ROW).filter({ hasText: SUP1 }).first();
     await expect(row).toBeVisible({ timeout: 5000 });
@@ -308,7 +326,15 @@ test.describe('异常场景', () => {
     // 单价 100 × 数量 10 = 1000，低于审批阈值 50000 → 不必走审批即可定标
     await submitQuoteViaPortal(page, inquiryId, 'sup-2', '100');
     await submitQuoteViaPortal(page, inquiryId, 'sup-5', '110');
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三同形状：先等喂这块视图的那次读落地，再断渲染。
+    // 断言因此测"数据到了却没渲染"（真缺陷），而不是"读＋渲染没挤进 10 s"（环境竞速）。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     await chooseSupplierOnCompare(page, SUPPLIER_A);
 
@@ -350,7 +376,16 @@ test.describe('异常场景', () => {
     ).toBe(true);
 
     // 状态没被改动：重新加载后仍可定标（服务端仍是「报价已完成」）
-    await page.reload();
+    // R65 续三：reload 同形状——监听先挂上再刷新。本用例的 route 只命中 `**/api/inquiries/*/confirm`
+    // （那是被注入 500 的写），那次 GET /api/quotations 不被拦；而本页在报价读落地前一直渲染 Spin
+    // （src/pages/quotation/compare/index.tsx:302，且 useQuotationFreshness.ts:21 每次挂载都重发），所以按同一判据等它。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.reload(),
+    ]);
     await expect(page.getByRole('button', { name: CONFIRM_AWARD })).toBeVisible({
       timeout: 15000,
     });
@@ -369,7 +404,16 @@ test.describe('异常场景', () => {
     });
 
     await login(page, ADMIN);
-    await page.goto('/supplier');
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染。
+    // 上面那条 route 对 PUT 才动手（它才是本用例数 putCount 的对象），GET 走 route.continue()；
+    // 列表读 /api/suppliers 也不匹配 glob `**/api/suppliers/*`，所以等的是真后端那一次。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
     const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
     await toggleSupplierRow(page, row);
@@ -410,7 +454,16 @@ test.describe('异常场景', () => {
     });
 
     await login(page, ADMIN);
-    await page.goto('/supplier');
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染。
+    // 上面那条 route 只吃 PUT（批量停用的写），else 分支是 route.continue()，
+    // 且 glob `**/api/suppliers/*` 要求 suppliers 后还有一段路径，列表读 /api/suppliers 根本不命中它。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
     // 勾选 sup-1 与 sup-2 两行
@@ -456,10 +509,27 @@ test.describe('异常场景', () => {
 
   test('页面刷新：刷新后仍保持登录态且数据可加载', async ({ page }) => {
     await login(page, ADMIN);
-    await page.goto('/supplier');
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers，文档挂载时由 src/App.tsx:30 发起）落地，再断渲染。
+    // 本用例没有任何 page.route，这条 GET 不被拦；生产形态 store 首帧是空数组
+    // （src/store/useSupplierStore.ts:97 不预置 mock），所以行只可能由这次读喂出来。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
-    await page.reload();
+    // R65 续三：reload 同形状——监听先挂上，再在同一个 Promise.all 里刷新。
+    // 刷新是真文档重载（store 复位为空），那次 GET /api/suppliers 必然重发，不会等一个不存在的响应。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.reload(),
+    ]);
     // 刷新后未跳回登录，且供应商列表仍可加载
     await expect(page).toHaveURL(/\/supplier/);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
@@ -467,7 +537,16 @@ test.describe('异常场景', () => {
 
   test('浏览器返回：从详情返回列表，前一页状态保留', async ({ page }) => {
     await login(page, ADMIN);
-    await page.goto('/inquiry/list');
+    // R65 续三：先等喂这张列表的那次读（GET /api/inquiries，文档挂载时由 src/App.tsx:29 发起）落地，再断渲染。
+    // 本用例没有任何 page.route，这条 GET 不被拦；列表行取的是 store（src/pages/inquiry/list/index.tsx:242
+    // 的服务端分页在无 ?page= 时不启用），所以这一格测的应是"读到了却没渲染"，而不是"读+渲染没挤进 10 s"。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/inquiry/list'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
     // 进入第一行详情

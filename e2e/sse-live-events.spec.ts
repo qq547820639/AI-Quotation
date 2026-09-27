@@ -12,7 +12,17 @@ const STREAM_PATH = '/api/events/stream';
 
 /** 在门户页（独立 page）以邀请令牌提交一条报价 */
 async function submitFromPortal(portal: Page, invitationToken: string, unitPrice: string) {
-  await portal.goto(`/supplier-portal/${invitationToken}`);
+  // R65 续三：门户表单只在 phase='valid' 才渲染，而它要等 GET /api/portal/inquiries 回来
+  // （src/pages/supplier-portal/index.tsx:157-200）。先等这条读，再断输入框渲染。
+  await Promise.all([
+    portal.waitForResponse(
+      (r) => r.request().method() === 'GET' && /\/api\/portal\/inquiries/.test(r.url()),
+      {
+        timeout: 20000,
+      },
+    ),
+    portal.goto(`/supplier-portal/${invitationToken}`),
+  ]);
   const unitPriceInput = portal.locator('input[id$="-unitPrice"]').first();
   const deliveryInput = portal.locator('input[id$="-deliveryDays"]').first();
   await expect(unitPriceInput).toBeVisible({ timeout: 15000 });
@@ -50,7 +60,17 @@ test.describe('SSE 实时推送', () => {
     const { inquiryId, subject } = await createAndSendInquiry(page);
     const invitationToken = await getInvitationToken(page, inquiryId, 'sup-2');
 
-    await page.goto('/quotation/pending');
+    // R65 续三：待回收页的行与"0/2"计数同源于两份列表（src/pages/quotation/pending/index.tsx:89-91），
+    // 先等 GET /api/quotations 这条读落地——它才是 0/2 里那个分子的唯一来源；渲染断言原样不动。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/quotation/pending'),
+    ]);
     const row = page.locator(DATA_ROW).filter({ hasText: subject }).first();
     await expect(row).toBeVisible({ timeout: 15000 });
     await expect(row).toContainText('0/2');

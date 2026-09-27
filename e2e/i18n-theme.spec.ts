@@ -12,6 +12,13 @@ test.describe('i18n 与主题', () => {
   });
 
   test('切换语言为 English 并验证文案', async ({ page }) => {
+    // R65 续三族（同形状，但这一格不是取数竞速，是"单向断言"）：
+    // 下面那条 /Dashboard|Inquiry|Supplier/i 只证明"页面里有英文词"，不证明"中文被换掉了"。
+    // 补一根切换前的中文基线 + 切换后该基线必须消失，断言才成对。
+    // 用整页文本而不是某个菜单节点：窄屏（Pixel 7 / iPhone 13）侧栏收成抽屉，节点形态不同，
+    // 而 i18n 的 locale 字符串在两种布局下都挂在 body 上。
+    await expect(page.locator('body')).toContainText('工作台');
+
     // 找到语言切换按钮（GlobalOutlined 图标，含"中"或"EN"文字）
     const langBtn = page.locator('button:has(.anticon-global)').first();
     await expect(langBtn).toBeVisible({ timeout: 5000 });
@@ -32,6 +39,8 @@ test.describe('i18n 与主题', () => {
     await expect(page.locator('body')).toContainText(/Dashboard|Inquiry|Supplier/i, {
       timeout: 5000,
     });
+    // 反向：切换前的那块中文文案必须不在（只弹不换 / 换了个别的都不会翻红）
+    await expect(page.locator('body')).not.toContainText('工作台');
 
     // 切回中文（恢复默认状态）
     await langBtn.click();

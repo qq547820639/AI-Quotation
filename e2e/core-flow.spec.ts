@@ -111,7 +111,17 @@ test.describe('核心业务链路', () => {
     });
 
     // 8. 完成定标
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：同第 3 步——「确认定标」要过 compare/index.tsx:302 那道 loaded 闸才渲染，
+    // 先等喂它的那次 GET /api/quotations 落地（useQuotationFreshness.ts:21 每次挂载恰好一发），再断按钮在场。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     const confirmBtn = page.getByRole('button', { name: /确认定标|Confirm Result/ });
     await expect(confirmBtn).toBeVisible({ timeout: 10000 });
     // R65 续：同上，等 /confirm 的响应；后面详情页的终态断言负责"真的定标了"
@@ -121,10 +131,29 @@ test.describe('核心业务链路', () => {
     });
 
     // 9. 校验最终状态与持久化（刷新后仍在详情页看到已完成状态）
-    await page.goto(`/inquiry/detail/${inquiryId}`);
+    // R65 续三：详情页的 subject 与终态直取询价清单 store（inquiry/detail/index.tsx:114，本页不自己拉），
+    // 喂它的是整份文档载入时那次 GET /api/inquiries（App.tsx:61 → 31 → useInquiryStore.ts:175）——先等它落地再断。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/inquiry/detail/${inquiryId}`),
+    ]);
     await expect(page.locator('body')).toContainText(subject, { timeout: 10000 });
     await expect(page.locator('body')).toContainText(/已完成|Completed/, { timeout: 5000 });
-    await page.reload();
+    // R65 续三：reload 同形——刷新会重开一份文档、重发那次 GET /api/inquiries，把它一起包进 Promise.all。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.reload(),
+    ]);
     await expect(page.locator('body')).toContainText(subject, { timeout: 10000 });
   });
 
@@ -136,7 +165,16 @@ test.describe('核心业务链路', () => {
     await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
 
     // 进入对比页，选择供应商并提交审批
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：同全链路用例第 3 步——先等喂这块视图的 GET /api/quotations 落地，再断表格渲染。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     // R65：这一格换成等 PUT /api/inquiries/:id（inquiryApi.update 带 selectedSupplierMap）返回 <300。
     // 两处同形（本用例与"审批驳回后不可定标"）一起换：各自下一步都只在选择真落地后才存在
@@ -159,7 +197,17 @@ test.describe('核心业务链路', () => {
     });
 
     // 审批驳回
-    await page.goto('/approval');
+    // R65 续三：同全链路用例第 7 步——审批页 dataSource 直取 store，靠 approval/index.tsx:78
+    // 每次挂载补拉的那次 GET /api/inquiries 喂；先等它落地，再断这一行在表里。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/approval'),
+    ]);
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 10000 });
     // R68：这一处是 R65 批量换凭据时漏下的位点（文案与结构与其他几处不同，正则没匹配到它）。
@@ -179,7 +227,17 @@ test.describe('核心业务链路', () => {
     );
 
     // 驳回后审批节点为 REJECTED，不应出现"确认定标"按钮（无法定标）
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：同上，先等喂对比视图的 GET /api/quotations 落地。下面那条 `.ant-table` 在场断言
+    // 要过 compare/index.tsx:302 的 loaded 闸，负向断言因此排在"数据已到"之后，不再吃空壳页的假绿。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: /确认定标|Confirm Result/ })).not.toBeVisible({
       timeout: 5000,

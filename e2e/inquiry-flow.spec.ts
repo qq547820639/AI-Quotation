@@ -16,7 +16,17 @@ test.describe('询价全流程', () => {
   });
 
   test('查看询价列表有数据', async ({ page }) => {
-    await page.goto('/inquiry/list');
+    // R65 续三：先等"喂这张表的读"落地（每次 goto 是整文档加载，App 挂载即引导 GET /api/inquiries，
+    // 见 src/App.tsx:29 → src/store/useInquiryStore.ts:175），再断渲染。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/inquiry/list'),
+    ]);
     // 验证询价单表格有数据
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
     const rowCount = await page.locator(DATA_ROW).count();
@@ -24,7 +34,17 @@ test.describe('询价全流程', () => {
   });
 
   test('查看询价详情', async ({ page }) => {
-    await page.goto('/inquiry/list');
+    // R65 续三：列表这一跳先等 GET /api/inquiries 落地，行渲染断言原样留着——
+    // 这样它只在"数据到了却渲染不出行"时红，不再赌"读+渲染挤不挤得进 10 s"。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/inquiry/list'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
     // 点击第一行的查看/详情按钮
     // 桌面表格给行内「查看」按钮，移动端卡片视图只有「更多」下拉里的同名项，两种入口都算通过。
@@ -50,7 +70,17 @@ test.describe('询价全流程', () => {
     const { inquiryId, subject } = await createAndSendInquiry(page);
     await submitQuoteViaPortal(page, inquiryId, 'sup-2', '100');
 
-    await page.goto('/quotation/compare');
+    // R65 续三：卡列表由 GET /api/inquiries 喂（inquiries.length === 0 时整页是 Empty，
+    // 见 src/pages/quotation/compare/CompareInquiryPicker.tsx:21），先等这条读落地再断卡片渲染。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/quotation/compare'),
+    ]);
     const card = page.locator('.ant-card[role="button"]').filter({ hasText: subject }).first();
     await expect(card).toBeVisible({ timeout: 15000 });
     // 卡片自带 role="button" + Enter 处理；用键盘避开弹层/浮层的命中测试干扰
@@ -73,7 +103,17 @@ test.describe('询价全流程', () => {
   });
 
   test('列表状态标签可见', async ({ page }) => {
-    await page.goto('/inquiry/list');
+    // R65 续三：行与行内的状态 Tag 同源于这份列表数据，先等 GET /api/inquiries 落地，
+    // 后面两条渲染断言（含那条不带显式超时的 `.ant-tag`）原样不动。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/inquiry/list'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
     // 验证每行有状态 Tag
     await expect(page.locator(`${DATA_ROW} .ant-tag`).first()).toBeVisible();

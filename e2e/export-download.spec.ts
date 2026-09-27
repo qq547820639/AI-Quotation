@@ -114,7 +114,17 @@ test.describe('Excel 导出的浏览器级落地（R41 顺序 + R44 重入）', 
     // 5 个 project 全绿（含 webkit），所以这一格不设适用域闸门
     test.setTimeout(120_000);
     await login(page, '李明辉');
-    await page.goto('/inquiry/list');
+    // R65 续三：导出按钮长在列表行里，先等喂这张表的 GET /api/inquiries 落地再断行渲染；
+    // 本用例真正要验的先后顺序与下载语义一条不动。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/inquiry/list'),
+    ]);
     await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 15_000 });
 
     const btn = page.getByRole('button', { name: /导出当前筛选结果|Export current/ });
@@ -149,7 +159,17 @@ test.describe('Excel 导出的浏览器级落地（R41 顺序 + R44 重入）', 
     test.skip(test.info().project.name.startsWith('mobile'), DESKTOP_ONLY);
     test.setTimeout(120_000);
     await login(page, '李明辉');
-    await page.goto('/inquiry/list');
+    // R65 续三：逐行导出的那颗按钮在行内，行来自 GET /api/inquiries——先等读落地再断渲染，
+    // 让这一格只在"数据到了却没有行/没有按钮"时红，不再赌机器快慢。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/inquiry/list'),
+    ]);
     const row = page.locator(DATA_ROW).first();
     await expect(row).toBeVisible({ timeout: 15_000 });
 

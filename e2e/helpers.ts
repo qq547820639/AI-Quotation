@@ -284,7 +284,18 @@ export async function submitQuoteViaPortal(
   unitPrice: string,
 ) {
   const invitationToken = await getInvitationToken(page, inquiryId, supplierId);
-  await page.goto(`/supplier-portal/${invitationToken}`);
+  // R65 续三：先等"喂门户表单的那次读"落地（GET /api/portal/inquiries，见 src/api/portal.ts:249，
+  // 它返回的 items 才是下面那些 `-unitPrice` 输入框的来源），再断渲染。
+  // 这样红了读作"数据到了却没渲染"，而不是"读+渲染没挤进 10 s"的环境竞速。
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.request().method() === 'GET' && /\/api\/portal\/inquiries/.test(r.url()),
+      {
+        timeout: 20000,
+      },
+    ),
+    page.goto(`/supplier-portal/${invitationToken}`),
+  ]);
   // 按产品给每个输入框的稳定 id（`${inquiryItemId}-unitPrice` / `-deliveryDays`）定位：
   // 位置索引（first/nth(2)）在窄屏卡片式表单下会命中别的列，导致提交被校验挡下
   const unitPriceInput = page.locator('input[id$="-unitPrice"]').first();

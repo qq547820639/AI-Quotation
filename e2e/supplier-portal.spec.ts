@@ -20,7 +20,18 @@ test.describe('供应商门户', () => {
 
     // 获取该询价下 sup-2 的有效邀请令牌（不可预测，非枚举 ID）
     const invitationToken = await getInvitationToken(page, inquiryId, 'sup-2');
-    await page.goto(`/supplier-portal/${invitationToken}`);
+    // R65 续三：门户的可报价表单只在 GET /api/portal/inquiries（src/api/portal.ts:249）回来后
+    // 才从 loading 切到 valid 渲染（src/pages/supplier-portal/index.tsx:157-200）。
+    // 先等这条读，后面单价/交货期/正式提交三步的渲染断言原样不动。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/portal\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/supplier-portal/${invitationToken}`),
+    ]);
 
     // 关键步骤1：报价表单单价输入框必须可见（否则直接失败，不跳过）
     // 按产品提供的稳定 id 定位，不用位置索引——窄屏是卡片式表单，索引会命中别的列
@@ -56,7 +67,17 @@ test.describe('供应商门户', () => {
     await login(page, '王志强');
     const { inquiryId } = await createAndSendInquiry(page);
     const invitationToken = await getInvitationToken(page, inquiryId, 'sup-2');
-    await page.goto(`/supplier-portal/${invitationToken}`);
+    // R65 续三：本用例下面的 page.route 只桩 POST /api/portal/quotations/submit，
+    // 不拦门户这条 GET，所以等的仍是真实读：先等 GET /api/portal/inquiries 再断表单渲染。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/portal\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/supplier-portal/${invitationToken}`),
+    ]);
 
     const unitPriceInput = page.locator('input[id$="-unitPrice"]').first();
     await expect(unitPriceInput).toBeVisible({ timeout: 10000 });
@@ -112,7 +133,19 @@ test.describe('供应商门户', () => {
 
   test('使用无效邀请令牌访问门户被拒绝', async ({ page }) => {
     // 门户为公开页面，无需采购登录；伪造不可用的邀请令牌应被拒绝，而非展示报价表单
-    await page.goto('/supplier-portal/definitely-invalid-token-123');
+    // R65 续三：无效令牌下 loadValidData（含 GET /api/portal/inquiries）根本不会被调用
+    // （src/pages/supplier-portal/index.tsx:254 只在 status==='valid' 分支进），等它会挂死；
+    // 决定这块渲染的是 validate 那次 GET——它必带响应（后端 portal.py:129 的 401 也算），故按它等。
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' && /\/api\/portal\/invitations\/validate/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/supplier-portal/definitely-invalid-token-123'),
+    ]);
     // 断言不出现报价表单（未授权），而是出现错误/过期提示
     await expect(page.locator('.ant-input-number input').first()).not.toBeVisible({
       timeout: 10000,
