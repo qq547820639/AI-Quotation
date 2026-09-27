@@ -60,6 +60,18 @@ const INERT_DECLARED = {
 };
 
 /**
+ * local-only 台账：有读者但不上行的单位。这个状态本身就是一条主张——"它只对本机生效"——
+ * 所以必须逐条签字；不签字就判红。R49 当初登记的就是这个状态，而它当时没人签过。
+ * 新增条目要写清"为什么只对本机是对的"，否则下一步就该是把它上行。
+ */
+const LOCAL_ONLY_DECLARED = {
+  'notifications.inquirySent':
+    '同一概念已经有一份是每用户的（backend UserNotificationPreference ↔ src/pages/notification/index.tsx 那张真落库的偏好页），设置页这一格是第二个入口；先要裁的是"全局配置还是个人偏好"，裁完才知道该往哪张表写，先加列只会把两处入口都变成权威',
+  notifications:
+    '容器单位：上行轴按设计只记到具体键与顶层字段（见 classify 里排除容器的注释），容器不上行是设计不是缺陷',
+};
+
+/**
  * 跨侧读者台账：`uploaded-only` 档说的是"前端这侧没人读"，但有些单位的读者在另一条线上
  * （AI 配置由后端 ai.py 读）。TS Program 结构上看不见 Python，所以这一格只能靠**带出处的声明**，
  * 并且出处必须被本尺子重新打开验一次（引不到=判红）——否则它就是一张会过期的空头台账。
@@ -245,7 +257,14 @@ function enclosingFn(node) {
 }
 
 /** 判红规则：未声明的惰性、过期的声明、uploaded-only、Σ≠分母、台账里出现了不存在的单位 */
-function judge({ rows, denominator }, inertDeclared, label, crossSide = {}, root = ROOT) {
+function judge(
+  { rows, denominator },
+  inertDeclared,
+  label,
+  crossSide = {},
+  root = ROOT,
+  localOnly = {},
+) {
   const errors = [];
   if (rows.length !== denominator) {
     errors.push(`整仓：Σ行数(${rows.length}) != 分母(${denominator}) ⇒ 语料被漏扫`);
@@ -273,6 +292,20 @@ function judge({ rows, denominator }, inertDeclared, label, crossSide = {}, root
         : '';
       errors.push(
         `${label}：${row.unit} 既不上行也没有读者${t} ⇒ 要么接上它，要么写明理由挂进惰性台账`,
+      );
+    }
+    if (row.bucket === 'local-only') {
+      // 只问"有没有签字"，不去分辨读者是窄面还是宽面：宽面的本分是**减少指控**（文件头那条 R55 规矩），
+      // 一旦让它造出红，就等于把一把只许松绑的面变成了收紧的面。
+      if (!localOnly[row.unit]) {
+        errors.push(
+          `${label}：${row.unit} 有读者却不上行 ⇒ 这是一条"只对本机生效"的主张，要么上行它，要么写明为什么只对本机是对的（local-only 台账）`,
+        );
+      }
+    }
+    if (row.bucket === 'live' && localOnly[row.unit]) {
+      errors.push(
+        `台账：${label} 声明 ${row.unit} 只对本机生效，但它现在已上行（读者 ${row.readSites[0]}）⇒ 清单已过期，删掉这条`,
       );
     }
     if (row.bucket === 'uploaded-only') {
@@ -316,6 +349,12 @@ function realProgram() {
 }
 
 /** 自检：夹具落 TMPDIR 的真文件（不在仓库里，也不软链回真树），用默认 host 正常解析相对 import */
+const FIXTURE_LOCAL = {
+  viaSelector: '夹具',
+  notifications: '夹具',
+  'notifications.inertKey': '夹具',
+};
+
 function selfTest() {
   const dir = mkdtempSync(join(tmpdir(), 'qqi-settings-inert-'));
   const W = (rel, text) => {
@@ -471,8 +510,44 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
           why: '夹具借用真出处',
         },
       },
+      ROOT,
+      FIXTURE_LOCAL,
     );
     if (okLedger.length) bad.push('不该开火却判红：' + okLedger.join(' / '));
+    // local-only 台账三极性：没签字必须红、谎报必须红、签到位必须零红
+    const loUndeclared = judge(
+      { rows: res.rows, denominator: res.denominator },
+      { inertPlain: 'x', dupNameUnrelated: 'x' },
+      '夹具',
+      {},
+      ROOT,
+      {},
+    );
+    for (const u of ['viaSelector', 'notifications', 'notifications.inertKey']) {
+      if (!loUndeclared.some((e) => e.includes(u) && e.includes('只对本机生效')))
+        bad.push(
+          '必开火失败：' +
+            u +
+            ' 是 local-only 却没签字，尺子没判红 ⇒ 上行缺口可以无人签字地长期存在',
+        );
+    }
+    const loStale = judge(
+      { rows: res.rows, denominator: res.denominator },
+      { inertPlain: 'x', dupNameUnrelated: 'x' },
+      '夹具',
+      {},
+      ROOT,
+      { ...FIXTURE_LOCAL, readNarrow: '谎报：它其实已上行' },
+    );
+    if (!loStale.some((e) => e.includes('readNarrow') && e.includes('清单已过期')))
+      bad.push('必开火失败：把已上行的单位签成 local-only，没被判"清单已过期" ⇒ 台账可以单向撒谎');
+    // 参数闸门：未知旗标必须退 2，合法旗标必须不退 2，且 --self-test 自己在白名单里
+    if (argFault(['--self-tset']) === null)
+      bad.push('必开火失败：拼错的 --self-test 没被拒 ⇒ 假绿形状还在');
+    if (argFault(['--print-sites', '--json']) !== null)
+      bad.push('不该开火却判故障：合法旗标被拒了');
+    if (!FLAGS.includes('--self-test'))
+      bad.push('--self-test 不在白名单里 ⇒ 真 CLI 旗标坏了而自测照样绿');
     // 同名不同物必须没被算成读者（否则文本匹配冒充类型解析）
     const dup = res.rows.find((r) => r.unit === 'dupNameUnrelated');
     if (dup && dup.readSites.length) bad.push(`同名不同物被误判为读者：${dup.readSites.join(',')}`);
@@ -489,7 +564,14 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
     }
     // 真实树必须干净，且尺子不能是瞎的：live 档必须 > 0
     const real = analyze(realProgram());
-    const realErrors = judge(real, real.inertDeclared, '真树', CROSS_SIDE_READERS);
+    const realErrors = judge(
+      real,
+      real.inertDeclared,
+      '真树',
+      CROSS_SIDE_READERS,
+      ROOT,
+      LOCAL_ONLY_DECLARED,
+    );
     if (realErrors.length) {
       console.error('✗ 自检失败：真实仓库未过门禁（先修产品或更正台账，再谈尺子）');
       for (const e of realErrors) console.error('   ', e);
@@ -538,7 +620,7 @@ export function use(i: Inquiry) { return i.dupNameUnrelated; }
       .join(' ');
     console.log(
       `✔ 自检通过：夹具 ${res.denominator} 单位四档全对（含"同名不同物不算读者""编辑面不算读者""计算下标靠宽面救回"三极性）、` +
-        `两向必开火（未声明的惰性 / 谎报惰性 / 跨侧引用三态）各开一次、合规侧零红；` +
+        `必开火各臂（未声明的惰性 / 谎报惰性 / local-only 未签字 / local-only 谎报 / 跨侧引用三态 / 参数闸门）全开、合规侧零红；` +
         `真实仓库 ${real.denominator} 单位（${t}）与台账一致`,
     );
     return 0;
@@ -552,12 +634,29 @@ function fault(msg) {
   return 2;
 }
 
+const FLAGS = ['--self-test', '--print-sites', '--json'];
+/** 未知旗标 = 量具故障（退 2）。九度收尾那一列 rc=0 里就混着"这个臂根本不存在" */
+function argFault(args) {
+  const bad = args.filter((a) => !FLAGS.includes(a));
+  if (!bad.length) return null;
+  return `未知参数 ${bad.join(' ')}；本尺子只接受 ${FLAGS.join(' | ')}`;
+}
+
 function main() {
   const args = process.argv.slice(2);
+  const bad = argFault(args);
+  if (bad) return fault(bad);
   if (!existsSync(join(ROOT, STORE_FILE))) return fault(`找不到 ${STORE_FILE}，分母无从取得`);
   if (args.includes('--self-test')) return selfTest();
   const res = analyze(realProgram());
-  const errors = judge(res, res.inertDeclared, '真树', CROSS_SIDE_READERS);
+  const errors = judge(
+    res,
+    res.inertDeclared,
+    '真树',
+    CROSS_SIDE_READERS,
+    ROOT,
+    LOCAL_ONLY_DECLARED,
+  );
   if (args.includes('--print-sites')) {
     for (const r of res.rows) {
       const sites = [...r.readSites, ...r.wideSites].slice(0, 2).join(' ');
@@ -577,7 +676,7 @@ function main() {
     .map(([k, v]) => `${k}=${v}`)
     .join(' ');
   console.log(
-    `✔ 设置项惰性判据通过：单位 ${res.denominator}（${t}）｜惰性已声明 ${Object.keys(res.inertDeclared).length} 条`,
+    `✔ 设置项惰性判据通过：单位 ${res.denominator}（${t}）｜惰性已声明 ${Object.keys(res.inertDeclared).length} 条｜local-only 已签字 ${Object.keys(LOCAL_ONLY_DECLARED).length} 条`,
   );
   return 0;
 }
