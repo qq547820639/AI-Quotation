@@ -113,10 +113,14 @@ if (missingInEn.length || missingInZh.length) {
   failed = true;
   console.error('✘ zh-CN 与 en-US 键集合不一致：');
   if (missingInEn.length) {
-    console.error(`  zh-CN 有但 en-US 缺失（${missingInEn.length}）：\n    ${missingInEn.join('\n    ')}`);
+    console.error(
+      `  zh-CN 有但 en-US 缺失（${missingInEn.length}）：\n    ${missingInEn.join('\n    ')}`,
+    );
   }
   if (missingInZh.length) {
-    console.error(`  en-US 有但 zh-CN 缺失（${missingInZh.length}）：\n    ${missingInZh.join('\n    ')}`);
+    console.error(
+      `  en-US 有但 zh-CN 缺失（${missingInZh.length}）：\n    ${missingInZh.join('\n    ')}`,
+    );
   }
 } else {
   console.log(`✔ 中英文键集合一致（共 ${zhKeys.size} 个键）`);
@@ -140,7 +144,9 @@ if (missingUsed.length || missingPrefix.length) {
     console.error(`  缺失键前缀（${missingPrefix.length}）：\n    ${missingPrefix.join('\n    ')}`);
   }
 } else {
-  console.log(`✔ 源码引用的 ${used.size} 个静态键 + ${prefixes.size} 个动态前缀均已在 locale 中定义`);
+  console.log(
+    `✔ 源码引用的 ${used.size} 个静态键 + ${prefixes.size} 个动态前缀均已在 locale 中定义`,
+  );
 }
 
 // 3) 未使用翻译键（提示，不阻断）
@@ -155,7 +161,9 @@ console.log(
   `ℹ️  引用面拆解：静态 t() ${used.size} 个 / 动态前缀 ${prefixes.size} 个 / 仅以字面量写在数据里 ${rescued.length} 个`,
 );
 if (unusedKeys.length) {
-  console.warn(`ℹ️  未使用翻译键（${unusedKeys.length}，仅供排查，不阻断）：\n    ${unusedKeys.join('\n    ')}`);
+  console.warn(
+    `ℹ️  未使用翻译键（${unusedKeys.length}，仅供排查，不阻断）：\n    ${unusedKeys.join('\n    ')}`,
+  );
 } else {
   console.log('✔ 无未使用翻译键');
 }
