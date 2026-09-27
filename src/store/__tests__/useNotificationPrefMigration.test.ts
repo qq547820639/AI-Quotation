@@ -19,6 +19,7 @@ vi.mock('@/api', () => ({ notificationApi: api }));
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { NotificationType } from '@/types';
+import type { UserNotificationPreferencesSchema } from '@/types';
 import { saveJSON, loadJSON, removeKey } from '@/utils/storage';
 
 const SERVER_ON = {
@@ -29,6 +30,7 @@ const SERVER_ON = {
   inquirySent: true,
 };
 const FLAG = 'notify_pref_migrated_v1';
+const PREFS_CACHE = 'user_notification_prefs';
 
 beforeEach(() => {
   api.getPreferences.mockReset();
@@ -97,6 +99,24 @@ describe('本机通知开关的一次性迁移（R62 步骤一）', () => {
 
     expect(loadJSON<boolean>(FLAG, false)).toBe(false);
     expect(useNotificationStore.getState().preferencesLoaded).toBe(false);
+  });
+
+  it('⑥ 成功取回偏好即写本机缓存（供离线启动当基线）', async () => {
+    api.getPreferences.mockResolvedValueOnce({ ...SERVER_ON, inquirySent: false });
+    await useNotificationStore.getState().loadPreferences();
+    expect(
+      loadJSON<UserNotificationPreferencesSchema>(PREFS_CACHE, { ...SERVER_ON }).inquirySent,
+    ).toBe(false);
+  });
+
+  it('⑦ 缓存里有上次的真值时，store 初值用它是而不是全 true 默认（离线首启动）', async () => {
+    saveJSON<UserNotificationPreferencesSchema>(PREFS_CACHE, {
+      ...SERVER_ON,
+      approvalResult: false,
+    });
+    vi.resetModules();
+    const mod = await import('../useNotificationStore');
+    expect(mod.useNotificationStore.getState().preferences.approvalResult).toBe(false);
   });
 
   it('④ 迁移只发生一次：标记已存在时不再发 PUT', async () => {

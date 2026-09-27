@@ -21,6 +21,12 @@ import { queryClient, QUERY_KEYS } from '@/lib/queryClient';
 import { ok, fail, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'notifications';
+/**
+ * R62 步骤①另一半：偏好的本机缓存。
+ * 目的不是加速，而是让"服务端还没答话"时 store 的初值仍是**上次真实拿到的偏好**——
+ * 否则下一次把权威收到偏好侧后，离线/首启动会把"用户关过"读成"没关"（全 true 默认值）。
+ */
+const PREFS_CACHE_KEY = 'user_notification_prefs';
 /** R62：一次性迁移标记（成功搬完才置真；搬失败保持假，下次仍会重试） */
 const MIGRATION_FLAG = 'notify_pref_migrated_v1';
 /** 去重窗口：同 inquiryId + type 10 分钟内不重复 */
@@ -98,7 +104,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   // P1-10 Task 15：生产模式不预置本地兜底数据，仅演示模式允许（真实与 mock 隔离）
   notifications: MOCK_FALLBACK_ENABLED ? loadJSON<Notification[]>(STORAGE_KEY, []) : [],
   unreadCount: 0,
-  preferences: DEFAULT_PREFERENCES,
+  preferences: loadJSON<UserNotificationPreferencesSchema>(PREFS_CACHE_KEY, DEFAULT_PREFERENCES),
   preferencesLoaded: false,
 
   // W7.4 + P1-10 Task 15：从 API 加载，合并本地独有通知；生产模式失败不静默回退
@@ -141,6 +147,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     try {
       const prefs = await notificationApi.getPreferences();
       set({ preferences: prefs, preferencesLoaded: true });
+      saveJSON(PREFS_CACHE_KEY, prefs); // 写缓存与落库解耦：只要这次真的拿到了，就值得留给离线当基线
       // R62 步骤①（只改这一件事）：`preferencesLoaded` 的含义是"可以只认偏好侧"，
       // 而本机已关的位还没搬成功时它并不成立 ⇒ 迁移没确认完成就把旗标收回假。
       // 注意：这一步**不**改变抑制行为（并集仍在），所以现有用例不该因此变动。
