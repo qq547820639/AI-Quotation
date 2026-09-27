@@ -10,7 +10,7 @@
  *  C. 只存在于本机的关闭被一次性搬到服务端；而服务端**已经**是关的时候绝不补发写请求
  *     （否则会把别的设备真实关掉的位翻回开）。
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Response as PwResponse } from '@playwright/test';
 import { login, createAndSendInquiry } from './helpers';
 
 /**
@@ -114,7 +114,21 @@ test.describe('R62 通知偏好：真后端写穿与一次性迁移', () => {
     );
     const bootPrefs = (await bootGetRes.json()) as Prefs;
 
+    // 前提要在**它承重的那一刻**验，不是在上一次启动时验：`page.goto` 是一次文档级导航，
+    // App 会重新挂载并再跑一遍 bootstrapStores ⇒ 又一次 loadPreferences；
+    // 那一趟如果失败，`preferencesLoaded` 会被收回 false（useNotificationStore.ts:168-171），
+    // 于是 `mergePreferences` 直接拒保存（:206）——本用例要的 PUT 根本不会发出。
+    // 第一版就是栽在这里：断言的是登录那次启动的 GET 200，保存却发生在设置页这次加载之后。
+    const prefsGetAtSettings = page.waitForResponse(
+      (r) => r.request().method() === 'GET' && PREFS_RE.test(r.url()),
+      { timeout: 20000 },
+    );
     await page.goto('/settings');
+    expect(
+      (await prefsGetAtSettings).status(),
+      '进入设置页那次启动必须把偏好拉回来，否则保存会被 R62 的前置拒掉',
+    ).toBe(200);
+
     const card = page.locator('.ant-card').filter({ hasText: /通知设置|Notification Settings/ });
     await expect(card).toHaveCount(1);
     const inquirySwitch = card.locator('#notification-inquirySent');
@@ -126,12 +140,31 @@ test.describe('R62 通知偏好：真后端写穿与一次性迁移', () => {
     await inquirySwitch.click();
     await expect(inquirySwitch).toHaveAttribute('aria-checked', 'false');
 
-    const put = page.waitForResponse(
-      (r) => r.request().method() === 'PUT' && PREFS_RE.test(r.url()),
-      { timeout: 20000 },
-    );
+    // 用"看得见拒绝理由"的方式等这次写，而不是干等一次裸超时：
+    // PUT 没发出时（多半就是上面那个前置没满足），把页面上的报错文案一起带进失败信息，
+    // 否则红只说"20 s 没等到 response"，下一轮还得从猜开始。
+    const putSeen: PwResponse[] = [];
+    page.on('response', (r) => {
+      if (r.request().method() === 'PUT' && PREFS_RE.test(r.url())) putSeen.push(r);
+    });
     await card.getByRole('button', { name: /保存|Save/ }).click();
-    const putRes = await put;
+    await expect
+      .poll(
+        async () => {
+          if (putSeen.length) return `put:${putSeen[0].status()}`;
+          const t = await page
+            .locator('.ant-message-error')
+            .first()
+            .textContent({ timeout: 500 })
+            .catch(() => '');
+          return `toast:${t}`;
+        },
+        { timeout: 20000, message: '点保存后必须发出 PUT；没发出时把页面的拒绝理由带出来' },
+      )
+      .toContain('put:');
+    // 断 PUT 只有**一次**：注册第二次 waitForResponse 已经在响应之后，永远等不到
+    const putRes = putSeen[0];
+    expect(putSeen, `PUT 发了 ${putSeen.length} 次，写穿不该被重复触发`).toHaveLength(1);
     expect(putRes.status(), '写穿失败时设置页只该报错，不该弹"已保存"').toBe(200);
 
     const sent = (await putRes.request().postDataJSON()) as Prefs;
