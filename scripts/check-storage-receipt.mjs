@@ -21,6 +21,8 @@
  *   quiet        写结果被丢弃，该函数不宣称成功 ⇒ 允许（快照持久化就是这种）
  *   lying        丢弃 + 宣称成功 + 无任何凭据 ⇒ 违规
  * 另有 self 一档：storage.ts 自己的定义点，不进分母。
+ * quiet 档另有一条**只减不增的棘轮**（见 QUIET_BASELINE）：新增静默丢弃写回执的站点会判红，
+ * 因为它意味着"又一处写没成没人知道"，要么接住回执、要么显式改基线并写明理由。
  *
  * 用法：node scripts/check-storage-receipt.mjs [--self-test|--print-sites|--json]
  */
@@ -158,7 +160,16 @@ const real = (f) => {
   }
 };
 
-function check(getText, listFiles) {
+/**
+ * quiet 档棘轮（只减不增）。2026-09-27 现算 `quiet=74`。
+ * 为什么用数字而不是逐条豁免名单：这几十处里绝大多数是 store 里"每次变更后整表镜像"
+ * 的正常形状（`saveJSON(KEY, 全量数组)`），逐条列名会把门禁变成清单维护负担。
+ * 但它必须有名有数：新增一处静默丢弃就得连这个数字一起改，评审时看得见。
+ * 修掉一处静默丢弃后请把常量一并下调，否则棘轮停在虚高水位上不再起作用。
+ */
+const QUIET_BASELINE = 74;
+
+function check(getText, listFiles, opts = {}) {
   const sites = analyze(getText, listFiles);
   const tally = {};
   for (const s of sites) tally[s.bucket] = (tally[s.bucket] ?? 0) + 1;
@@ -178,6 +189,13 @@ function check(getText, listFiles) {
   if (sites.length === 0) errors.push('整仓零个 storage 写调用 ⇒ 尺子或作用域坏了，不信这个绿');
   const sum = Object.values(tally).reduce((a, b) => a + b, 0);
   if (sum !== sites.length) errors.push(`Σ档位 ${sum} != 站点数 ${sites.length}`);
+  // 棘轮只在真实语料上启用（自测夹具的 quiet 是 1，拿它判基线没有意义）
+  if (typeof opts.quietBaseline === 'number' && (tally.quiet ?? 0) > opts.quietBaseline) {
+    errors.push(
+      `quiet 档 ${tally.quiet ?? 0} 超过棘轮基线 ${opts.quietBaseline} ⇒ ` +
+        '新增了一处静默丢弃写回执的站点。要么接住回执，要么把它做成有意的丢弃并在说明里写清为什么。',
+    );
+  }
   return { errors, sites, tally };
 }
 
@@ -241,16 +259,35 @@ export const arrowLying = () => { saveJSON('k', 2); setTimeout(() => notifySucce
   }
   // 夹具必须真的被扫到，否则"红了几处"是真实仓库给的，自测就成了自证
   if (tally.lying === undefined || sites_check(tally) === false) return 1;
-  // 真实仓库必须干净（否则这条门禁是空转的红）
-  const realRun = check(real, scanFilesRel);
+  // 棘轮两极性：基线压到 0 必须开火、放宽到 10 必须不开火。
+  // 缺这一臂的话，"只减不增"完全可能是一条永不发火的摆设——它红不红取决于有没有人写过它。
+  const tight = check(byName, fixtures_, { quietBaseline: 0 });
+  if (!tight.errors.some((e) => e.startsWith('quiet 档'))) {
+    console.error('✗ 自检失败：基线压到 0 仍未判红 ⇒ quiet 棘轮不会开火，它不是门禁');
+    return 1;
+  }
+  const loose = check(byName, fixtures_, { quietBaseline: 10 });
+  if (loose.errors.some((e) => e.startsWith('quiet 档'))) {
+    console.error('✗ 自检失败：基线放宽到 10 仍判红 ⇒ 棘轮把"低于基线"也当成了违规（判反了）');
+    return 1;
+  }
+  // 真实仓库必须干净（否则这条门禁是空转的红），棘轮同样按真实基线判一次
+  const realRun = check(real, scanFilesRel, { quietBaseline: QUIET_BASELINE });
   if (realRun.errors.length) {
     console.error('✗ 自检失败：真实仓库未过门禁（先修产品，再谈尺子）');
     for (const e of realRun.errors) console.error('   ', e);
     return 1;
   }
+  if ((realRun.tally.quiet ?? 0) < QUIET_BASELINE) {
+    console.error(
+      `⚠ quiet 档实际 ${realRun.tally.quiet ?? 0} 已低于基线 ${QUIET_BASELINE}，` +
+        '请把 QUIET_BASELINE 一并下调，否则棘轮停在虚高水位上不再起作用（本轮不判红）',
+    );
+  }
   console.log(
     `✔ 自检通过：注入 3 处开火、去掉成功提示后降到 2 处（丢弃≠违规）、` +
-      `合规侧 checked/quiet 各 1 不掉档；真实仓库 ${realRun.sites.length} 站点全绿`,
+      `合规侧 checked/quiet 各 1 不掉档、棘轮两极性开火/不开火各一次；` +
+      `真实仓库 ${realRun.sites.length} 站点全绿（quiet 基线 ${QUIET_BASELINE}）`,
   );
   return 0;
 }
@@ -258,7 +295,11 @@ export const arrowLying = () => { saveJSON('k', 2); setTimeout(() => notifySucce
 function main() {
   const args = process.argv.slice(2);
   if (args.includes('--self-test')) process.exit(selfTest());
-  const { errors, sites, tally } = check(real);
+  // 量具必须能在真实语料上被证明会开火，否则"只减不增"只是在夹具上自证。
+  // QUIET_BASELINE=<n> 覆盖基线，用来在真树上跑两极性（今天的树：73 必红、74 必绿）。
+  const fromEnv = Number.parseInt(process.env.QUIET_BASELINE ?? '', 10);
+  const baseline = Number.isFinite(fromEnv) ? fromEnv : QUIET_BASELINE;
+  const { errors, sites, tally } = check(real, undefined, { quietBaseline: baseline });
   if (args.includes('--print-sites')) {
     for (const s of sites) console.log(`${s.bucket.padEnd(8)} ${s.file}:${s.line} ${s.fn}()`);
   }
@@ -274,7 +315,7 @@ function main() {
   const t = Object.entries(tally)
     .map(([k, v]) => `${k}=${v}`)
     .join(' ');
-  console.log(`✔ 本地存储写回执判据通过：站点 ${sites.length}（${t}）`);
+  console.log(`✔ 本地存储写回执判据通过：站点 ${sites.length}（${t}）｜quiet 基线 ${baseline}`);
   return 0;
 }
 
