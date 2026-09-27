@@ -59,9 +59,11 @@ test.describe('核心业务链路', () => {
     // 6. 发起审批（金额≥阈值，出现"提交审批"按钮）
     const submitApprovalBtn = page.getByRole('button', { name: /提交审批|Submit Approval/ });
     await expect(submitApprovalBtn).toBeVisible({ timeout: 5000 });
-    await submitApprovalBtn.click();
-    await confirmOk(page);
-    await expectSuccessToast(page, /已提交审批|Submitted for approval/);
+    // R65 续：写落地凭据用 /submit-approval 的响应；下一步 goto('/approval') 的行断言继续负责"状态真的变了"
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/submit-approval$/, async () => {
+      await submitApprovalBtn.click();
+      await confirmOk(page);
+    });
 
     // 7. 审批通过
     await page.goto('/approval');
@@ -84,9 +86,11 @@ test.describe('核心业务链路', () => {
     await page.goto(`/quotation/compare/${inquiryId}`);
     const confirmBtn = page.getByRole('button', { name: /确认定标|Confirm Result/ });
     await expect(confirmBtn).toBeVisible({ timeout: 10000 });
-    await confirmBtn.click();
-    await confirmOk(page);
-    await expectSuccessToast(page, /已确认定标|Award confirmed/);
+    // R65 续：同上，等 /confirm 的响应；后面详情页的终态断言负责"真的定标了"
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/confirm$/, async () => {
+      await confirmBtn.click();
+      await confirmOk(page);
+    });
 
     // 9. 校验最终状态与持久化（刷新后仍在详情页看到已完成状态）
     await page.goto(`/inquiry/detail/${inquiryId}`);
@@ -111,9 +115,11 @@ test.describe('核心业务链路', () => {
 
     const submitApprovalBtn = page.getByRole('button', { name: /提交审批|Submit Approval/ });
     await expect(submitApprovalBtn).toBeVisible({ timeout: 5000 });
-    await submitApprovalBtn.click();
-    await confirmOk(page);
-    await expectSuccessToast(page, /已提交审批|Submitted for approval/);
+    // R65 续：写落地凭据用 /submit-approval 的响应；下一步 goto('/approval') 的行断言继续负责"状态真的变了"
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/submit-approval$/, async () => {
+      await submitApprovalBtn.click();
+      await confirmOk(page);
+    });
 
     // 审批驳回
     await page.goto('/approval');

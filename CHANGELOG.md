@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### R65 续：core-flow 再换三处写落地凭据，判据站点 20→17
+
+- 两个用例的"提交审批"改等 `POST /api/inquiries/:id/submit-approval`、"确认定标"改等 `.../confirm`（`<300` 才算落地）。
+  撤掉 toast 不撤覆盖：每处后面本来就有一步持久 UI 断言（审批列表按 subject 找到行、详情页终态）——这是能安全推广的前提。
+- 读数：`check-e2e-toast-assertions` rc=0 且**站点 20→17（helper 6→3）**、自测 rc=0、`eslint e2e` rc=0；
+  真浏览器 `core-flow --project=webkit --repeat-each=4 --retries=0` → **8 passed (57.6s)** rc=0（同装置同镜像）。
+- 剩余 3 处 helper ＋ 6 处 generic 不批量改：逐格要求"该步之后有持久断言兜着"才允许撤 toast；
+  已按判据清单排进下一片。清场：自建 project 残留 0，`qqi-final-*` 未动。
+
 ### 十二度：全量套件落在含本轮改动的构建上——199/5/2/4，抖动换了格子而没消失
 
 - 装置身份先证：镜像建自 `5c922f2`，而 `git diff --name-only 5c922f2..HEAD` 里 `src/`+`backend/app/` **0 个文件**
