@@ -237,8 +237,15 @@ export default function InquiryDetailPage() {
       filename: `询价单-${inquiry.code}`,
       hideSelector: '.no-print',
     })
-      .then(() => notifySuccess(i18n.t('inquiry.detail.pdfExportSuccess')))
+      .then((how) =>
+        notifySuccess(
+          i18n.t(
+            how === 'pdf' ? 'inquiry.detail.pdfExportSuccess' : 'inquiry.detail.pdfPrintOpened',
+          ),
+        ),
+      )
       .catch(() => {
+        // 只兜 window.print() 自己抛的意外；jsPDF 失败不走这里（它回退成 print 后 resolve）
         notifyWarning(i18n.t('inquiry.detail.pdfExportFailed'));
       })
       .finally(() => setExporting(false));
@@ -309,9 +316,10 @@ export default function InquiryDetailPage() {
               notifySuccess(i18n.t('inquiry.detail.sendSuccess', { count: s.sent }));
             }
           } catch {
-            notifySuccess(
-              i18n.t('inquiry.detail.sendSuccess', { count: inquiry.invitedSupplierIds.length }),
-            );
+            // 送达明细这一读失败时**没有**任何按家计数的凭据，
+            // 原来却拿本地 invitedSupplierIds.length 当"已发送 N 家"报成功——
+            // 在最不该说谎的分支上说谎。发送本身确已 ack，所以只降级"明细未确认"。
+            notifyWarning(i18n.t('inquiry.detail.sendUnverified'));
           }
         }
       },

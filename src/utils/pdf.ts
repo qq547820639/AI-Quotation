@@ -76,13 +76,13 @@ export async function exportElementToPDF(
     let position = margin;
 
     pdf.addImage(imgData, 'JPEG', margin, position, imgWidth, imgHeight);
-    heightLeft -= (pageHeight - margin * 2);
+    heightLeft -= pageHeight - margin * 2;
 
     while (heightLeft > 0) {
       position = margin - (imgHeight - heightLeft);
       pdf.addPage();
       pdf.addImage(imgData, 'JPEG', margin, position, imgWidth, imgHeight);
-      heightLeft -= (pageHeight - margin * 2);
+      heightLeft -= pageHeight - margin * 2;
     }
 
     pdf.save(filename.endsWith('.pdf') ? filename : `${filename}.pdf`);
@@ -92,20 +92,25 @@ export async function exportElementToPDF(
 }
 
 /**
- * 导出 PDF 失败时回退到浏览器打印
+ * 导出 PDF，失败时回退到浏览器打印。
+ * 返回**实际走了哪条通道**：'pdf' = jsPDF 生成并交给浏览器下载，'print' = 只打开了打印对话框。
+ * 存在这个返回值的原因很具体——本函数在回退分支上从不 reject（原样写时调用方的 `.catch`
+ * 是死代码，而 `.then` 那句"PDF 导出成功"在只弹出打印框时同样是说谎）。
  */
 export async function exportPDFWithFallback(
   element: HTMLElement | null,
   options: ExportPDFOptions,
-): Promise<void> {
+): Promise<'pdf' | 'print'> {
   if (!element) {
     window.print();
-    return;
+    return 'print';
   }
   try {
     await exportElementToPDF(element, options);
+    return 'pdf';
   } catch (err) {
     console.warn('[PDF] exportElementToPDF failed, fallback to window.print:', err);
     window.print();
+    return 'print';
   }
 }

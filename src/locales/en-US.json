@@ -708,7 +708,8 @@
       "exportExcel": "Export Excel",
       "exportingPDF": "Generating PDF…",
       "exporting": "Exporting…",
-      "pdfExportSuccess": "PDF exported",
+      "pdfExportSuccess": "PDF download started",
+      "pdfPrintOpened": "Print dialog opened",
       "pdfExportFailed": "PDF export failed, please retry",
       "approvalProcess": "Approval Process",
       "materialListTitle": "Materials ({{count}})",
@@ -791,7 +792,8 @@
       "deliverySentAt": "Sent At",
       "deliveryError": "Delivery Error",
       "resendDelivery": "Resend",
-      "resendSuccess": "Inquiry resent",
+      "resendSuccess": "Resend queued",
+      "sendUnverified": "Inquiry sent, but per-supplier delivery details could not be read",
       "resendFailed": "Resend failed, please retry"
     },
     "export": {
@@ -1043,7 +1045,7 @@
       "duplicateWarning": "Duplicate material codes detected: {{codes}}. Please verify before importing.",
       "partialImportTip": "Valid rows will be imported, error rows will be skipped",
       "reportFilename": "material-import-errors",
-      "reportDownloaded": "Error report downloaded"
+      "reportDownloaded": "Error report download started"
     }
   },
   "quotation": {
@@ -1093,7 +1095,7 @@
       "noSubmitted": "No submitted quotations for this inquiry",
       "switchInquiry": "Switch inquiry",
       "exportExcel": "Export Excel",
-      "exportSuccess": "Excel exported",
+      "exportSuccess": "Excel download started",
       "exportFailed": "Export failed, please retry",
       "generateSummary": "Generate Summary",
       "inApproval": "In Approval",
@@ -1811,7 +1813,7 @@
     "leave": "Leave",
     "continueEdit": "Continue Editing",
     "templateFilename": "quotation-template",
-    "exportTemplateSuccess": "Quotation template exported",
+    "exportTemplateSuccess": "Quotation template download started",
     "exportTemplate": "Export Template",
     "importExcel": "Import Excel",
     "importParseFailed": "Failed to parse import file. Please use the exported template.",
@@ -1822,7 +1824,7 @@
     "copyPreviousSuccess": "Previous round quotation copied",
     "receiptDownloadTitle": "Quotation Receipt",
     "receiptFilename": "quotation-receipt",
-    "receiptDownloadSuccess": "Receipt downloaded",
+    "receiptDownloadSuccess": "Receipt download started",
     "downloadReceipt": "Download Receipt",
     "previewTitle": "Review Before Submit",
     "previewDesc": "Please review the quotation details below before submitting. Once submitted, it cannot be modified.",

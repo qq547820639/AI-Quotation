@@ -708,7 +708,8 @@
       "exportExcel": "导出 Excel",
       "exportingPDF": "正在生成 PDF…",
       "exporting": "正在导出…",
-      "pdfExportSuccess": "PDF 导出成功",
+      "pdfExportSuccess": "PDF 已开始下载",
+      "pdfPrintOpened": "已打开浏览器打印窗口",
       "pdfExportFailed": "PDF 导出失败，请重试",
       "approvalProcess": "审批流程",
       "materialListTitle": "物料清单（{{count}} 项）",
@@ -791,7 +792,8 @@
       "deliverySentAt": "发送时间",
       "deliveryError": "投递失败原因",
       "resendDelivery": "重发",
-      "resendSuccess": "已重新发送询价",
+      "resendSuccess": "已重新排队发送",
+      "sendUnverified": "询价单已提交发送，但未能读取各家送达明细",
       "resendFailed": "重发失败，请重试"
     },
     "export": {
@@ -1043,7 +1045,7 @@
       "duplicateWarning": "检测到重复物料编码：{{codes}}，请核对后再导入",
       "partialImportTip": "有效行将被导入，错误行将被跳过",
       "reportFilename": "物料导入错误报告",
-      "reportDownloaded": "错误报告已下载"
+      "reportDownloaded": "错误报告已开始下载"
     }
   },
   "quotation": {
@@ -1093,7 +1095,7 @@
       "noSubmitted": "该询价单暂无已提交报价",
       "switchInquiry": "切换询价单",
       "exportExcel": "导出 Excel",
-      "exportSuccess": "已导出 Excel",
+      "exportSuccess": "Excel 已开始下载",
       "exportFailed": "导出失败，请重试",
       "generateSummary": "生成对比摘要",
       "inApproval": "审批中",
@@ -1815,7 +1817,7 @@
     "leave": "离开",
     "continueEdit": "继续编辑",
     "templateFilename": "报价模板",
-    "exportTemplateSuccess": "已导出报价模板",
+    "exportTemplateSuccess": "报价模板已开始下载",
     "exportTemplate": "导出模板",
     "importExcel": "导入 Excel",
     "importParseFailed": "导入文件解析失败，请使用导出的模板",
@@ -1826,7 +1828,7 @@
     "copyPreviousSuccess": "已复制上一轮报价",
     "receiptDownloadTitle": "报价回执",
     "receiptFilename": "报价回执",
-    "receiptDownloadSuccess": "回执已下载",
+    "receiptDownloadSuccess": "回执已开始下载",
     "downloadReceipt": "下载回执",
     "previewTitle": "提交前预览",
     "previewDesc": "请核对以下报价信息，确认无误后提交。提交后将无法修改。",
