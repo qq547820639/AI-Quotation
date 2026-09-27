@@ -324,6 +324,7 @@ export default function SettingsPage() {
                   </Text>
                 </div>
                 <Switch
+                  id={`notification-${item.key}`}
                   checked={notifications[item.key]}
                   onChange={(checked) => handleToggleNotification(item.key, checked)}
                 />
