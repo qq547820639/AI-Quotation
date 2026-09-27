@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+### 导出链路补上浏览器级覆盖；四臂量出"组件 loading 先吞、handler 守卫在后"；webkit 抖动连根收掉
+
+- 起点读数 `grep -rniE "导出|xlsx|download" e2e/` = **0**：R41（提示早于生成）与 R44（连点叠发）
+  此前没有任何浏览器级证据。新增 `e2e/export-download.spec.ts` 两格，只在 chromium 项目跑
+  （`test.skip` 谓词第二参数不是 testInfo，写成 describe 级会让每个 project 抛
+  `Cannot read properties of undefined (reading 'project')`——实测）。
+- **顺序断言换了测法**：第一版用"点完立刻读提示在场否"，两格都红 `Received: 1`——不是产品病，
+  是 `await click()` 返回时已经过去几百毫秒。改成页内 MutationObserver 单时钟累加器，
+  读数为 `431ms|dl|询价单管理_….xlsx` → `451ms|toast|已导出当前筛选结果`，先后由记录顺序给出。
+- **重入断言按 2×2 逐层删**：删掉 handler 守卫用例照绿，探针显示两次 DOM click 都到按钮、
+  `disabled=false`、却只有一次 `URL.createObjectURL` ⇒ 桌面路径上先挡住的是 antd Button 的 loading。
+  判别量也换成页内 spy（Chromium 对短时间内第二次自动下载另有策略，download 条数无分辨力）。
+  四臂生成次数：原样 1／删守卫 1（该臂无判别力）／删守卫+删 loading 2（红 ✓）／留守卫+删 loading 1（绿 ✓）。
+  由此更正 `6cd4564` 提交信息：桌面点击路径上第一层防护是组件 loading，本用例证的是用户可见不变量。
+- 移动端下拉路径实测 `gen=2`、两份文件、相隔 1s ⇒ 判为**正确行为**（菜单必须重开，两次点击落在同一代
+  生成窗口之外），不是守卫失效。
+- **`[webkit] auth-session-refresh.spec.ts:49` 抖动闭合**：三轮全量里红过 2 次、同一读法
+  （goto 被客户端 401→/login 的跳转打断）。改成只吞这一次导航错误、后面三条主张全保留，
+  `--project=webkit --repeat-each=5 --retries=0` 读数 10 passed。
+- 收尾全量（`127d8ec` 干净 worktree、最后一次改动之后）：`PW_RC=0`｜`200 passed / 10 skipped (8.3m)`，
+  **本轮第一次 0 flaky**；`tsc/lint/i18n/toast(站点21·豁免6·自测18/18)/tsc:cov(164)/装树(696)/vitest(444)` 全绿，
+  服务产物同一次性与 HEAD 求差 = 空。
+
 ### R45：e2e 侧接进 eslint-plugin-playwright（限定规则面），当天咬出一条空用例（R46）
 
 - `eslint.config.js` 新增 `files:['e2e/**/*.ts']` 块 `extends:[playwright.configs['flat/recommended']]`，
