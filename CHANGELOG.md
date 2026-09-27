@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+### R60 / R49 后半 / R58 / R59：设置真入库、MSW 桩契约漂移、八把尺子的未知旗标退 2
+
+- **R60（`69785c8`）**：摸清设置上行通路时量出两处既有漂移——MSW 的 `settingsState` 根本没有 `ai` 组
+  （演示模式 `loadFromApi` 每次都把 undefined 覆盖进 store，tsc 不响因为桩是无类型字面量），
+  且 `/settings` 只挂了 POST 而客户端用 PUT ⇒ 演示模式每次"保存设置"穿透 dev server 拿 404。
+  修法是把桩显式标成 `AppSettings`（真 schema 加一组而桩不加 = 编译失败）并补与后端同形的 PUT。
+- **R49 后半（`69785c8`）**：Alembic 0017 加 `system_name/default_currency/inquiry_deadline_lead_days`，
+  写边界拒坏值（币种过枚举、0..365、少分组 422），`toAppSettings` 与 `loadFromApi` 两头接通；
+  **零读者的 organization / validDays / notifications.todoReminder 一项都没入库**——R57 那把尺子在这里直接起作用。
+  四臂变异各有牙（M1 2 failed / M2 1 failed / M3 1 failed / M4 1 failed，逐臂 cmp -s 还原）。
+  读数：后端 `446 passed, 1 skipped / 85.56% / rc=0`（前值 436），alembic 打出 `0016 -> 0017`；
+  前端 `474 passed (45 files)`、lint 与 tsc rc=0。
+- **R58（`f4ff04d`）**：七把尺子未知旗标一律退 2 并各配"闸门必须开火"的臂；
+  主会话复核 plain 输出与 HEAD 逐字节相同，唯一差异 `tsc-coverage 165→169` 恰等于本轮新增的四个测试文件。
+- **R59（`6b2d64b`）**：`local-only`（有读者却不上行）从免检改成必须签字，未签字判红、谎报判"清单已过期"。
+  我自己一度写多了一条"只有宽面读到就判红"，立刻把真树的 `notifications.inquirySent` 打红——
+  那会让宽面从**只减不增**变成会造指控，正是 R55 与本尺文件头禁止的形状，已删。
+  MA/MB/MC 三臂各由变异证明会红。
+- **未做（外部阻塞）**：本轮 Playwright 一次没跑——子代理通道额度用尽，两次派发都以 ERROR 返回，
+  我没有拿主会话硬跑长流程凑进度，也没有在旧栈（服务 `bded3ac`）上凑出一个会误导人的读数。
+  欠的三格凭据与下一轮的安全做法（独立 compose project + 非冲突端口 + /tmp 配置覆盖 baseURL）写在登记册十一度那节。
+
 ### R57：R49 的"字段从不上行"被拆成两根轴——既不上行也没读者的开关，补持久化只会把假承诺做实
 
 - 新常驻判据 `scripts/check-settings-inert.mjs`：分母 = `Settings` 9 个顶层字段 + `DEFAULTS.notifications` 5 个键 = **14 单位**，
