@@ -152,7 +152,18 @@ services:
   # 再经下面两个 ${VAR:-默认} 覆盖进来。本机/dev 同样可用：
   #   npm run minio:image && MINIO_IMAGE=qqi-minio:ci MC_IMAGE=qqi-minio:ci docker compose up -d
   minio:
-    image: ${MINIO_IMAGE:-minio/minio:latest}
+    image: ${MINIO_IMAGE:-qqi-minio:ci}
+    # 上游已归档：`minio/minio` 与 `minio/mc` 的 GitHub 仓库都是 archived=True，
+    # README 第一行逐字 "THIS REPOSITORY IS NO LONGER MAINTAINED."（一手重开
+    # raw.githubusercontent.com/minio/minio/master/README.md），Docker Hub 上这两个仓库
+    # 也不再匿名公开（CI 一手：alpine/postgres 能拉、minio 的 latest 与固定 tag 全 403/denied），
+    # dl.min.io 两条 release 路径回 410。所以这里默认改成"由本仓自己构建的那份镜像"：
+    # `docker compose up --build` 就会带上它，不需要任何人再去拉一个已经不存在的仓库。
+    # 想指回别的源（比如私有镜像站里的旧 minio）：export MINIO_IMAGE=<那个> 即可，
+    # 这一层的 ${VAR:-默认} 就是给这个出口留的。
+    build:
+      context: .ci
+      dockerfile: Dockerfile.minio
     command: server /data --console-address ":9001"
     expose:
       - "9000"
@@ -173,7 +184,10 @@ services:
   # P0：MinIO 存储桶初始化（一次性）。等待 minio 就绪后创建 S3_BUCKET（幂等，--ignore-existing）。
   # 可选：置空 S3_BUCKET 或定位为可选时，该服务可同样被禁用（minio 未启用时后端走本地 UPLOAD_DIR）。
   minio-init:
-    image: ${MC_IMAGE:-minio/mc:latest}
+    # 与 minio 同一个镜像：自建镜像里两个二进制都在（`minio --version`/`mc --version`
+    # 在构建内各执行过一次），所以不必再有一个独立的 mc 仓库。
+    # 保留 MC_IMAGE 这个出口名，是为了让 CI 里已经写好的两个变量对称、少一处特例。
+    image: ${MC_IMAGE:-qqi-minio:ci}
     depends_on:
       minio:
         condition: service_healthy
