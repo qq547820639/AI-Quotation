@@ -7,6 +7,16 @@
  *   2. 源码中 t()/i18n.t() 引用的键必须都存在于 locale（缺失键即失败）
  *   3. 报告 locale 中「未被任何源码引用」的键（未使用翻译键，仅提示不阻断）
  *
+ * R55 改的是第 3 条的面：旧版只认 `t('字面量')` 与 `t(\`前缀.${}\`)` 两张面，
+ * 于是"键写在数据里、运行时才传给 t()"这一整类被误报为未使用
+ * （实测 386 条里有 32 条是这种，全在 `ActionWorkbench.tsx` 的卡片配置里——照着这份清单删键，
+ *  工作台标签会直接渲染成 `dashboard.workbench.pendingSend` 这样的裸键）。
+ * 现在第 3 条额外认第三张面：源码里任何**恰好等于某个已定义键**的字符串字面量。
+ * 注意两张面的分工是刻意的，不许合并：
+ *   - 第 2 条（会判红的那条）**不**吃这张面 ⇒ 随便一个 `'a.b'` 形状的字符串
+ *     （类名、事件名、URL）不会被当成"引用了 locale 里没有的键"而假红。
+ *   - 只有"减少未使用清单"这一侧才用宽面 ⇒ 它只会让清单变短，不会引入任何判红。
+ *
  * 用法：node scripts/check-i18n.mjs
  * 由 package.json 的 `i18n:check` 脚本调用，并在 CI 中执行。
  */
@@ -72,6 +82,23 @@ function extractUsedKeys() {
   return { used, prefixes };
 }
 
+/**
+ * 第三张面（只喂给第 3 条诊断，不参与任何判红）：
+ * 源码里出现的、恰好等于某个**已定义键**的字符串字面量——即"键写在数据里、运行时才传给 t()"。
+ * 只取已定义键这一限法是刻意的：`'btn.lg'`、`'click.ok'` 这类形状相似的杂串不会进来，
+ * 所以这张面只会把未使用清单变短，不会把别的键牵进来。
+ */
+function collectCarriedKeys(definedKeys) {
+  const carried = new Set();
+  for (const file of collectSourceFiles(SRC)) {
+    const code = readFileSync(file, 'utf-8');
+    for (const m of code.matchAll(/['"`]([a-z][\w]*(?:\.[\w-]+)+)['"`]/g)) {
+      if (definedKeys.has(m[1])) carried.add(m[1]);
+    }
+  }
+  return carried;
+}
+
 // 1) 中英文键集合一致性
 const zh = readLocale('zh-CN.json');
 const en = readLocale('en-US.json');
@@ -117,9 +144,16 @@ if (missingUsed.length || missingPrefix.length) {
 }
 
 // 3) 未使用翻译键（提示，不阻断）
-const usedOrPrefixed = (k) =>
-  used.has(k) || [...prefixes].some((p) => k.startsWith(`${p}.`));
+const carried = collectCarriedKeys(definedKeys);
+const prefixed = (k) => [...prefixes].some((p) => k.startsWith(`${p}.`));
+const usedOrPrefixed = (k) => used.has(k) || carried.has(k) || prefixed(k);
 const unusedKeys = [...definedKeys].filter((k) => !usedOrPrefixed(k));
+// 这张宽面救回多少条（旧版会误报的"键写在数据里"那一类）——读数必须自己报出来，
+// 否则下一轮没有人知道 386 → N 的差额是谁贡献的
+const rescued = [...carried].filter((k) => !used.has(k) && !prefixed(k));
+console.log(
+  `ℹ️  引用面拆解：静态 t() ${used.size} 个 / 动态前缀 ${prefixes.size} 个 / 仅以字面量写在数据里 ${rescued.length} 个`,
+);
 if (unusedKeys.length) {
   console.warn(`ℹ️  未使用翻译键（${unusedKeys.length}，仅供排查，不阻断）：\n    ${unusedKeys.join('\n    ')}`);
 } else {
