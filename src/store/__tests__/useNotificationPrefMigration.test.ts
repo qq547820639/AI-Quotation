@@ -35,7 +35,7 @@ const PREFS_CACHE = 'user_notification_prefs';
 beforeEach(() => {
   api.getPreferences.mockReset();
   api.updatePreferences.mockReset();
-  removeKey(FLAG);
+  expect(removeKey(FLAG).success).toBe(true);
   useNotificationStore.setState({ preferences: SERVER_ON, preferencesLoaded: false });
   useSettingsStore.setState({
     notifications: {
@@ -110,17 +110,19 @@ describe('本机通知开关的一次性迁移（R62 步骤一）', () => {
   });
 
   it('⑦ 缓存里有上次的真值时，store 初值用它是而不是全 true 默认（离线首启动）', async () => {
-    saveJSON<UserNotificationPreferencesSchema>(PREFS_CACHE, {
-      ...SERVER_ON,
-      approvalResult: false,
-    });
+    expect(
+      saveJSON<UserNotificationPreferencesSchema>(PREFS_CACHE, {
+        ...SERVER_ON,
+        approvalResult: false,
+      }).success,
+    ).toBe(true);
     vi.resetModules();
     const mod = await import('../useNotificationStore');
     expect(mod.useNotificationStore.getState().preferences.approvalResult).toBe(false);
   });
 
   it('④ 迁移只发生一次：标记已存在时不再发 PUT', async () => {
-    saveJSON(FLAG, true);
+    expect(saveJSON(FLAG, true).success).toBe(true);
     api.getPreferences.mockResolvedValueOnce(SERVER_ON);
     useSettingsStore.setState((s) => ({
       notifications: { ...s.notifications, inquirySent: false },

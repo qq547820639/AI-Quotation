@@ -147,7 +147,14 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     try {
       const prefs = await notificationApi.getPreferences();
       set({ preferences: prefs, preferencesLoaded: true });
-      saveJSON(PREFS_CACHE_KEY, prefs); // 写缓存与落库解耦：只要这次真的拿到了，就值得留给离线当基线
+      const cached = saveJSON(PREFS_CACHE_KEY, prefs);
+      if (!cached.success) {
+        // R41 家族：localStorage 在隐私模式/配额满时真的会失败。缓存写不上不影响本次正确性，
+        // 但不能静默——下一次"分状态权威"的回退分支就指望这份缓存当基线，写失败要能被看见。
+        console.warn(
+          `[notify] 偏好缓存写入失败，离线回退基线未更新：${cached.error ?? '未知原因'}`,
+        );
+      }
       // R62 步骤①（只改这一件事）：`preferencesLoaded` 的含义是"可以只认偏好侧"，
       // 而本机已关的位还没搬成功时它并不成立 ⇒ 迁移没确认完成就把旗标收回假。
       // 注意：这一步**不**改变抑制行为（并集仍在），所以现有用例不该因此变动。
@@ -184,7 +191,13 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       const r = await get().updatePreferences({ ...current, ...patch });
       if (!r.success) return r; // 没搬成就不打标记：并集判断继续兜着，不许静默解除抑制
     }
-    saveJSON(MIGRATION_FLAG, true);
+    const marked = saveJSON(MIGRATION_FLAG, true);
+    if (!marked.success) {
+      // 标记写不上 ⇒ 搬完这件事不成立：宁可下次再搬一次（幂等，只 true→false），
+      // 也不能静默返回 ok 让调用方以为已迁移完成。
+      console.warn(`[notify] 迁移标记写入失败，下次启动会重试：${marked.error ?? '未知原因'}`);
+      return fail(new Error(String(marked.error ?? '迁移标记写入失败')));
+    }
     return ok();
   },
 
