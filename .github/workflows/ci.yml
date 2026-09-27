@@ -212,10 +212,17 @@ jobs:
                 --jq '.steps[] | select(.conclusion == "failure") | "\(.started_at // "")\u001f\(.completed_at // "")\u001f\(.name)"' 2>/dev/null)
               while IFS=$'\037' read -r W0 W1 WNAME; do
                 case "$W0" in '') [ -z "$WNAME" ] || echo "（失败步 ${WNAME} 没有 started_at，切不出时间窗）"; continue ;; esac
-                echo "- 失败步原文（${WNAME}｜时间窗 ${W0} → ${W1:-无上限}，最多 120 行）："
+                echo "- 失败步原文（${WNAME}｜时间窗 ${W0} → ${W1:-无上限}）："
+                # 取窗口的**结尾**而不是开头：一手教训是 pip-audit 那一步（PR #5 评论 21:38:52），
+                # 前 120 行全被 `pip install` 的下载噪声占满，真正的判决行
+                # `Found 10 known vulnerabilities in 1 package` 恰好落在窗口末尾，
+                # 按开头截就把"这一红说了什么"截成了"这一红在装包"。
+                WL=/tmp/window-$JID-$W0.log
+                awk -v a="$W0" -v b="${W1:-9999}" 'BEGIN{sa=substr(a,1,19); sb=substr(b,1,19)}
+                  { t=substr($0,1,19); if (length(t)>=19 && t>=sa && t<=sb) print }' "$L2" > "$WL"
                 echo '```'
-                awk -v a="$W0" -v b="${W1:-9999}" 'BEGIN{sa=substr(a,1,19); sb=substr(b,1,19); n=0}
-                  { t=substr($0,1,19); if (length(t)>=19 && t>=sa && t<=sb) { print; n++; if (n>=120) exit } }' "$L2"
+                echo "（窗口共 $(wc -l < "$WL") 行，下面取它的结尾 60 行）"
+                tail -60 "$WL"
                 echo '```'
               done <<EOW
           $W
