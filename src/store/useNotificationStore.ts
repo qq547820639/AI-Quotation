@@ -63,6 +63,11 @@ interface NotificationState {
   unreadCount: number;
   /** P1-8 Task 12：用户级通知偏好 */
   preferences: UserNotificationPreferencesSchema;
+  /** R62 前置：`preferences` 是否真从服务端取回来过。没有这层旗标，
+   *  任何"合并当前偏好再 PUT"的写路径都会拿前端默认值当基线，把服务端整份刷成默认。 */
+  preferencesLoaded: boolean;
+  /** R62：设置页通知卡的写穿入口；未加载成功时**拒绝**而不是拿默认值合并 */
+  mergePreferences: (patch: Partial<UserNotificationPreferencesSchema>) => Promise<WriteResult>;
   /** W7.4：从 API 加载（失败时降级到 localStorage） */
   loadFromApi: () => Promise<void>;
   addNotification: (payload: NotificationPayload) => Promise<WriteResult>;
@@ -88,6 +93,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   notifications: MOCK_FALLBACK_ENABLED ? loadJSON<Notification[]>(STORAGE_KEY, []) : [],
   unreadCount: 0,
   preferences: DEFAULT_PREFERENCES,
+  preferencesLoaded: false,
 
   // W7.4 + P1-10 Task 15：从 API 加载，合并本地独有通知；生产模式失败不静默回退
   loadFromApi: async () => {
@@ -128,10 +134,17 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   loadPreferences: async () => {
     try {
       const prefs = await notificationApi.getPreferences();
-      set({ preferences: prefs });
+      set({ preferences: prefs, preferencesLoaded: true });
     } catch {
-      // 忽略：保留默认值
+      // 保留默认值，但**不再静默**：旗标留假，写穿路径据此拒绝保存（R62 前置）。
+      set({ preferencesLoaded: false });
     }
+  },
+
+  // R62：设置页那张卡改成写穿到每用户偏好（同一概念此前有两处入口，且服务端那侧从没被真正写过）。
+  mergePreferences: async (patch) => {
+    if (!get().preferencesLoaded) return fail(new Error('尚未取到服务端的偏好，请稍后重试'));
+    return get().updatePreferences({ ...get().preferences, ...patch });
   },
 
   // P1-8 Task 12：更新用户级偏好

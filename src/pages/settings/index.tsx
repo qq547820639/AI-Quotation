@@ -32,6 +32,7 @@ import { CURRENCY_OPTIONS } from '@/types';
 import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 import i18n from '@/i18n';
 import { removeKey, clearAll } from '@/utils/storage';
+import { useNotificationStore } from '@/store/useNotificationStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import type { AISettings } from '@/api/settingsApi';
 
@@ -87,10 +88,25 @@ export default function SettingsPage() {
     else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
   };
 
+  // R62：四个有每用户偏好对应的开关写穿到服务端（名字两侧不同源，逐条映射）；
+  // todoReminder 服务端没有这一位，继续留本机，不混进"已保存"的主张里。
   const handleSaveNotifications = async () => {
-    const result = await updateSettings({ notifications });
-    if (result.success) notifySuccess(i18n.t('settings.saveSuccess'));
-    else notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+    const { todoReminder, ...rest } = notifications as Record<string, unknown>;
+    const mapped: Record<string, boolean> = {};
+    if (typeof rest.inquirySent === 'boolean') mapped.inquirySent = rest.inquirySent;
+    if (typeof rest.quotationSubmitted === 'boolean')
+      mapped.quotationSubmitted = rest.quotationSubmitted;
+    if (typeof rest.approval === 'boolean') mapped.approvalResult = rest.approval;
+    if (typeof rest.timeoutAlert === 'boolean') mapped.deadlineReminder = rest.timeoutAlert;
+    const result = await useNotificationStore.getState().mergePreferences(mapped);
+    if (!result.success) {
+      notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+      return;
+    }
+    await updateSettings({
+      notifications: { ...(notifications as object), todoReminder: !!todoReminder },
+    });
+    notifySuccess(i18n.t('settings.saveSuccess'));
   };
 
   const handleSaveApproval = async () => {
