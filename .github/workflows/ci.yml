@@ -451,36 +451,53 @@ jobs:
         run: |
           npm run e2e:toast:check
           node scripts/check-e2e-toast-assertions.mjs --self-test
-      - name: MinIO 镜像源探活并把可达的那个交给 compose（只报读数，不改判定）
+      - name: MinIO 镜像源探活并把可达的那个交给 compose（带原文与对照）
         # 一手起因：上一轮 compose 红在 `Error response from daemon: pull access denied for
         # minio/mc, repository does not exist or may require 'docker login'`
         # （PR #5 评论 21:16:11 的失败步原文块，步位 failure #10）。
-        # 为什么这一步必须在 runner 上探而不是本机：这台机器对 Docker Hub 两条路都不通
-        # （registry-1.docker.io 的 manifest 与 hub.docker.com 的 API 一律连不上，
-        # 连 alpine:latest 都取不到），本机探出来的"拉不到"是网络盲区，不是"镜像不存在"。
-        # 候选是写死的白名单；选中的经 GITHUB_ENV 交给 compose 的 ${MINIO_IMAGE:-…}/${MC_IMAGE:-…}
-        # （两行默认值就是原镜像名，不设变量时行为一字不变）。全拉不到时不覆盖——
-        # compose 仍按默认值跑，红得和上一轮一样可读，不会把前提悄悄换掉。
+        # 再一手：我第一版探活（PR #5 评论 21:38:36）四个候选全 rc=1，但它把 stderr 丢了
+        # （`docker pull -q … >/dev/null 2>&1`），于是"全拉不到"这个读数**不能判**是
+        # "镜像没了"还是"这台 runner 的匿名拉取被限流"——两者对 compose 的含义完全不同。
+        # 所以这一版：① 每个候选都留最后一行原文；② 加两支对照（alpine 与 postgres:16，
+        # 后者本来就是 compose 要的服务）——对照开火（能拉）就说明 Hub 可达，
+        # minio 拉不到才是镜像源侧的事；对照也拉不到就直接读出限流/登录要求。
+        # ③ 候选里补一个我本机确实存在过的固定 tag（`docker images` 里躺着
+        # minio/minio:RELEASE.2025-04-22T22-12-26Z），用来区分"latest 这个 tag 没了"
+        # 与"整个仓库没了"。
+        # 选中的仍经 GITHUB_ENV 交给 compose 的 ${MINIO_IMAGE:-…}/${MC_IMAGE:-…}；
+        # 全不可达时不覆盖默认值——红得和上一轮一样可读，不把前提悄悄换掉。
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set +e
           : >/tmp/pullres.txt
-          for img in minio/minio:latest quay.io/minio/minio:latest minio/mc:latest quay.io/minio/mc:latest; do
-            timeout 150 docker pull -q "$img" >/dev/null 2>&1
-            echo "$? $img" >> /tmp/pullres.txt
+          probe() {
+            rc_line=""
+            timeout 180 docker pull "$1" >/tmp/pull.out 2>&1
+            rc=$?
+            tail -1 /tmp/pull.out | tr -d '\r' > /tmp/pull.last
+            echo "$rc|$1|$(cat /tmp/pull.last)" >> /tmp/pullres.txt
+            return $rc
+          }
+          for img in alpine:3.20 postgres:16; do probe "$img"; done
+          for img in minio/minio:latest \
+                     minio/minio:RELEASE.2025-04-22T22-12-26Z \
+                     minio/mc:latest \
+                     ghcr.io/minio/minio:latest \
+                     quay.io/minio/minio:latest; do
+            probe "$img"
           done
-          MI=$(awk '$1==0 && $2 ~ /minio.minio/ {print $2; exit}' /tmp/pullres.txt)
-          MCI=$(awk '$1==0 && $2 ~ /minio.mc/ {print $2; exit}' /tmp/pullres.txt)
+          MI=$(awk -F'|' '$1==0 && $2 ~ /minio.minio/ {print $2; exit}' /tmp/pullres.txt)
+          MCI=$(awk -F'|' '$1==0 && $2 ~ /minio.mc/ {print $2; exit}' /tmp/pullres.txt)
           # minio 的服务镜像里自带 mc：compose 自己的 healthcheck 就在用 `mc ready local`
           # （docker-compose.yml:160），所以 mc 全拉不到时退回服务镜像跑那条 entrypoint。
           if [ -z "$MCI" ] && [ -n "$MI" ]; then MCI="$MI"; fi
           {
-            echo '### MinIO 镜像源探活（一手，runner 侧）'
-            echo "- MINIO_IMAGE=${MI:-（候选全拉不到，compose 用默认值）}"
-            echo "- MC_IMAGE=${MCI:-（候选全拉不到，compose 用默认值）}"
-            echo '- 逐个 rc（0=可拉，非 0=不可拉）：'
+            echo '### MinIO 镜像源探活 v2（一手：rc + 原文尾行 + 两支对照）'
+            echo "- 选定 MINIO_IMAGE=${MI:-（候选全拉不到，compose 用默认值）}"
+            echo "- 选定 MC_IMAGE=${MCI:-（候选全拉不到，compose 用默认值）}"
+            echo '- 逐条 `rc|镜像|输出最后一行`（前两条是对照：alpine 与 postgres:16）：'
             echo '```'
             cat /tmp/pullres.txt
             echo '```'
