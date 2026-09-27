@@ -10,7 +10,7 @@ import { login, DATA_ROW } from './helpers';
  *
  * 三条读数各对应一次真实缺陷：
  *  ① 点击「导出当前筛选结果」必须真产生一次浏览器下载，文件名是 `表名_14位时间戳.xlsx`
- *     （`src/utils/excel.ts:55` 的 `${filename}_${stamp}.xlsx` 形状）；
+ *     （`src/utils/excel.ts:54` 的 `${filename}_${stamp}.xlsx` 形状）；
  *  ② **顺序**：下载锚点先出现、成功提示后出现。这是 R41 那次的直接反证——
  *     修之前 `notifySuccess` 在 `exportAOA` 之前同步执行，两条读数的先后正好相反。
  * ③ 连点只出一份文件（R44 的守卫在浏览器里的效果）。
@@ -33,7 +33,7 @@ const ONLY_CHROMIUM = '下载事件语义只在 chromium 项目验过，其余 p
 
 /**
  * 页内计数器：`downloadFromBuffer` 每次生成都会 `URL.createObjectURL(blob)` 一次
- * （`src/utils/excel.ts:22`），所以它数的是"这段代码真跑了几次生成"。
+ * （`src/utils/excel.ts:25`），所以它数的是"这段代码真跑了几次生成"。
  * 为什么不用 Playwright 的 download 事件数当判别：实测把 R44 的逐行守卫整段删掉，
  * 连点两下仍然只落一份 download —— Chromium 对"短时间内第二次自动下载"有自己的策略，
  * 于是 download 计数在"守卫在"与"守卫没"两种形状下读出来一样 ⇒ 那条断言没有牙。
