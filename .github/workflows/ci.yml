@@ -362,11 +362,13 @@ jobs:
     name: Docker Build + Compose + Real Frontend/Backend E2E
     # 为什么把 build 从 needs 里摘掉：这四轮里 build 一红（红在 upload-artifact 那一步），
     # docker-e2e 就被 GitHub 判成 skipped，于是"专用 runner 上的零重试 E2E 读数"这条真正要取的东西
-    # 一次也没跑过。摘掉是安全的，依据是产物消费关系而非推测：没有任何一步真去取产物
-    # （判据取"动作面"：`grep -n 'uses:.*download' ci.yml` 零命中；不要拿 `grep download-artifact`
-    # 当证据——这个注释自己就写着这个词，命中数会被自己污染）。而 Dockerfile.frontend 第 4-12 行
-    # 是 node:24-alpine 里 `npm ci` + `npm run build` 再 `COPY --from=builder /app/dist`，
-    # 即 compose `up -d --build` 自己把前端建出来，根本不读 build 作业的 dist 产物。
+    # 一次也没跑过。摘掉的依据是"没有一步消费 build 作业的产物"，而这只能用结构面判：
+    # 按 YAML 解析后枚举 `steps[].uses`（19 条，含 download 的 0 条，其中 upload-artifact 6 条分布在
+    # quality/build/backend-test/security-scan/docker-e2e）。文本 grep 在这里一律不可用——
+    # 我先后用过 `grep download-artifact` 与 `grep 'uses:.*download'` 两种写法当证据，
+    # 两次命中的都只有这条注释自己（词面被自己的说明污染，读数 1 却与"真有一步"完全同形）。
+    # 另一条独立依据：Dockerfile.frontend:4-12 是 node:24-alpine 里 `npm ci` + `npm run build`
+    # 再 `COPY --from=builder /app/dist`，即 compose `up -d --build` 自己把前端建出来。
     # 保留 quality 与 backend-test 两个 need：它们才是 E2E 的前置事实（单测与后端契约）。
     needs: [quality, backend-test]
     runs-on: ubuntu-latest
