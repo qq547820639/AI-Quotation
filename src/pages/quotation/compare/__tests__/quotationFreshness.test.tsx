@@ -57,9 +57,19 @@ describe('useQuotationFreshness', () => {
     expect(listMock).toHaveBeenCalledTimes(2);
   });
 
-  it('对照组：无 inquiryId 的首屏（选择询价单列表）不补拉，免得变成轮询', () => {
+  it('R67 更正：无 inquiryId 的首屏也要补拉一次（早退会让新单不在卡列表里）', async () => {
     listMock.mockResolvedValue([] as never);
     renderHook(() => useQuotationFreshness(undefined));
-    expect(listMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(listMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('无 id 时反复重渲染只拉一次（"进入即拉"不等于轮询——保证来自依赖数组）', () => {
+    listMock.mockResolvedValue([] as never);
+    const { rerender } = renderHook(({ id }) => useQuotationFreshness(id), {
+      initialProps: { id: undefined as string | undefined },
+    });
+    rerender({ id: undefined });
+    rerender({ id: undefined });
+    expect(listMock).toHaveBeenCalledTimes(1);
   });
 });

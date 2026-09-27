@@ -15,7 +15,9 @@ import { useQuotationStore } from '@/store/useQuotationStore';
  */
 export function useQuotationFreshness(inquiryId: string | undefined): void {
   useEffect(() => {
-    if (!inquiryId) return;
+    // R67：这里**不**再对 `!inquiryId` 早退。依赖数组已经是 [inquiryId]，
+    // 一次挂载只会跑一遍、切一条单子再多跑一遍——"无 id 就拉"并不会变成轮询；
+    // 而早退使"对比选择首屏"停留在"读 store 不补拉"，新建的单子可能不在卡列表里（inquiry-flow:47 的 flaky 即此）。
     void useQuotationStore.getState().loadFromApi();
   }, [inquiryId]);
 }
