@@ -27,8 +27,8 @@ import { login, DATA_ROW } from './helpers';
  * 用 `test.info()` 读——写成 describe 级的 `(_, testInfo) => …` 会在每个 project 里直接抛
  * `Cannot read properties of undefined (reading 'project')`（本轮实测）。
  */
-const BULK_TOAST = '已导出当前筛选结果';
-const ROW_TOAST = '导出成功';
+const BULK_TOAST = '当前筛选结果已开始下载';
+const ROW_TOAST = '文件已开始下载';
 const ONLY_CHROMIUM = '下载事件语义只在 chromium 项目验过，其余 project 不并入本轮读数';
 
 /**

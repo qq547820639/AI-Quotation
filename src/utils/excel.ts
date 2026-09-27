@@ -34,7 +34,7 @@ function downloadFromBuffer(buffer: ExcelJS.Buffer, filename: string): void {
 
 /**
  * 通用导出：传入表头与数据行。
- * 返回生成完成的 Promise：调用方必须在 await 之后再报"导出成功"，
+ * 返回生成完成的 Promise：调用方必须在 await 之后再报"已开始下载"，
  * 否则失败时用户已经看到成功提示（R41）。
  */
 export async function exportAOA(

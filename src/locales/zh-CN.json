@@ -796,7 +796,7 @@
     },
     "export": {
       "filename": "询价单_{{code}}",
-      "success": "导出成功",
+      "success": "文件已开始下载",
       "failed": "导出失败，请重试",
       "materialName": "物料名称",
       "materialCode": "物料编码",
@@ -1875,6 +1875,6 @@
     "myPendingDesc": "查看由我负责的进行中询价单",
     "resetDefaultView": "重置默认视图",
     "exportCurrent": "导出当前筛选结果",
-    "exportCurrentSuccess": "已导出当前筛选结果"
+    "exportCurrentSuccess": "当前筛选结果已开始下载"
   }
 }

@@ -261,7 +261,28 @@ export async function submitQuoteViaPortal(
   // 位置索引（first/nth(2)）在窄屏卡片式表单下会命中别的列，导致提交被校验挡下
   const unitPriceInput = page.locator('input[id$="-unitPrice"]').first();
   const deliveryInput = page.locator('input[id$="-deliveryDays"]').first();
-  await expect(unitPriceInput).toBeVisible({ timeout: 10000 });
+  // 这一条等待是全量套件里唯一读到过"element(s) not found"的共享步骤
+  // （[mobile-android] 一次、retries 掩成 flaky，隔离 5 连跑与整 project 跑都不复现）。
+  // 原样失败只能看到"没找到输入框"，说不出门户当时是什么状态，所以红了不可归因。
+  // 这里不改超时（加大超时是掩盖不是修法），只把失败**之后**的现场并进错误里。
+  try {
+    await expect(unitPriceInput).toBeVisible({ timeout: 10000 });
+  } catch (e) {
+    const body = (
+      await page
+        .locator('body')
+        .innerText()
+        .catch(() => '(body 读不到)')
+    )
+      .replace(/\s+/g, ' ')
+      .slice(0, 240);
+    throw new Error(
+      `门户表单里等不到单价输入框 ⇒ 后续提交无法进行。` +
+        `URL=${page.url()}｜body 前 240 字=${body}｜原错误=${String(e)
+          .split('\n')[0]
+          .slice(0, 120)}`,
+    );
+  }
   await unitPriceInput.fill(unitPrice);
   await deliveryInput.fill('7');
   // 「正式提交」先打开提交前预览弹窗（Task 17），确认按钮在预览内，不是 Modal.confirm

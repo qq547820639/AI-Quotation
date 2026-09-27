@@ -796,7 +796,7 @@
     },
     "export": {
       "filename": "Inquiry_{{code}}",
-      "success": "Export successful",
+      "success": "File download started",
       "failed": "Export failed, please retry",
       "materialName": "Material Name",
       "materialCode": "Material Code",
@@ -1871,6 +1871,6 @@
     "myPendingDesc": "View ongoing inquiries I'm responsible for",
     "resetDefaultView": "Reset Default View",
     "exportCurrent": "Export Current Results",
-    "exportCurrentSuccess": "Exported current results"
+    "exportCurrentSuccess": "Current results download started"
   }
 }
