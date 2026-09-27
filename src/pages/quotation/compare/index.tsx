@@ -52,12 +52,14 @@ import CompareRiskAlert from './CompareRiskAlert';
 import CompareControls from './CompareControls';
 import CompareAiResult from './CompareAiResult';
 import { exportCompareWorkbook } from './exportCompare';
+import { useQuotationFreshness } from './useQuotationFreshness';
 
 const { Text } = Typography;
 
 export default function QuotationComparePage() {
   const { t } = useTranslation();
   const { inquiryId } = useParams<{ inquiryId?: string }>();
+  useQuotationFreshness(inquiryId);
   const navigate = useNavigate();
 
   const inquiries = useVisibleInquiries();
