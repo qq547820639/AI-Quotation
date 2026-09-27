@@ -360,7 +360,14 @@ jobs:
 
   docker-e2e:
     name: Docker Build + Compose + Real Frontend/Backend E2E
-    needs: [quality, build, backend-test]
+    # 为什么把 build 从 needs 里摘掉：这四轮里 build 一红（红在 upload-artifact 那一步），
+    # docker-e2e 就被 GitHub 判成 skipped，于是"专用 runner 上的零重试 E2E 读数"这条真正要取的东西
+    # 一次也没跑过。摘掉是安全的，依据是产物消费关系而非推测：全文件只有 upload-artifact、没有一处
+    # download-artifact（`grep -n download-artifact` 零命中），而 Dockerfile.frontend 第 4-12 行
+    # 是 node:24-alpine 里 `npm ci` + `npm run build` 再 `COPY --from=builder /app/dist`，
+    # 即 compose `up -d --build` 自己把前端建出来，根本不读 build 作业的 dist 产物。
+    # 保留 quality 与 backend-test 两个 need：它们才是 E2E 的前置事实（单测与后端契约）。
+    needs: [quality, backend-test]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -486,6 +493,40 @@ jobs:
         run: |
           docker compose ps || true
           docker compose logs --tail=300 || true
+      - name: 把 E2E 失败用例名贴回 PR（零重试档的归因读数）
+        # 为什么不等 failed-logs 载体：载体的日志结尾只有 70 行，playwright 的逐条失败名
+        # 在长日志里会被切掉；而 test-results/ 的目录名本身就编码了 project+用例标题，
+        # .last-run.json 又直接给出失败用例的机器名。这一步只在 failure() 时跑，绿跑零影响。
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set +e
+          OUT=/tmp/e2efail.md
+          {
+            echo '### docker-e2e 失败面（一手，零重试档）'
+            echo "- head_ref=${HEAD_REF:-（push 事件无此值）}（取证分支即 retries=0，判据与上面 Run Playwright E2E 那一步的 env 同一条）  用例结果条目：$(ls test-results 2>/dev/null | wc -l) 个"
+            echo '- .last-run.json：'
+            echo '```'
+            cat test-results/.last-run.json 2>/dev/null || echo '（没有 .last-run.json：多半 E2E 步骤没跑到）'
+            echo
+            echo '```'
+            echo '- 失败用例目录名（含 project 与标题）：'
+            echo '```'
+            find test-results -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's|test-results/||' | sort | head -40
+            echo '```'
+          } > "$OUT"
+          cat "$OUT"
+          PR=""
+          if [ -n "$HEAD_REF" ]; then
+            PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_REF" --state open --json number --jq '.[0].number' 2>/dev/null)
+          fi
+          case "$PR" in
+            ''|*[!0-9]*) echo 'PR 编号取不到（见上输出）' ;;
+            *) gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$OUT" || echo '贴评论失败，读数已打进本作业输出' ;;
+          esac
+          exit 0
       - name: Cleanup environment
         if: always()
         run: docker compose down -v --remove-orphans
