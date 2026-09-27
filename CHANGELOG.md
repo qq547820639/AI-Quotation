@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### R61 / R62：每用户通知偏好被量成"三层假物"，本轮只换掉没有争议的那一层
+
+- 量 `inquirySent` 的归属时读到底，三层同时不成立（各有 file:line 在登记册十一度节）：
+  **入库没人读**（`user_notification_preferences` 的 inquiry_sent/quotation_submitted/approval_result 三列
+  服务端零消费者，只有 `delivery.py:185` 读 deadline_reminder）；
+  **页面读的是前端默认**（`loadPreferences` 定义了但**全仓零调用点** ⇒ 偏好页显示的永远是
+  `DEFAULT_PREFERENCES`，刷新后与服务端不符，只有本次会话点过的碰巧对）；
+  **真正在拦通知的是另一处**（`addNotification:139` 读设置 store 那个只落 localStorage 的全局开关）。
+- 本轮只做不换权威的修法：把 `loadPreferences()` 接进 `App.tsx` 的 `bootstrapStores()`
+  （偏好页从此显示服务端真值；不动抑制逻辑 ⇒ 任何用户的既有行为不变）。
+  新用例 `src/__tests__/appBootPreferences.test.tsx` 量的是**接线本身**——
+  "定义存在但没人调"这次是缺陷形状，所以对照组同时钉住 R20：未鉴权挂载不得发这个请求。
+- **没有顺手做的一半登记为 R62 并给出迁移形状**：把 `addNotification` 的闸门搬到每用户 `preferences`
+  是权威切换——用户过去在设置页关过的开关会立刻失效，而每用户那几位从来没被读过，
+  两边都不是用户此刻理解的"我关过的那个"。要做对需要一次性迁移 + 摘掉重复控件（视觉面，单独一轮）。
+  迁移落地后 `check-settings-inert` 会因 `notifications.inquirySent` 失去读者而判"清单已过期"——
+  **那是期望的红**，它保证这一步不会被跳过。
+- 取证装置两条自踩坑（都写进了登记册）：Compose 多个 `-f` 之间 `ports:` 是**叠加不是替换**
+  （第一次撞 `Bind for 0.0.0.0:8080 failed`，正解 `!override`/`!reset`，本机 v5.4.0 支持）；
+  以及 `echo "UP rc=$?" | tee` 让后台任务回报 exit 0 而日志里写着 `UP rc=1`——
+  登记册七度为 `pytest | tail` 立过的同一条规矩，这次是我在取失败码时踩的。
+  端口也不许猜：`18080` curl 回来是另一套栈的 `Resonance Control Plane`，
+  先 `lsof` 逐个探过才用 18090/18091 起隔离栈。
+
 ### R60 / R49 后半 / R58 / R59：设置真入库、MSW 桩契约漂移、八把尺子的未知旗标退 2
 
 - **R60（`69785c8`）**：摸清设置上行通路时量出两处既有漂移——MSW 的 `settingsState` 根本没有 `ai` 组
