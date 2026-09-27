@@ -70,17 +70,24 @@ interface ServerNotification {
 }
 
 /**
- * 数服务端某一询价下 `inquiry_sent` 那条记录出现没有，出现即返回、否则每 2 s 重读一次到超时。
- * 两档共用同一个窗口：`addNotification` 是 `void` 出去的（`src/store/useInquiryStore.ts:413`），
- * 发送接口返回 2xx 只证明"铸通知那一行执行到了"，不证明那次 POST 已落库，
- * 所以"关档读不到"必须拿"开档在读得到"来校准，否则它可能只是在读一个还没发生的写。
+ * 数服务端某一询价下 `inquiry_sent` 那条记录出现没有；出现即返回，否则每 2 s 重读到超时。
+ * 返回 `waitedMs` 是为了让**关档的观测窗由开档的实测校准**，而不是两档各烧一个写死的 20 s：
+ * `addNotification` 是 `void` 出去的（`src/store/useInquiryStore.ts:413`），发送接口 2xx 只证明
+ * 那行执行到了、不证明那次 POST 已落库，所以"关档读不到"必须拿"开档多久读到"来定窗口。
  */
-async function inquirySentRowFor(page: Page, inquiryId: string, windowMs = 20000) {
-  const deadline = Date.now() + windowMs;
+async function inquirySentRowFor(
+  page: Page,
+  inquiryId: string,
+  windowMs = 20000,
+): Promise<{ hits: number; waitedMs: number }> {
+  const t0 = Date.now();
+  const deadline = t0 + windowMs;
   for (;;) {
     const rows = await apiFetch<ServerNotification[]>(page, 'GET', '/notifications');
     const hit = rows.filter((n) => n.type === 'inquiry_sent' && n.inquiryId === inquiryId);
-    if (hit.length > 0 || Date.now() >= deadline) return hit.length;
+    if (hit.length > 0 || Date.now() >= deadline) {
+      return { hits: hit.length, waitedMs: Date.now() - t0 };
+    }
     await new Promise((r) => setTimeout(r, 2000));
   }
 }
@@ -260,9 +267,12 @@ test.describe('R62 通知偏好：真后端写穿与一次性迁移', () => {
   test('偏好为关时真实发送询价不再铸出该条通知；偏好为开时会铸（R62 的效果面）', async ({
     browser,
   }) => {
-    // 两档只差服务端那一位，其余（用户、UI 流程、预算窗口）完全相同。
-    // 开档先跑：它既是要证的产品主张，也是关档那条缺席断言的窗口校准——
-    // 铸通知是 `void` 出去的，发送接口 2xx 只证明那行执行到了，不证明 POST 已落库。
+    // 两档只差服务端那一位，其余（用户、UI 流程）完全相同。
+    // 开档先跑：它既是要证的产品主张，也给关档定观测窗（见 inquirySentRowFor 的注释）。
+    // 挂钟预算：这一格要跑两轮"全新上下文登录 + 建单发送 + 观测窗"，实测各引擎 29.2–45.6 s，
+    // 贴着 playwright.config.ts 的 60 s 用例上限。按同档先例只放宽挂钟、不动任何断言与窗口判据。
+    test.setTimeout(120_000);
+
     const setPref = async (inquirySent: boolean) => {
       const ctx = await browser.newContext();
       const p = await ctx.newPage();
@@ -276,23 +286,29 @@ test.describe('R62 通知偏好：真后端写穿与一次性迁移', () => {
 
     const original = await setPref(true);
 
-    const runOnce = async () => {
+    const runOnce = async (windowMs: number) => {
       const ctx = await browser.newContext();
       const page = await ctx.newPage();
       await login(page, MIGRATION_USER);
       const { inquiryId } = await createAndSendInquiry(page);
-      const rows = await inquirySentRowFor(page, inquiryId);
+      const r = await inquirySentRowFor(page, inquiryId, windowMs);
       await ctx.close();
-      return rows;
+      return r;
     };
 
-    expect(
-      await runOnce(),
-      '偏好为开：发送询价应当在服务端留下那条 inquiry_sent 通知',
-    ).toBeGreaterThan(0);
+    const on = await runOnce(20000);
+    expect(on.hits, '偏好为开：发送询价应当在服务端留下那条 inquiry_sent 通知').toBeGreaterThan(0);
 
+    // 关档窗口 = 开档实测的 3 倍，下限 5 s、上限 20 s：
+    // 写成固定 20 s 会让这一格在慢引擎上单纯因为"两档各等满 20 s"而撞挂钟上限；
+    // 但也不能短于开档实际耗时，否则"读不到"可能只是读早了。
+    const offWindow = Math.min(20000, Math.max(5000, on.waitedMs * 3));
     await setPref(false);
-    expect(await runOnce(), '偏好为关：同一条铸造路径不该再落库').toBe(0);
+    const off = await runOnce(offWindow);
+    expect(
+      off.hits,
+      `偏好为关：同一条铸造路径不该落库（观测窗 ${offWindow} ms，开档实测 ${on.waitedMs} ms）`,
+    ).toBe(0);
 
     await setPref(original.inquirySent);
   });
