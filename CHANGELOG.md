@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### R48：全仓"成功宣告 vs 可知范围"普查落地 7 处（含一条死 catch）；R49 登记设置页 7 个从不上行的字段
+
+- 分母普查（子代理只读跑）：`notifySuccess` 共 **61 处宣告站点**，分档 相称 40 / 说过 20 / 说不清 1。
+  属于要进门禁的读数，所以逐条亲手开文件复核后才用：**10 行亲验（7 行修掉、3 行确认为真缺陷登记 R49），
+  11 行仍标"未亲验"并在登记册逐条列名**。
+- 修掉的 7 处：
+  `quotation/compare` 与三处文本下载（门户模板、回执、错误报告）文案降到"已开始下载"
+  （blob + `a.click()` 无落盘回执，依据是 R47 那次拒收实验）；
+  `utils/pdf.ts` 的 `exportPDFWithFallback` 三条分支全不 reject ⇒ 调用方 `.catch` 是死代码、
+  且"只弹打印框"被报成"PDF 导出成功" ⇒ 改为返回 `'pdf' | 'print'` 并按通道选文案，
+  新增 `src/utils/__tests__/pdf.test.ts` 三分支各一条（回退那条同时钉"不 reject"与"不是 pdf"）；
+  重发询价改为"已重新排队发送"（后端只置 pending + 入队，`invitations.py:193`、`inquiries.py:754-764`）；
+  读取送达明细失败的分支不再拿本地条数报"已发送 N 家"，改 `notifyWarning` + 新 key `sendUnverified`。
+- 对照：把回退分支谎报成 `'pdf'` ⇒ `1 failed | 2 passed`，还原 `3 passed`；`tsc 覆盖面 164→165`；
+  收尾 `--retries=0` 全量 **206 passed / 4 skipped (9.8m)、0 flaky**，服务产物 36/36 一致且新串可 grep、旧串 0。
+- **R49（已验证，故意不做）**：设置页 `organization/systemName/currency`、`validDays/deadlineLeadDays`、
+  `inquirySent/todoReminder` 共 7 个字段可编辑却从不上行（`useSettingsStore.ts:27-38` 与
+  `backend/app/routers/settings.py:42-56` 两侧对过），三张卡却共用「设置已保存」。
+  两条修法（扩表 + Alembic 0017 / 拆文案标"仅本机"）都记账待单独一轮——后者会动
+  `settings.saveSuccess`，而 R34 的冒充实证用例正是靠这对文案后缀构造的，必须连它一起复跑。
+- 顺带闭掉导出用例的适用域猜测（`bccdf9c`）：把跳过全关掉跑 5 个 project → 8 passed / 2 failed，
+  两个失败恰好都是逐行格且都在移动 project（窄屏是卡片 + 「更多」下拉，行内没有导出按钮）
+  ⇒ 批量与顺序断言不挑引擎（webkit 一并验过），逐行重入格只对桌面 project 跑。
+
 ### R47：导出提示改成"已开始下载"——blob 交付这条路没有落盘回执可拿
 
 - 上一节留下的"未证面"本轮量出来了：一次性探针对批量导出用 `test.use({ acceptDownloads: false })`
