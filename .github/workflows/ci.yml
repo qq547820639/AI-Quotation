@@ -35,6 +35,7 @@ jobs:
       - name: Frontend unit tests with coverage gate (>=30%)
         run: npx vitest run --coverage
       - run: npm run i18n:check
+      - run: node scripts/check-i18n.mjs --self-test
       - name: Verify local-storage writes don't announce success without a receipt
         # R50：storage.ts 的 saveJSON/removeKey/clearAll 过去把 QuotaExceededError/SecurityError
         # 就地吞掉并返回 void ⇒ 调用方没有任何凭据，却能弹"已保存/已清空/已删除"。
@@ -43,6 +44,14 @@ jobs:
         run: |
           npm run storage:check
           node scripts/check-storage-receipt.mjs --self-test
+      - name: Verify settings fields are either read somewhere or declared inert
+        # R56（R49 续）：设置页的字段有两根轴——值有没有上行到服务端、有没有任何生产代码读它。
+        # 既不上行也没读者的开关，"设置已保存"是对用户宣称了一个不改变任何行为的动作。
+        # 判据按类型解析（不用文本：同名的 Inquiry.currency 会污染分母），inert 必须逐条挂理由，
+        # 且台账双向对账：谎报惰性 / 引用过期 / 单位被删 都判红。退码 2 = 量具故障，不与产品违规混。
+        run: |
+          npm run settings:inert:check
+          node scripts/check-settings-inert.mjs --self-test
       - name: Verify past-tense notifications aren't minted inside an optimistic state recipe
         # R53：8 个写入口把「询价单 X 已取消」这类过去式通知铸在 set(状态配方) 体内，
         # 而 catch 只回滚实体、仓里没有删通知的 API ⇒ 被拒的动作留下永久旁证。
