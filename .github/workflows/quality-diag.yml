@@ -66,6 +66,13 @@ jobs:
             echo "::group::$name → rc=$rc"
             tail -25 "$out"
             echo "::endgroup::"
+            if [ $rc -ne 0 ]; then
+              # 每一根红都留结尾。上一版只留"第一个失败步骤"，于是 vitest 那根红把
+              # `npm run gates` 那根完全遮住了——两根红是两件事，只带回来一件等于没带。
+              mkdir -p /tmp/fails
+              tail -60 "$out" > "/tmp/fails/$(echo "$name" | tr ' /:' '___').log"
+              echo "$name" >> /tmp/fails/_order
+            fi
           }
           run1 "npm run lint" npm run lint
           run1 "npx tsc --noEmit" npx tsc --noEmit
@@ -78,6 +85,15 @@ jobs:
           run1 "npm run storage:check" npm run storage:check
           run1 "npm run settings:inert:check" npm run settings:inert:check
           run1 "npm run notify-mint:check" npm run notify-mint:check
+          # ---- 对照臂：同一台机器上只换"调度方式"，用来分"跨文件污染"与"平台差异" ----
+          # 主跑（默认并行）里 storage.test.ts:59 的
+          #   expect(() => localStorage.setItem('probe','1')).toThrow(boom)
+          # 判"没抛"，而本机同一份代码 503 全绿。两臂差的是 worker/池，不是代码。
+          run1 "对照A 只跑 storage 单文件" npx vitest run src/utils/__tests__/storage.test.ts
+          run1 "对照B 全量但关文件并行" npx vitest run --coverage --no-file-parallelism
+          run1 "对照C 全量单 worker" npx vitest run --coverage --maxWorkers=1 --minWorkers=1
+          node -e "console.log('jsdom='+require('jsdom/package.json').version,'vitest='+require('vitest/package.json').version,'node='+process.version)" > /tmp/vers.log 2>&1
+          echo "----- 版本自报 -----"; cat /tmp/vers.log
           echo "----- rc 一览 -----"
           cat /tmp/steps.txt
           echo "----- 首个非零 rc -----"
@@ -109,12 +125,16 @@ jobs:
             echo "rc<TAB>步骤名（没有这份清单＝装树就没成，下面贴 npm ci 结尾）"
             cat /tmp/steps.txt 2>/dev/null || echo "(无)"
             echo '```'
-            if [ -n "$FIRST_FAILED" ]; then
-              f="/tmp/step-$(echo "$FIRST_FAILED" | tr ' /:' '___').log"
-              if [ -f "$f" ]; then
-                echo; echo "#### 首个失败步骤结尾"; echo '```'; tail -40 "$f" 2>/dev/null; echo '```'
-              fi
-            fi
+            for n in $(cat /tmp/fails/_order 2>/dev/null); do
+              echo; echo "#### 失败步骤结尾：$n"
+              echo '```'
+              cat "/tmp/fails/$(echo "$n" | tr ' /:' '___').log" 2>/dev/null || echo "(结尾取不到)"
+              echo '```'
+            done
+            echo; echo '#### 版本自报（要判「平台差异」先得有版本）'
+            echo '```'
+            cat /tmp/vers.log 2>/dev/null || echo "(取不到)"
+            echo '```'
             if [ ! -f /tmp/steps.txt ] || [ -s /tmp/npmci.log ]; then
               echo; echo "#### npm ci 结尾"; echo '```'; tail -30 /tmp/npmci.log 2>/dev/null; echo '```'
             fi
