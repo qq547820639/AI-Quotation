@@ -2,10 +2,15 @@
  * useSavedViews 测试（Task 19 保存筛选视图 + 默认视图）
  * 覆盖：保存/覆盖同名、设为默认/取消其它默认、删除、获取默认视图、清空、localStorage 持久化与恢复
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSavedViews, generateViewId, normalizeViewName } from '../useSavedViews';
 import type { WriteReceipt } from '@/utils/storage';
+import {
+  makeLocalStorageWritesThrow,
+  assertWriteInjectionLanded,
+  type WriteFailureInjection,
+} from '@/test/writeFailures';
 
 interface F {
   keyword: string;
@@ -120,14 +125,20 @@ describe('useSavedViews', () => {
   // 改前持久化只在 useEffect 里（写发生在 toast 之后的一帧），且三个方法一律返回 void，
   // 于是 list 页的"视图已保存／已设为默认／已删除"三条宣称没有任何凭据。
   describe('写回执（本机存储是唯一副本）', () => {
-    /** 让本机写真的抛出去，并先证明抛得出去——否则"回执 false"可能是别的原因 */
-    function makeWritesFail(boom: Error) {
-      const spy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
-        throw boom;
-      });
-      expect(() => localStorage.setItem('probe', '1')).toThrow(boom);
-      spy.mockClear(); // 上面那次前提断言自己也算一次调用
-      return spy;
+    /**
+     * 让本机写真的抛出去，并先证明抛得出去——否则"回执 false"可能是别的原因
+     *
+     * 旧写法是对 localStorage 的写方法做 `vi.spyOn` + `mockImplementation`：它靠给实例**赋值**装钩子，
+     * 而 Node 24 的 localStorage 实例上没有自有 setItem，赋值被 `[Storage]` 命名属性 setter 吃掉，
+     * 注入在 CI 上静默空转（本机 Node 26 却"恰好"生效）。现在统一走 src/test/writeFailures.ts
+     * 的按形状选层注入（方法在实例上就注实例、在原型上就注原型），两档形状都抛得出去；
+     * 而"往实例上 defineProperty 就能盖住原型"这句在本机成立、在 CI 的 [Storage] 上不成立，
+     * 原因与实测数据写在那份文件顶部。
+     */
+    function makeWritesFail(boom: Error): WriteFailureInjection {
+      const inj = makeLocalStorageWritesThrow(boom, { methods: ['setItem'] });
+      assertWriteInjectionLanded(inj, boom); // 探测那一次由它自己从配额里扣掉
+      return inj;
     }
 
     it('saveView 成功时给出 success=true 的回执，key 就是它写的那个', () => {
@@ -140,7 +151,7 @@ describe('useSavedViews', () => {
     });
 
     it('本机写失败：saveView 报 false，而视图仍留在当前页面（失败只关于持久化）', () => {
-      const spy = makeWritesFail(new Error('QuotaExceededError'));
+      const inj = makeWritesFail(new Error('QuotaExceededError'));
       try {
         const { result } = renderHook(() => useSavedViews<F>());
         let receipt!: WriteReceipt;
@@ -152,7 +163,7 @@ describe('useSavedViews', () => {
         expect(result.current.views).toHaveLength(1);
         expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
       } finally {
-        spy.mockRestore();
+        inj.restore();
       }
     });
 
@@ -166,7 +177,7 @@ describe('useSavedViews', () => {
         ok = result.current.setDefaultView(result.current.views[0].id);
       });
       expect(ok.success).toBe(true);
-      const spy = makeWritesFail(new Error('SecurityError'));
+      const inj = makeWritesFail(new Error('SecurityError'));
       try {
         let bad!: WriteReceipt;
         act(() => {
@@ -175,7 +186,7 @@ describe('useSavedViews', () => {
         expect(bad.success).toBe(false);
         expect(result.current.views).toHaveLength(0);
       } finally {
-        spy.mockRestore();
+        inj.restore();
       }
     });
 
