@@ -21,6 +21,8 @@ import { queryClient, QUERY_KEYS } from '@/lib/queryClient';
 import { ok, fail, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'notifications';
+/** R62：一次性迁移标记（成功搬完才置真；搬失败保持假，下次仍会重试） */
+const MIGRATION_FLAG = 'notify_pref_migrated_v1';
 /** 去重窗口：同 inquiryId + type 10 分钟内不重复 */
 const DEDUP_WINDOW_MS = 10 * 60 * 1000;
 /** 最多保留通知条数 */
@@ -68,6 +70,10 @@ interface NotificationState {
   preferencesLoaded: boolean;
   /** R62：设置页通知卡的写穿入口；未加载成功时**拒绝**而不是拿默认值合并 */
   mergePreferences: (patch: Partial<UserNotificationPreferencesSchema>) => Promise<WriteResult>;
+  /** R62 步骤一：本机旧开关的一次性迁移（只降不升；失败不打标记） */
+  migrateLocalNotificationToggles: (
+    current: UserNotificationPreferencesSchema,
+  ) => Promise<WriteResult>;
   /** W7.4：从 API 加载（失败时降级到 localStorage） */
   loadFromApi: () => Promise<void>;
   addNotification: (payload: NotificationPayload) => Promise<WriteResult>;
@@ -135,10 +141,39 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     try {
       const prefs = await notificationApi.getPreferences();
       set({ preferences: prefs, preferencesLoaded: true });
+      // R62 步骤一：先搬家，再拆旧房子。
+      // 设置页那张卡在 fda48eb 之前只把开关写进 localStorage，服务端对应位仍是 true；
+      // 若此刻就收回并集（只认偏好侧），这些用户已关的抑制会无声消失——又是一次"主张与凭据脱钩"。
+      // 因此：只降不升（把本地显式 false 推到服务端），成功才打一次性标记，失败不打标记、下次再试。
+      await get().migrateLocalNotificationToggles(prefs);
     } catch {
       // 保留默认值，但**不再静默**：旗标留假，写穿路径据此拒绝保存（R62 前置）。
       set({ preferencesLoaded: false });
     }
+  },
+
+  /**
+   * R62 步骤一：把"只存在于本机"的关闭动作一次性搬到每用户偏好。
+   * 三条边界：只 true→false（绝不把服务端的 false 翻回 true，那会覆盖别的设备的真实关闭）；
+   * 成功后才写标记（标记 = `notify_pref_migrated_v1`），失败不写 ⇒ 下次还会试，抑制不会提前解除；
+   * 本地没有任何显式关闭时也要打标记（否则每次都白跑一趟）。
+   */
+  migrateLocalNotificationToggles: async (current) => {
+    const done = loadJSON<boolean>(MIGRATION_FLAG, false);
+    if (done) return ok();
+    const local = useSettingsStore.getState().notifications;
+    const patch: Partial<UserNotificationPreferencesSchema> = {};
+    if (local.inquirySent === false && current.inquirySent) patch.inquirySent = false;
+    if (local.quotationSubmitted === false && current.quotationSubmitted)
+      patch.quotationSubmitted = false;
+    if (local.approval === false && current.approvalResult) patch.approvalResult = false;
+    if (local.timeoutAlert === false && current.deadlineReminder) patch.deadlineReminder = false;
+    if (Object.keys(patch).length) {
+      const r = await get().updatePreferences({ ...current, ...patch });
+      if (!r.success) return r; // 没搬成就不打标记：并集判断继续兜着，不许静默解除抑制
+    }
+    saveJSON(MIGRATION_FLAG, true);
+    return ok();
   },
 
   // R62：设置页那张卡改成写穿到每用户偏好（同一概念此前有两处入口，且服务端那侧从没被真正写过）。
