@@ -31,6 +31,10 @@ function bootstrapStores() {
     useQuotationStore.getState().loadFromApi(),
     useMaterialStore.getState().loadFromApi(),
     useNotificationStore.getState().loadFromApi(),
+    // R61：这行以前没有。loadPreferences 定义了、GET 端点也在，但全仓零调用点
+    // ⇒ 通知偏好页显示的永远是前端 DEFAULT_PREFERENCES，刷新后不忠实于服务端已存的值
+    //（只有本次会话里点过的那几个碰巧对）。
+    useNotificationStore.getState().loadPreferences(),
     useSettingsStore.getState().loadFromApi(),
     useAuthStore.getState().loadFromApi(),
   ]);
