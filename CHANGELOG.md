@@ -4,6 +4,72 @@
 
 ## [Unreleased]
 
+### R57：R49 的"字段从不上行"被拆成两根轴——既不上行也没读者的开关，补持久化只会把假承诺做实
+
+- 新常驻判据 `scripts/check-settings-inert.mjs`：分母 = `Settings` 9 个顶层字段 + `DEFAULTS.notifications` 5 个键 = **14 单位**，
+  每单位记两根轴——**有没有上行**（解析 `toAppSettings` 读了哪些本地单位，按本地单位记而非服务端列名）与
+  **有没有读者**（`ts.createProgram` + checker 的类型解析，成员声明必须挂在 `interface Settings` 上才算；
+  编辑面 store 与 `pages/settings/index.tsx` 不算读者）。四档：live / local-only / uploaded-only / inert。
+- 选型实测后判"不引依赖"：`knip@6.38.0`（ISC，4 天前发版）在本仓 `--include members` 直接
+  `ERROR: Invalid issue type: members`，其 issue type 里有 `enumMembers` 而**没有接口属性成员**这一档，
+  结构上答不了"这个字段被不被读"；`ts-prune@0.10.3` 最后发版 2021-12-12，出局。
+  借的是 knip 的分档 + 双向对账形状，和 R55 的"宽面只许减少指控"。类型解析开销实测 2836 文件 / 2.95 s。
+- **R49 的前提改判**：所谓"7 个字段未上行"里只有 2 个真在改变行为（`deadlineLeadDays`→新建单据默认截止、
+  `notifications.inquirySent`→`useNotificationStore.ts:139` 的计算下标在拦通知写入），
+  另 5 个（`organization`/`systemName`/`currency`/`validDays`/`notifications.todoReminder`）**全仓零读者**——
+  它们的毛病不是"换设备丢"而是"不改变任何行为"，照 R49 的修法 A 去扩列只会把 5 个装饰开关做成 5 个入库的装饰开关。
+  本轮不动后端、不动 `toAppSettings`。`ai` 是 `uploaded-only` 但读者在 `backend/app/routers/ai.py:50-54`，
+  由一条**带出处且被尺子重开验证**的跨侧引用接住（文件打不开或标记没了都判红）。
+- 接线两条 local-only→live 的前半：`App.tsx:20`+`:44-50` 让 `document.title` 跟随 `systemName`
+  （清空时回落 index.html 的静态标题，不再抄一份第二处默认名）；`create/shared.ts:272-295` 的
+  `defaultBasicInfo()` 用 `useSettingsStore.getState()` 的 `currency` 取代写死的 `Currency.CNY`。
+  牙：改前树 `documentTitle.test.tsx` 3 failed（`expected '' to be '华东采购询价台'`）；
+  行为牙齿另建变异树（只把两行退回写死）→ 3 failed | 2 passed，对照组不开火；
+  兜底一格就地变异删 `|| STATIC_TITLE` → `expected '' to be '静态兜底标题'`，`cmp -s` 证还原。
+- **这台仪器先抓的是自己人**：(1) 我按"零读者"写下的两条惰性台账，2 分钟后被并发落地的接线判"清单已过期"；
+  (2) `resolveJsonModule` 把 `src/locales/*.json` 也放进 Program，locale 里的 `"todoReminder"` 是文案不是读者，
+  第一跑凭空出 4 条假红 ⇒ 语料面收死在 `.tsx?`；(3) `toAppSettings` 里 `s.notifications.timeoutAlert` 的
+  内层 `s.notifications` 被记成"整个容器已上行"，一个每键都惰性的容器就能读成 live ⇒ 上行轴不记容器。
+- **它的第一版自测是死码**：`bad` 数组 13 处 push 没有一处 `if (bad.length)` 消费。
+  发现方式是把"谎报惰性"的判红规则换成 `if (false)` —— 预期红，实际 **rc=0 自检通过**。
+  六臂变异电池（M1 宽面／M2 编辑面／M3 谎报惰性／M4 inert 档／M5 上行轴／M6 分母哨兵）修后全部 rc=1，
+  每臂跑完 `cmp -s` 证逐字节还原。家规再确认：**新写的自测必须先被证明会红，才被允许当门禁。**
+- 退码分三档（0 通过／1 真违规／**2 量具故障**），崩溃不得冒充判红。真树读数
+  `单位 14（inert=3 local-only=5 live=5 uploaded-only=1）｜惰性已声明 3 条`。
+
+### R56：`check-i18n.mjs` 补上 `--self-test`（12 臂），顺带记一条"未知旗标静默忽略"的通用形状
+
+- HEAD `9d5787e` 上 `node scripts/check-i18n.mjs --self-test` **rc=0，但输出与不带旗标逐字节相同**：
+  该脚本零 `process.argv` 引用 ⇒ 旗标被忽略、自测臂根本不存在。
+  它是被一个 `for` 循环的 rc 汇总列"洗绿"的：**"臂不存在"与"臂跑过了"在一列 0 里同形**（R44 同族）。
+- 按九度末条指定的改法落地：语料入口参数化（`extractUsedKeys(readFile, listFiles)`、
+  `collectCarriedKeys(readFile, listFiles, definedKeys)`）+ 纯判据核 `check(...)`，
+  把 R55 那四臂搬成内存夹具，另补两条判红条款各自的臂与前提闸门（locale 零键、源码零 `t()` 引用 ⇒ 开火）。
+  `176 → 473` 行，12 臂每臂一行 `PASS/FAIL + 臂名`。
+- 读数：`--self-test` rc=0 / `判据自测 12/12 通过`；默认路径 rc=0 且输出与改前**逐字节相同**（`未使用翻译键（354` 不变）；
+  接线落地后复跑仍是 12/12、354。变异 A（删 `carried`）→ rc=1 且真树 354→386（正是 R55 之前的面）——
+  **这两把变异是子代理跑的，我重跑的是两个 rc 与 12/12 那行，故变异侧标未亲验**。
+- 登记为 **R58（开放）**：8 把尺子里 1 把的 `--self-test` 曾是空话，而没有任何门禁保证"旗标必须被识别"。
+  候选修法（统一 argv 解析、未知旗标 rc=2；或加一条"旗标必须被自己回显"的门禁）本轮未做，理由是动 8 把尺子入口
+  需在同一轮重跑全部取证，收益/扰动比不划算——这是裁决不是遗忘。
+
+### R54 量率：0/20 首跑失败（`--retries=0`，宿主 load 5.9→12.3/10 核），保持"开放·抖动"不升级
+
+- 九度那一格写着"率见下一节的收尾表"，而那张表当时不存在——本轮回填九度收尾读数时一并实测。
+- 装置：`npx playwright test e2e/core-flow.spec.ts --project=chromium --repeat-each=5 --retries=0` 连跑 4 批 = 20 次首跑
+  → **0 failed / 20 passed**；控制跑（整文件单跑）`2 passed (26.9s)` 复现登记时那次"单独复跑 2 passed"。
+  起跑前 `check-e2e-install.mjs` rc=0（696 条）与 `check-e2e-demo-password.mjs` rc=0；
+  在跑的另一路 Playwright（同栈同库，206 passed）跑完才起第一臂，避免红了无法归因。
+- 首屏 URL 从服务端拿：nginx 窗口内 42 次 `GET /quotation/compare/<id>` **全 200**，referrer 链无一次弹回 `/login`；
+  后端 5967 条 status 200、**零 4xx/5xx**（nginx 的 525 条 499 是 `page.goto()` 掐在飞轮询的客户端中断码）
+  ⇒ 排除"鉴权被弹回"与"接口报错"两条假设，候选收窄为 >10 s 的慢 200 或 `submittedRows.length === 0` 空态。
+- **最有信息量的是余量不是"没红"**：`/api/inquiries` 最慢一条 `200 / 9440.0 ms`，吃掉 10 s 断言预算的 **94%** 而套件仍绿；
+  同一条用例挂钟随 load 从 7.6 s 涨到 23.8 s（×3.1）。
+- 一条取证面的结构事实：`playwright.config.ts:24-26` 是 `trace/video: 'on-first-retry'` 而量率用 `--retries=0`
+  ⇒ **这些年跑里红了也拿不到 trace**。下次要表征它，先解决取证面，不要先改断言。
+- 判定：0/20（95% 置信上界 ≈15%，与原始 1/180 完全相容），**只测了单文件隔离跑，不是全量套件末尾那个总体**
+  ⇒ R54 记为"已量率、本轮未复现"，不闭。
+
 ### R55：i18n 门禁的"未使用键"清单不再把住在数据里的键报成孤儿（386 → 354，32 条误报归零）
 
 - 起因是一行"不阻断"的提示：`未使用翻译键（386）`。两把独立检索实测——
