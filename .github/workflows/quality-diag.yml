@@ -31,15 +31,29 @@ jobs:
       - name: 环境自报身份（不认身份就不配当凭据）
         id: env
         run: |
+          # 上一版这一行栽在 `| tee -a "$GITHUB_ENV"`：写进去的那条不是 KEY=VALUE 形状，
+          # Actions 解析 $GITHUB_ENV 失败 ⇒ 整个 step 判失败 ⇒ 后面所有 step 被跳过 ⇒
+          # job 十秒红、一条评论都没发出去，把本档唯一的目的（把话带回来）一起带走了。
+          # 本档不需要往 GITHUB_ENV 写身份，要留的留在日志与评论里就够了。
           echo "os=$ImageOS kernel=$(uname -r) arch=$(uname -m)"
-          echo "case-sensitive fs? $(touch ./__cs_probe 2>/dev/null; ls ./__CS_PROBE 2>/dev/null >/dev/null && echo YES || echo NO); rm -f ./__cs_probe" | tee -a "$GITHUB_ENV"
+          : > /tmp/__cs_probe_a; if [ -e /tmp/__cs_probe_A ]; then CS=不区分; else CS=区分; fi
+          rm -f /tmp/__cs_probe_a; echo "文件系统：$CS 大小写"
           node -v; npm -v; git --version
-          echo "core.ignorecase=$(git config --get core.ignorecase || echo unset)"
+          echo "core.ignorecase=$(git config --get core.ignorecase 2>/dev/null || echo unset)"
 
-      - run: npm ci
+      - name: npm ci（失败也继续，但要把结尾留给评论）
+        id: npmci
+        continue-on-error: true
+        run: |
+          npm ci --no-audit --no-fund 2>&1 | tee /tmp/npmci.log
+          rc=${PIPESTATUS[0]}
+          echo "npm ci rc=$rc  node_modules=$(ls node_modules 2>/dev/null | wc -l | tr -d ' ') 个包"
+          if [ "$rc" -ne 0 ]; then printf 'NPMCI_FAILED=1\n' >> "$GITHUB_ENV"; else printf 'NPMCI_FAILED=0\n' >> "$GITHUB_ENV"; fi
+          exit 0
 
       - name: 逐步跑，逐步记 rc（退出码不经过管道）
         id: steps
+        if: env.NPMCI_FAILED != '1'
         run: |
           set +e
           : > /tmp/steps.txt
@@ -74,34 +88,38 @@ jobs:
           exit 0
 
       - name: 把 rc 一览与首条失败的结尾贴成 PR 评论
+        if: always()   # 少了这行，前面任一 step 非零就会把"带话"这一步整条跳过（上一版就是这么哑的）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FIRST_FAILED: ${{ steps.steps.outputs.first_failed }}
         run: |
-          set -e
-          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head qoder/ci-evidence-0928 --state open --json number --jq '.[0].number')
-          # 只接受纯数字：评论接口的参数不该拿任意字符串去拼
+          # 这一档的唯一职责是"把话带回来"。所以：不用 set -e（任何一处取不到东西都要继续发评论），
+          # 每个读取都带兜底；上一版就是 set -e + cat 一个不存在的 /tmp/steps.txt，评论没发出去。
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head qoder/ci-evidence-0928 --state open --json number --jq '.[0].number' 2>/dev/null || true)
           case "$PR" in
-            ''|*[!0-9]*) echo "PR 编号取不到或不是数字（=$PR），跳过贴评论"; exit 0 ;;
+            ''|*[!0-9]*) echo "PR 编号取不到（=$PR），无处可贴；把读数打进日志"; PR=""; ;;
           esac
           {
             echo "### quality 步骤逐步复算（runner 侧一手读数）"
             echo
-            echo "- 检出是否区分大小写：见下面 env 步骤自报（core.ignorecase / __cs_probe）"
-            echo "- 首个失败步骤：\`${FIRST_FAILED:-（无：全绿）}\`"
+            echo "- 首个失败步骤：\`${FIRST_FAILED:-（无：所跑步骤全绿）}\`"
+            echo "- NPMCI_FAILED=\`${NPMCI_FAILED:-unset}\`"
             echo
             echo '```'
-            cat /tmp/steps.txt
+            echo "rc<TAB>步骤名（没有这份清单＝装树就没成，下面贴 npm ci 结尾）"
+            cat /tmp/steps.txt 2>/dev/null || echo "(无)"
             echo '```'
             if [ -n "$FIRST_FAILED" ]; then
               f="/tmp/step-$(echo "$FIRST_FAILED" | tr ' /:' '___').log"
               if [ -f "$f" ]; then
-                echo
-                echo "#### 首个失败步骤结尾"
-                echo '```'
-                tail -40 "$f"
-                echo '```'
+                echo; echo "#### 首个失败步骤结尾"; echo '```'; tail -40 "$f" 2>/dev/null; echo '```'
               fi
             fi
+            if [ ! -f /tmp/steps.txt ] || [ -s /tmp/npmci.log ]; then
+              echo; echo "#### npm ci 结尾"; echo '```'; tail -30 /tmp/npmci.log 2>/dev/null; echo '```'
+            fi
           } > /tmp/report.md
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
+          if [ -n "$PR" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md || echo "贴评论失败"
+          fi
+          cat /tmp/report.md
