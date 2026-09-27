@@ -2,7 +2,7 @@
  * 询价单列表（Task 7）
  * 支持多维度筛选、状态可视化、截止时间警示、复制/取消/导出等操作
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
@@ -115,6 +115,11 @@ export default function InquiryListPage() {
   const [exportingCurrent, setExportingCurrent] = useState(false);
   // 逐行导出按行记状态：同一行连点挡掉，不同行各转各的（单槽位会让先完成那次清掉别人的标记）
   const [exportingRows, setExportingRows] = useState<Record<string, boolean>>({});
+  // R52：守卫**不能**只靠 state。state 要等下一次渲染才读得到，同一 tick 内的第二下
+  // 会读到同一份旧快照 ⇒ 两下都放行（e2e 用两次紧邻 click 复现，实测 3 次红 1 次）。
+  // 所以同步占坑用 ref，state 只负责把 loading 画出来。
+  const exportingRowsRef = useRef<Set<string>>(new Set());
+  const exportingCurrentRef = useRef(false);
   const [filterOpen, setFilterOpen] = useState(false);
 
   // ===== Task 19：保存筛选视图 + 默认视图 =====
@@ -590,7 +595,8 @@ export default function InquiryListPage() {
   };
 
   const handleExport = async (inquiry: Inquiry) => {
-    if (exportingRows[inquiry.id]) return;
+    if (exportingRowsRef.current.has(inquiry.id)) return;
+    exportingRowsRef.current.add(inquiry.id);
     setExportingRows((s) => ({ ...s, [inquiry.id]: true }));
     const header = [
       i18n.t('inquiry.export.materialName'),
@@ -618,6 +624,7 @@ export default function InquiryListPage() {
     } catch {
       notifyError(i18n.t('inquiry.export.failed'));
     } finally {
+      exportingRowsRef.current.delete(inquiry.id);
       setExportingRows((s) => {
         const next = { ...s };
         delete next[inquiry.id];
@@ -734,7 +741,8 @@ export default function InquiryListPage() {
 
   /** 导出当前筛选结果 */
   const handleExportCurrent = async () => {
-    if (exportingCurrent) return;
+    if (exportingCurrentRef.current) return;
+    exportingCurrentRef.current = true;
     setExportingCurrent(true);
     const header = [
       t('inquiry.list.inquiryCode'),
@@ -764,6 +772,7 @@ export default function InquiryListPage() {
     } catch {
       notifyError(i18n.t('inquiry.export.failed'));
     } finally {
+      exportingCurrentRef.current = false;
       setExportingCurrent(false);
     }
   };

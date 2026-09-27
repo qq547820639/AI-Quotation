@@ -163,30 +163,29 @@ test.describe('Excel 导出的浏览器级落地（R41 顺序 + R44 重入）', 
       seen.push(d.suggestedFilename());
     });
 
-    // 两下都用 dispatchEvent，不用 click()：实测 Playwright 的 click() 会在这个按钮切换成
-    // loading 形状后做到位/稳定复检，等它返回时那一次生成已经完成（同文件另一格读到
-    // dl=431ms、toast=451ms），第二下就落在守卫窗口之外——那样测的是"顺序导出两次出两份"，
-    // 是正确行为而不是守卫。dispatchEvent 直接再进一次 React 的 onClick，才压得住同一次生成。
-    await btn.dispatchEvent('click');
-    await btn.dispatchEvent('click');
+    // 五下压进**同一个任务**里同步派发：Playwright 的 dispatchEvent 每次是一趟独立往返，
+    // 两趟之间 React 可能已经重渲染完，守卫就读得到上一把的状态了——那样的"绿"取决于往返时机。
+    // 实测把两下改成 element 内的一次 evaluate 连发五下之后，这一格才从"3 次红 1 次"变成确定性地红
+    // （R52：根因就是守卫读 state、而 state 要等下一次渲染才可见，见 src/pages/inquiry/list/index.tsx:598）。
+    await btn.evaluate((el) => {
+      for (let i = 0; i < 5; i++) {
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      }
+    });
 
     await expect.poll(() => seen.length, { timeout: 30_000 }).toBeGreaterThan(0);
     // 判别量用页内生成计数，不用 download 条数（理由见 armGenerationCounter 的注释）。
-    // 四臂实测（同一把尺子，改的是被测代码）：
-    //   原样（守卫 + loading）        → gen=1，绿
-    //   删 handler 守卫（arm B）      → 仍 gen=1，绿 ⇒ 这一臂**没有判别力**，
-    //        因为 antd Button 在 loading 期间自己吞掉 click（探针读到两次 DOM click、一次生成）
-    //   删守卫 + 删 loading（arm C）  → gen=2 且落两份文件，红 ✓
-    //   留守卫 + 删 loading（arm D）  → gen=1，绿 ✓ ⇒ 守卫单独成立
-    // 所以本用例证的是"连点只出一份"这条用户可见不变量，并把两层防护的分工写在这里；
-    // 它**不**单独证明 handler 守卫必要——在桌面点击路径上组件层已经先挡住了。
+    // 更正一条旧读数：这里原先记的四臂表（"arm D 留守卫 + 删 loading → gen=1，绿 ⇒ 守卫单独成立"）
+    // 是在**两下跨往返**的弱注入下取的；换成同任务连发五下后，同一格在 3 次里红过 1 次（R52），
+    // 也就是说那次"绿"是非判别性的巧合，不能当"守卫有效"的证据。四臂在新注入下的重测读数见登记册 R52。
+    // 组件层吞 loading 期 click 这一层仍然成立，但它挡的是跨 tick 的第二次点击；同批内的连发只有同步守卫有用。
     await page.waitForTimeout(1_500);
     const gens = await readGenerations(page);
     const disabledAfterFirst = await btn.isDisabled().catch(() => false);
     expect(
       gens,
-      `连点只该启动一次生成（实测该按钮 loading 时 disabled=${disabledAfterFirst}，` +
-        `所以挡住第二下的应是 handler 里的 early return 而不是组件），实际生成 ${gens} 次，` +
+      `同任务连发 5 下只该启动一次生成（实测该按钮 loading 时 disabled=${disabledAfterFirst}，` +
+        `组件层吞不掉同一个批里的派发），实际生成 ${gens} 次，` +
         `download 事件 ${JSON.stringify(seen)}`,
     ).toBe(1);
 
