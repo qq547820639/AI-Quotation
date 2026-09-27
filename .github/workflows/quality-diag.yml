@@ -85,6 +85,19 @@ jobs:
           run1 "npm run storage:check" npm run storage:check
           run1 "npm run settings:inert:check" npm run settings:inert:check
           run1 "npm run notify-mint:check" npm run notify-mint:check
+          # ---- 逐把尺子单独跑一遍本体与自测 ----
+          # 为什么不能只看 `npm run gates`：聚合闸给每根失败只留子进程输出的一行摘录，
+          # 于是"自测档里到底是第几条判据开的火"在聚合面上永远看不见——2026-09-27 CI 的
+          # `npm run gates` rc=1 就是这么哑的，带回来的那行还是 "✔ 一致 → 必须静默且退 0"，
+          # 红的是后面某条臂，光看聚合读不出来。
+          n_rulers=0
+          for f in scripts/check-*.mjs; do
+            n_rulers=$((n_rulers + 1))
+            b=$(basename "$f" .mjs)
+            run1 "尺子本体 $b" node "$f"
+            run1 "尺子自测 $b" node "$f" --self-test
+          done
+          echo "逐把跑了 $n_rulers 把（聚合闸用同一正则枚举；数目与聚合自报的不符＝枚举面漂移）"
           # ---- 对照臂：同一台机器上只换"调度方式"，用来分"跨文件污染"与"平台差异" ----
           # 主跑（默认并行）里 storage.test.ts:59 的
           #   expect(() => localStorage.setItem('probe','1')).toThrow(boom)

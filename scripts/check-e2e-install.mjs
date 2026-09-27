@@ -253,16 +253,70 @@ async function selfTest() {
   );
   rmSync(dir, { recursive: true, force: true });
 
-  // 4) 平台专属可选包缺失：不得误伤（第一版就在这里误报 47 个）
+  // 4) 平台专属可选包：两极都要测，且**夹具必须相对本机构造**。
+  //    原先这里写死 `os:['linux'], cpu:['x64']` 当"本平台不适用"——在 macOS 上确实不适用，
+  //    可 GitHub 的 ubuntu-latest 就是 linux/x64，那一档下这条夹具变成"本平台适用"，
+  //    尺子按实现正确开火，于是自测臂在 CI 上红、本机绿（2026-09-27 `npm run gates` rc=1 的真因；
+  //    复现：`node --import <把 process.platform/arch 改成 linux/x64 的预加载> scripts/check-e2e-install.mjs --self-test`）。
+  //    现在按本机取反，并补上"与本机相符且缺失 → 必须开火"这一极性，缺一半都算没测。
+  const osNot = process.platform === 'linux' ? 'win32' : 'linux';
+  const cpuNot = process.arch === 'x64' ? 'arm64' : 'x64';
+  add(
+    '前提：第 4 臂的"不适用"组合确实与本机不符（写死字面量时这条就是给 CI 准备的）',
+    osNot !== process.platform && cpuNot !== process.arch,
+    `本机=${process.platform}/${process.arch} 夹具=${osNot}/${cpuNot}`,
+  );
   dir = mkTree({
     'package-lock.json': lockOf({
       'node_modules/x': pkg('1.0.0'),
-      'node_modules/linux-only': { version: '2.0.0', os: ['linux'], cpu: ['x64'] },
+      'node_modules/other-platform-only': {
+        version: '2.0.0',
+        os: [osNot],
+        cpu: [cpuNot],
+      },
     }),
     'node_modules/x/package.json': pkg('1.0.0'),
   });
   r = check(dir);
   add('本平台不适用的可选包缺失 → 不得开火', r.rc === 0, `rc=${r.rc} ${r.lines[0] || ''}`);
+  rmSync(dir, { recursive: true, force: true });
+
+  // 4b) 反极性：约束与本机**相符**、磁盘上又缺 → 必须开火并点名那条路径。
+  //     只测"不适用不报"这一半时，把 applicable() 判成永远 false 的坏实现也能让 4 通过。
+  dir = mkTree({
+    'package-lock.json': lockOf({
+      'node_modules/x': pkg('1.0.0'),
+      'node_modules/this-platform-only': {
+        version: '2.0.0',
+        os: [process.platform],
+        cpu: [process.arch],
+      },
+    }),
+    'node_modules/x/package.json': pkg('1.0.0'),
+  });
+  r = check(dir);
+  add(
+    '与本机相符的包缺失 → 必须开火并点名路径（4 的反极性）',
+    r.rc === 1 && r.lines.some((l) => l.includes('node_modules/this-platform-only:')),
+    `rc=${r.rc}`,
+  );
+  rmSync(dir, { recursive: true, force: true });
+
+  // 4c) `optional: true` 且与本机相符、仍缺失 → 不得开火（实现里 optional 与 applicable 是两条并列豁免）
+  dir = mkTree({
+    'package-lock.json': lockOf({
+      'node_modules/x': pkg('1.0.0'),
+      'node_modules/optional-here': {
+        version: '2.0.0',
+        optional: true,
+        os: [process.platform],
+        cpu: [process.arch],
+      },
+    }),
+    'node_modules/x/package.json': pkg('1.0.0'),
+  });
+  r = check(dir);
+  add('optional 包即使在本机缺失 → 不得开火', r.rc === 0, `rc=${r.rc} ${r.lines[0] || ''}`);
   rmSync(dir, { recursive: true, force: true });
 
   // 5) 锁文件不存在：必须判前提不成立，绝不能静默退 0
