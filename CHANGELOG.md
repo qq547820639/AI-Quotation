@@ -4,6 +4,40 @@
 
 ## [Unreleased]
 
+### R51-A / R52 / R53：写回执铺到跨帧宣告、导出重入守卫改同步 ref、8 处过去式通知移到服务端接受之后
+
+- **R51-A（`101cc0b`）**：R50 那把判据是函数粒度的，看不见"写在 store action / `useEffect` 帧、
+  toast 由调用方弹"的跨帧宣告（实测 35 对）。其中真正要修的只有 4 对——本机存储是唯一权威、没有服务端副本可退：
+  `useSavedViews` 的持久化改为 `commit()` 内同步写并返回 `WriteReceipt`（`useEffect` 保留为兜底镜像，
+  `transition` 必须确定性否则镜像与状态分叉），三个方法签名 `void → WriteReceipt`，
+  `inquiry/list/index.tsx:427/:442/:456` 三条宣告改为失败走 `storage.writeFailed`（保存失败不关弹窗、不清输入）；
+  `useInquiryDraft.overwrite` 从"调 `saveNow` 丢布尔"改为 `return saveNow(...)`，`create/index.tsx:271` 随之有据。
+  牙：HEAD `45b36f2` 上只换两个测试文件 ⇒ `4 failed / 17 passed`。
+- **R52（`eb4cf20`）**：R50 取证跑抓出 `[chromium] export-download` 逐行导出重入格 `1 failed`（复跑 3 次红 1 次）。
+  根因是守卫读渲染闭包里的 state、而 state 要等下一次渲染才可见 ⇒ 同 tick 连发两下都放行。
+  改为 `useRef<Set<string>>` 同步占坑（逐行 `:598/:627`、批量 `:744/:775`），state 只画 loading。
+  **同时推翻我自己登记的一条结论**：R44 四臂表里"留守卫 + 删 loading 仍 gen=1 ⇒ 守卫单独成立"
+  是在两次跨往返的弱注入下取的，属非判别性巧合。注入改成 element 内一次连发 5 个 click 后重测三臂：
+  修好的树 `gens=1` × 3 全绿；变异回 state 守卫的树 **3 次全红、`Expected: 1 / Received: 5`**（并附产物 sha1 变更证）。
+  教训：注入的时钟帧必须与被测守卫的失效窗口同帧，"删掉某层仍绿"的臂要先证明注入落在它的时间尺度里。
+- **R53（`bded3ac`）**：R51 的"判不出"桶读到定案且更糟——8 处写入口（`useInquiryStore` 的
+  cancel/send/select/confirm/submitApproval/approve/reject + `useQuotationStore.submitQuotation`）
+  把「询价单 X 已取消」这类过去式通知铸在 `set(状态配方)` 体内，即乐观那一帧；`catch` 只回滚实体、
+  从不撤通知，而仓里没有任何删通知的能力（`grep "removeNotification\|deleteNotification\|dismiss" src/store src/api` = 0）
+  ⇒ 被后端拒绝的操作会在通知中心与本机存储留下永久假记录。修法是把铸造移到对应 `await` 之后
+  （实体改从 `get().getInquiryById` 取，顺带用上服务端真编号而非占位值）。
+  **连带改判 6 条常驻用例**：它们用 `void store.getState().xxx()` 同步观察，钉的正是这个缺陷本身
+  （改成 `await` 后观察，断言内容一字未动，`6 failed → 103 passed`）。
+  新常驻判据 `scripts/check-notification-optimistic-mint.mjs`：`addNotification` 落在 `set(配方)` 子树里即判红；
+  真树 `26 站点 inside_set=0`，同一把尺子打在改前的 `eb4cf20` 上点名 7 处；
+  自测三臂（夹具开火 / 合规侧不掉档 / "4 次铸造全在配方外"的逆语料必须 0 处）。
+  **覆盖面说清**：8 处里它只吃 7 处——quotation 那一处是"配方外、`await` 前"的时间形状，由不变量用例守着。
+  已接 `package.json:19` 的 `notify-mint:check` 与 CI quality 档。
+- 本轮门禁读数：`vitest 41 files / 459 tests`、`tsc`、`lint --max-warnings=0`、`i18n`、
+  `toast 自测 18/18`、`tsc 覆盖面 165`、`装树 696`、`storage 判据 86 站点`、`通知铸造判据 26 站点` 全绿。
+
+；新门禁 `storage:check` 带 quiet 棘轮；R48 那 11 行"未亲验"逐条读到定案
+
 ### R50：本地存储的三个写函数改为返回**写回执**；新门禁 `storage:check` 带 quiet 棘轮；R48 那 11 行"未亲验"逐条读到定案
 
 - 根因：`src/utils/storage.ts` 的 `saveJSON`/`removeKey`/`clearAll` 把 `QuotaExceededError`、
