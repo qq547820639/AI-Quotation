@@ -3,7 +3,6 @@ import {
   expectWriteLanded,
   login,
   confirmOk,
-  expectSuccessToast,
   createAndSendInquiry,
   submitQuoteViaPortal,
   chooseSupplierOnCompare,
@@ -143,12 +142,21 @@ test.describe('核心业务链路', () => {
     await page.goto('/approval');
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 10000 });
-    await approvalRow.getByRole('button', { name: /驳\s*回|Reject/ }).click();
-    await page
-      .locator('.ant-modal')
-      .getByRole('button', { name: /确\s*定|OK/ })
-      .click();
-    await expectSuccessToast(page, /审批已驳回|Approval rejected/);
+    // R68：这一处是 R65 批量换凭据时漏下的位点（文案与结构与其他几处不同，正则没匹配到它）。
+    // A/B 两臂各出 1 次 flaky 的都是它 —— 与序号保护无关，纯粹是"拿瞬时提示当唯一凭据"。
+    // 换成等 POST /api/inquiries/:id/reject 返回 <300；驳回是否真生效仍由本用例后半的"不可定标"断言管。
+    await expectWriteLanded(
+      page,
+      /\/api\/inquiries\/[^/]+\/reject$/,
+      async () => {
+        await approvalRow.getByRole('button', { name: /驳\s*回|Reject/ }).click();
+        await page
+          .locator('.ant-modal')
+          .getByRole('button', { name: /确\s*定|OK/ })
+          .click();
+      },
+      'POST',
+    );
 
     // 驳回后审批节点为 REJECTED，不应出现"确认定标"按钮（无法定标）
     await page.goto(`/quotation/compare/${inquiryId}`);
