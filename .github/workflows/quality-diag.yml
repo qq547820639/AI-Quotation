@@ -125,12 +125,18 @@ jobs:
             echo "rc<TAB>步骤名（没有这份清单＝装树就没成，下面贴 npm ci 结尾）"
             cat /tmp/steps.txt 2>/dev/null || echo "(无)"
             echo '```'
-            for n in $(cat /tmp/fails/_order 2>/dev/null); do
-              echo; echo "#### 失败步骤结尾：$n"
-              echo '```'
-              cat "/tmp/fails/$(echo "$n" | tr ' /:' '___').log" 2>/dev/null || echo "(结尾取不到)"
-              echo '```'
-            done
+            # 步骤名里有空格：早先用 `for n in $(cat ...)` 会把一个名字拆成四个词，
+            # 于是拼出来的文件名全是碎的、每根红的结尾都读成"(取不到)"——等于又哑了一次。
+            # 改成逐行读、整行当名字。
+            if [ -f /tmp/fails/_order ]; then
+              while IFS= read -r n; do
+                [ -n "$n" ] || continue
+                echo; echo "#### 失败步骤结尾：$n"
+                echo '```'
+                cat "/tmp/fails/$(printf '%s' "$n" | tr ' /:' '___').log" 2>/dev/null || echo "(结尾取不到)"
+                echo '```'
+              done < /tmp/fails/_order
+            fi
             echo; echo '#### 版本自报（要判「平台差异」先得有版本）'
             echo '```'
             cat /tmp/vers.log 2>/dev/null || echo "(取不到)"
