@@ -154,6 +154,51 @@ jobs:
           esac
           exit 0
 
+  build-log:
+    name: build 作业红时把它的日志贴回 PR
+    # 为什么还要多这一个作业：build 作业里那个 if: failure() 的取证步只能看见"我自己的现场"
+    # （dist 清点、重跑退码），而它在**作业尚未结束**时去取本 job 日志必然拿到
+    # `BlobNotFound / HTTP 404`（一手读数：PR #5 20:37:27 评论末段）——日志要作业结束后才可读。
+    # 于是把取日志放到 build 之后、且只在它红时跑：那时日志已经可下载。
+    needs: build
+    if: always() && needs.build.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read          # 下载本 run 的 job 日志
+      pull-requests: write   # 贴回 PR
+    steps:
+      - name: 下载 build 作业日志并贴结尾
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set +e
+          JID=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name == "Production Build") | .id' 2>/dev/null | head -1)
+          {
+            echo "### build 作业日志（一手，只回话不改判）"
+            echo "- run=$RUN_ID job_id=$JID head_ref=${HEAD_REF:-（push 事件无此值）}"
+            echo '```'
+            if [ -n "$JID" ]; then
+              gh api "/repos/$GITHUB_REPOSITORY/actions/jobs/$JID/logs" 2>&1 | tail -60
+            else
+              echo "job_id 取不到（多半是令牌没有 actions: read）"
+            fi
+            echo '```'
+          } > /tmp/buildlog.md
+          wc -c /tmp/buildlog.md
+          PR=""
+          if [ -n "$HEAD_REF" ]; then
+            PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_REF" --state open --json number --jq '.[0].number' 2>/dev/null)
+          fi
+          case "$PR" in
+            ''|*[!0-9]*) echo "PR 编号取不到（=$PR），把日志打进本作业日志"; cat /tmp/buildlog.md ;;
+            *) gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/buildlog.md || cat /tmp/buildlog.md ;;
+          esac
+          exit 0
+
   backend-test:
     name: Backend Lint + Unit + API Integration + Permissions + State Transitions
     runs-on: ubuntu-latest
