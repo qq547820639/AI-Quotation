@@ -36,6 +36,11 @@ jobs:
         run: npx vitest run --coverage
       - run: npm run i18n:check
       - run: node scripts/check-i18n.mjs --self-test
+      - name: Aggregate gate — every check-*.mjs must pass body AND --self-test
+        # 今天缺的就是这一步：八把尺子各自有自测，但没人一次跑全，
+        # 所以我能连着两次提交而漏掉 storage-receipt 的棘轮超限（quiet 74→79）。
+        # 它不判断业务规则，只保证"没有哪把尺子被静默跳过"；清单靠枚举，不靠手写名单。
+        run: npm run gates
       - name: Verify local-storage writes don't announce success without a receipt
         # R50：storage.ts 的 saveJSON/removeKey/clearAll 过去把 QuotaExceededError/SecurityError
         # 就地吞掉并返回 void ⇒ 调用方没有任何凭据，却能弹"已保存/已清空/已删除"。
