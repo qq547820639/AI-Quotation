@@ -12,6 +12,16 @@ on:
   pull_request:
     branches: [main]
 
+# 显式声明最小权限。原先整份文件没有一个 permissions 块 ⇒ 所有作业继承仓库/组织默认档，
+# 而默认档很可能是"只读仓库内容"——那正好解释 build 作业的位置：`npm ci` 与 `npm run build`
+# 都在诊断档镜像里证过 rc=0（PR #5 19:51:37 / 20:21:36 两条评论），失败落在其后唯一的
+# upload-artifact 上（该动作要 `actions: write`）。同仓的 quality-diag.yml 声明了
+# pull-requests: write 才贴得出评论，这本身就是"默认档不够用"的旁证。
+permissions:
+  contents: read # checkout
+  actions: write # upload-artifact（dist / SBOM / 扫描报告 / playwright 产物）与其日志读取
+  pull-requests: write # 失败时把现场贴回 PR 的那一步
+
 jobs:
   quality:
     name: Lint + TypeCheck + Unit Test
@@ -86,6 +96,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        with:
+          name: dist
+          path: dist/
       - name: 失败时把现场贴回 PR（本作业的日志要鉴权才读得到）
         # 为什么要这一步：build 作业连续两次在同一处红（19:08:26→19:09:23、19:45:30→19:46:27，都是 57 s），
         # 而同一台 runner、同一棵树上诊断档镜像跑的 `npm run build` 是 rc=0（PR #5 19:51:37 那条评论），
@@ -115,7 +129,20 @@ jobs:
             tail -40 /tmp/buildagain.log
             echo "重跑 rc=$rcagain"
             echo '```'
-            echo "- 判读：重跑 rc=0 ⇒ 失败不在 npm ci/build（这两步已在同型环境各自证过），落在本作业 build 之后唯一未取证的那一步；rc≠0 ⇒ 结尾 40 行就是原因。"
+            echo "- 判读：重跑 rc=0 ⇒ 失败不在 npm ci/build，落在它之后那一步；rc≠0 ⇒ 结尾 40 行就是原因。"
+            echo "- 本 job 自己的日志结尾 45 行（upload-artifact 之类的动作报错只会出现在这里）："
+            echo '```'
+            # 本 job 的 id 不能拿 github.job（那是键名 "build"）去配显示名——同一 run 里
+            # "Docker Build + Compose…" 也含 "build"，会配错。改用一个自指事实：
+            # 报告步跑在本 job 内部的那一刻，整个 run 里唯一 in_progress 且无 conclusion 的就是本 job。
+            JID=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | select(.status=="in_progress" and .conclusion==null) | .id' 2>/dev/null | head -1)
+            echo "job_id=$JID（按 in_progress 自指挑出，不按名字匹配）"
+            if [ -n "$JID" ]; then
+              gh api "/repos/$GITHUB_REPOSITORY/actions/jobs/$JID/logs" 2>&1 | tail -45
+            else
+              echo "取不到本 job 的 id（多半是令牌没有 actions: read）——那本身就是结论的一半"
+            fi
+            echo '```'
           } > /tmp/buildfail.md
           PR=""
           if [ -n "$HEAD_REF" ]; then
@@ -126,10 +153,6 @@ jobs:
             *) gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/buildfail.md || cat /tmp/buildfail.md ;;
           esac
           exit 0
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
-        with:
-          name: dist
-          path: dist/
 
   backend-test:
     name: Backend Lint + Unit + API Integration + Permissions + State Transitions
