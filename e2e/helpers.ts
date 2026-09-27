@@ -138,6 +138,34 @@ export async function confirmOk(page: Page) {
  * 于是 /approval 能不能看见这条单变成掷硬币（全量跑 1/195 的红即此）。
  * 页面的成功提示都在 `await` 写请求之后才弹，所以按文案指名等就等于等写落地。
  */
+/**
+ * R65：拿"写落地的响应"当凭据，而不是拿会自动消失的 toast 当凭据。
+ *
+ * 存在理由（一手取证）：n=30 的 webkit 复跑里 3/60 红全部落在
+ * `expectSuccessToast(/审批已通过/)` 这一类断言上（用例总时长 20.5/25.8/32.6 s，
+ * 而绿的一般 6~13 s）——写其实成功了，只是那条绿色提示没在 15 s 窗口里被等到。
+ * 这与时序无关的产品缺陷不同：它是"把瞬时 UI 当权威"造成的假红（与 R34 同源，方向相反）。
+ *
+ * 用法：把触发写的两次点击包进 action，本函数先挂响应监听再执行，
+ * 断到 2xx 才返回；后续步骤原有的可见性断言继续负责"状态真的变了"。
+ */
+export async function expectWriteLanded(
+  page: Page,
+  urlPattern: RegExp,
+  action: () => Promise<void>,
+  method = 'POST',
+): Promise<void> {
+  const pending = page.waitForResponse(
+    (r) => urlPattern.test(r.url()) && r.request().method() === method,
+    {
+      timeout: 20000,
+    },
+  );
+  await action();
+  const res = await pending;
+  expect(res.status(), `写请求未成功：${method} ${res.url()}`).toBeLessThan(300);
+}
+
 export async function expectSuccessToast(page: Page, text: RegExp) {
   await expect(page.locator('.ant-message-success').filter({ hasText: text }).first()).toBeVisible({
     timeout: 15000,

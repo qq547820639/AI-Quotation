@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
+  expectWriteLanded,
   login,
   confirmOk,
   expectSuccessToast,
@@ -68,12 +69,16 @@ test.describe('核心业务链路', () => {
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 5000 });
     // 按钮带前导图标，可访问名是「check-circle 通 过」→ 不能用 ^ 锚定行首
-    await approvalRow.getByRole('button', { name: /通\s*过|Approve/ }).click();
-    await page
-      .locator('.ant-modal')
-      .getByRole('button', { name: /确\s*定|OK/ })
-      .click();
-    await expectSuccessToast(page, /审批已通过|Approval passed/);
+    // R65：凭据换成"审批写请求 2xx"。原来这里只等一条会自动消失的绿色提示，
+    // n=30 的 webkit 复跑里 3/60 红都红在它身上（写其实成功了），属"把瞬时 UI 当权威"的假红。
+    // 审批是否真的生效仍有人管：第 8 步要看到「确认定标」按钮，而那按钮只在审批通过后出现。
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/approve$/, async () => {
+      await approvalRow.getByRole('button', { name: /通\s*过|Approve/ }).click();
+      await page
+        .locator('.ant-modal')
+        .getByRole('button', { name: /确\s*定|OK/ })
+        .click();
+    });
 
     // 8. 完成定标
     await page.goto(`/quotation/compare/${inquiryId}`);

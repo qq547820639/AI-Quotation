@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### R65 修复并取证：审批凭据从瞬时 toast 换成写响应，n=30 由 3/60 变 0/60
+
+- `e2e/helpers.ts` 新增 `expectWriteLanded`（先挂监听、再执行点击、断到 <300），`core-flow` 第 7 步改用它，
+  并**撤掉**原来的 `expectSuccessToast(/审批已通过/)`——留着它就是留着那条红；写是否真生效仍由第 8 步的「确认定标」按钮管。
+- 取证：同装置同镜像只换测试代码，`--project=webkit --repeat-each=30 --retries=0` → **60 passed / rc=0 / 7.2 分钟**。
+- 统计量级写清：旧率 5% 下"60 次一次不红"的概率 `0.95^60 ≈ 4.6%` ⇒ 这档**有区分力**（上一档 n=6 的 26% 没有）。
+- 门禁同步：`check-e2e-toast-assertions` rc=0（站点 21→20、helper 7→6、豁免 6 处在册）与其自测 rc=0、
+  `eslint e2e` rc=0、`tsc` rc=0。顺带记一条盲区：**`e2e/` 不在 tsconfig include 内，类型面看不见它**，
+  语法与形状只能靠 eslint＋toast 判据那一族。
+- R54/R64 不闭：空态形状两次 n=30 都没再现，但"为什么没再现"还有两个未分离的解释
+  （序号修复 / 负载与时序本来更宽），需要 `5c922f2` 与其父提交的同负载 A/B。
+
 ### n=30 取证：空态 30 次未再现，但红换到了 toast 上（3/60）；R63 让 Origin 白名单可注入
 
 - 构建自含序号修复的 HEAD，`core-flow --project=webkit --repeat-each=30 --retries=0` → **3 failed / 57 passed**（60 实例，8.1 分钟，load 9.79→11.75/10 核）。
