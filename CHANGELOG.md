@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### R64 测法更正：403 出自资源级受邀名单校验，改用 `--tracing=on` 读真实用例的 trace
+
+- 上一片把 403 归给"仪器用错账号"，换成 core-flow 真用的 王志强 后仍全红 ⇒ 那支解释也撤回。
+- 读端点本体（`inquiries.py:767-783`）：403 来自 `invited_ids` 的**资源级校验**（供应商不在该单受邀名单），
+  不是登录态/跨域。我的隔离栈挂宿主 `backend/data/procurement.db`，被今天多次跑反复写入 ⇒
+  污染后的库里按名字挑供应商会挑出与写死的 `sup-2` 不同物，命中拒绝。首选解释从"仪器顺序"改为"共享库污染"。
+- 因此换测法：不改被测代码、不自拼流程，跑**真实 core-flow** 加 `--tracing=on`，
+  从 trace 的 network 时间线读 submit 响应时刻与买家 list 响应时刻/条数配对。
+  顺带更正我上一片写漏的一句：`--retries=0` 拿不到 trace 是默认配置（`trace: on-first-retry`）的事实，
+  CLI 的 `--tracing=on` 能显式打开，不必改文件。
+
 ### R64 仪器失败的二分：regenerate 403 不是 HEAD 回归（后端权限链两 commit 间零差异）
 
 - `git diff --stat bded3ac..HEAD -- backend/app` 只有 models/settings 路由/schemas/serializers 四处（本轮那三列与其映射），
