@@ -203,6 +203,46 @@ def test_refresh_same_origin_behind_reverse_proxy(client, monkeypatch):
     assert r.status_code == 403
 
 
+def test_refresh_trusted_by_whitelist_canonicalization_only(client, monkeypatch):
+    """白名单那条分支必须自己就认得"省略默认端口"的形状，不能靠同源分支兜过去。
+
+    上面那条 `test_refresh_same_origin_behind_reverse_proxy` 的 1)/2) 实际都是**同源分支**放行的
+    （实测：把 `_canonical_origin` 里"丢掉 scheme 默认端口"那一行删掉，它照样 2 passed）。
+    也就是说它钉的是"同源部署能续期"，并没有人在钉"白名单条目也要归一化"。
+    这条把请求做成跨站（页面域 app.example ≠ 服务域 api.example，同源分支必不成立），
+    白名单里只写带 :80 的形式，于是 200 只剩"白名单归一化"一条路可走。
+    """
+    monkeypatch.setattr("app.routers.auth.APP_DEMO_MODE", False)
+    monkeypatch.setattr("app.routers.auth.CORS_ORIGINS", ["http://app.example:80"])
+
+    def _login(base_url: str) -> TestClient:
+        c = TestClient(client.app, base_url=base_url)
+        r = c.post("/api/auth/login", json={"userId": "u-1", "password": DEMO_PWD})
+        assert r.status_code == 200, r.text
+        assert c.cookies.get("refresh_token")
+        return c
+
+    c = _login("http://api.example")
+    cookie = c.cookies.get("refresh_token")
+
+    # 反证放前面：先确认白名单外的域照样拒（成功续期会轮换 refresh，先跑正向会让这一条以别的理由红）
+    r = c.post("/api/auth/refresh", headers={
+        "Cookie": f"refresh_token={cookie}",
+        "Origin": "http://other.example",
+    })
+    assert r.status_code == 403, f"跨站且不在白名单，必须拒：{r.status_code} {r.text}"
+
+    # 浏览器真实发出的头（默认端口被省略），白名单里只有带 :80 的写法
+    r = c.post("/api/auth/refresh", headers={
+        "Cookie": f"refresh_token={cookie}",
+        "Origin": "http://app.example",
+    })
+    assert r.status_code == 200, (
+        "运维把白名单写成 http://app.example:80，而浏览器省略默认端口——"
+        f"归一化必须让这两个串相等，否则跨域部署的自动续期形同虚设：{r.status_code} {r.text}"
+    )
+
+
 @pytest.mark.parametrize(
     "raw, expected",
     [
