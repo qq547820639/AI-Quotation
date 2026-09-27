@@ -76,8 +76,10 @@ const VERDICTS = [
  */
 const ALLOW = {
   'e2e/exception-scenarios.spec.ts': {
-    n: 2,
-    why: '各自是其文档内第一条成功提示，前一条是 error 提示，没有可冒充它的存活 toast',
+    // R65 续：原有两条 generic，:520（重试成功）已改成等 PUT 2xx ⇒ 额度随之降到 1。
+    // 剩这一条（:387）的理由仍然成立：它是该文档内第一条成功提示，前一条是 error 提示，没有可冒充它的存活 toast。
+    n: 1,
+    why: '该文档内第一条成功提示，前一条是 error 提示，没有可冒充它的存活 toast',
   },
   'e2e/sse-live-events.spec.ts': {
     n: 1,

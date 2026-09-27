@@ -8,6 +8,7 @@ import {
   submitQuoteViaPortal,
   chooseSupplierOnCompare,
   SUPPLIER_A,
+  expectWriteLanded,
 } from './helpers';
 
 /**
@@ -515,9 +516,17 @@ test.describe('异常场景', () => {
 
     // 重试成功：再次停用（乐观更新已回滚，按钮仍为"停用"）
     const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
-    await toggleSupplierRow(page, row);
-    await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 10000 });
+    // R65 续：这一格之后没有任何持久断言，用瞬时提示当凭据会把"写其实没落地"也读成成功；
+    // 换成等那次 PUT 返回 2xx（同一用例前半格已经在数 putCount 了，两半合起来才是完整凭据）。
+    await expectWriteLanded(
+      page,
+      /\/api\/suppliers\/[^/]+$/,
+      async () => {
+        await toggleSupplierRow(page, row);
+        await confirmOk(page);
+      },
+      'PUT',
+    );
   });
 
   test('不同权限访问同一功能：采购人员访问审批页被拦截', async ({ page }) => {

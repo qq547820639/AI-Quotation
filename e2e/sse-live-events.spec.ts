@@ -21,9 +21,10 @@ async function submitFromPortal(portal: Page, invitationToken: string, unitPrice
   await tap(portal.getByRole('button', { name: /正式提交|Submit/ }));
   await expect(portal.getByText('提交前预览')).toBeVisible({ timeout: 10000 });
   await tap(portal.getByRole('button', { name: /确认提交/ }));
-  await expect(portal.locator('.ant-result-success, .ant-message-success').first()).toBeVisible({
-    timeout: 15000,
-  });
+  // R65 续：原来写的是"整页回执 或 瞬时提示"两者其一，瞬时件能单独满足这条 ⇒ 收成整页回执。
+  // 门户提交成功后渲染的就是 .ant-result-success 结果页（supplier-portal.spec.ts:50 同一形状），
+  // 这里不是"放宽"而是去掉那条可以被残留提示满足的分支。
+  await expect(portal.locator('.ant-result-success').first()).toBeVisible({ timeout: 15000 });
 }
 
 test.describe('SSE 实时推送', () => {
