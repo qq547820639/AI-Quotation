@@ -61,6 +61,9 @@ interface QuotationState {
   upsertQuotation: (quotation: Quotation) => Promise<WriteResult>;
 }
 
+/** R64-c：`loadFromApi` 的发起序号；只有最新一次发起的响应/失败才允许写 store */
+let loadSeq = 0;
+
 export const useQuotationStore = create<QuotationState>((set, get) => ({
   // P1-10 Task 15：生产模式不预置 mock 数据
   quotations: MOCK_FALLBACK_ENABLED ? mergeQuotations() : [],
@@ -70,14 +73,21 @@ export const useQuotationStore = create<QuotationState>((set, get) => ({
 
   // W7.4 + P1-10 Task 15：从 API 加载；生产模式失败不静默回退 mock
   loadFromApi: async () => {
+    // R64-c：本页每周期会轮询 /api/quotations 约 9 次（后端访问日志实测 20 submit : 96 list），
+    // 多个请求可以同时在飞，而响应落地顺序不保证等于发起顺序。
+    // 没有这层序号，一个在写入之前发出的请求只要返回得晚，就会把已经含新数据的 store 覆盖回旧快照——
+    // 此时 loaded=true、loadError=false，R30/R33 的守卫全部放行，页面于是诚实渲染"暂无已提交报价"。
+    const mine = ++loadSeq;
     set({ loading: true });
     try {
       const data = await quotationApi.list();
+      if (mine !== loadSeq) return; // 已有更晚发起的请求在飞/已落地，旧响应一律丢弃
       set({ quotations: data, loading: false, loaded: true, loadError: false });
       saveJSON(STORAGE_KEY, data);
       queryClient.setQueryData(QUERY_KEYS.quotations, data);
       useConnectivityStore.getState().markSynced();
     } catch {
+      if (mine !== loadSeq) return; // 旧请求的失败同样不该覆盖新请求的结果（包括新请求已成功）
       // 无论成功失败，"这一次加载已经结束"，loaded 都要置真：
       // 否则加载失败会把页面永久钉在骨架屏上，比误报空态更糟。
       // 但 loaded 只回答"加载结束了"，不回答"数据可信"——后者由 loadError 表达（R33）。
