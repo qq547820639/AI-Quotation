@@ -173,7 +173,7 @@ async def compare_conclusion(
 
 
 @router.post("/feedback")
-async def ai_feedback(
+def ai_feedback(
     body: FeedbackRequest,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -195,7 +195,7 @@ async def ai_feedback(
 
 
 @router.get("/stats")
-async def ai_stats(
+def ai_stats(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
     action: Optional[str] = Query(default=None),
@@ -218,7 +218,7 @@ async def ai_stats(
 
 
 @router.get("/feedback-summary")
-async def ai_feedback_summary(
+def ai_feedback_summary(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
     organization: Optional[str] = Query(default=None),
