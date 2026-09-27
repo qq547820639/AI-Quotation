@@ -35,7 +35,11 @@
  * 用法：node scripts/check-e2e-toast-assertions.mjs
  *      --self-test   尺子必须会开火（夹具落 tmpdir，不写进被扫描的树）
  *      --print-sites 逐位点读数（不改退出码语义）
+ *      未识别的参数 ⇒ 退 2（量具故障），绝不折算成"通过"（R58：9d5787e 上打错字的参数被静默忽略、
+ *      默认档照跑退 0，"这一臂不存在"与"这一臂跑了且过了"在退出码上完全同形）
+ * 退码：0=通过 / 1=真实产品违规 / 2=量具故障（崩溃与打错字都不许冒充 0 或 1）
  */
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -451,6 +455,29 @@ function judge(sites, allow) {
   return { errors, notes, counts };
 }
 
+/* ------------------------ 参数闸门（R58 假绿的根治位） ------------------------ */
+
+/**
+ * 本门禁真正处理的参数全集，与 `main()` 里的分支、与文件头 usage 行一一对应。
+ * 名单在这里而不是散在 if 里：usage 说"只认这两个"，判据就必须只认这两个。
+ */
+const FLAGS = ['--self-test', '--print-sites'];
+const USAGE = `node scripts/check-e2e-toast-assertions.mjs [${FLAGS.join('|')}]`;
+const SELF = fileURLToPath(import.meta.url);
+
+/**
+ * 真实的参数解析入口：`main()` 与自测臂走的就是同一个函数，臂不重抄判据。
+ * @returns {string|null} 故障原因（点名被拒参数 + 列出接受集）；null = 全部接受
+ */
+function argFault(argv) {
+  const bad = argv.filter((a) => !FLAGS.includes(a));
+  if (!bad.length) return null;
+  return (
+    `未识别的参数 ${bad.map((b) => `'${b}'`).join(' ')} ⇒ 量具故障，不折算成通过。` +
+    `本门禁只认：${FLAGS.join(' / ')}`
+  );
+}
+
 /* ---------------- 自测 ---------------- */
 
 function selfTest() {
@@ -583,6 +610,43 @@ test('x', async () => {
   // 如果哪天分母规则失效，这条会先红
   push('对账：真语料站点数 > 0（尺子不是空转）', realReading().sites.length > 0);
 
+  /* 参数闸门两极性（R58）：都由 spawnSync 打**真实 CLI**，臂不重抄判据。
+     · 未识别参数必须退 2（打错字不得冒充通过）
+     · 有效参数不得退 2，且 '--self-test' 必须真的抵达自测档（"拒绝一切"的解析器也不算修好）
+     子进程带 GATE_ARG_NO_SPAWN=1：只跳过会自测套自测的那一臂，其余臂照跑。 */
+  const typo = spawnSync(process.execPath, [SELF, '--self-tset'], { encoding: 'utf8' });
+  const typoMsg = `${typo.stderr || ''}\n${typo.stdout || ''}`;
+  push(
+    `臂ARG-1 参数闸门开火：真实 CLI 收到 '--self-tset' ⇒ rc=${typo.status}（应为 2）、` +
+      `点名该参数并列出 ${FLAGS.join('/')}`,
+    typo.status === 2 && typoMsg.includes('--self-tset') && FLAGS.every((f) => typoMsg.includes(f)),
+  );
+  const sites = spawnSync(process.execPath, [SELF, '--print-sites'], { encoding: 'utf8' });
+  push(
+    `臂ARG-2 参数闸门反极性：有效参数不得被拒（rc=${sites.status}，应 ≠2）` +
+      `——无参数与每个在册参数都得被接受，FLAGS=${JSON.stringify(FLAGS)}`,
+    sites.status !== 2 &&
+      argFault([]) === null &&
+      FLAGS.includes('--self-test') &&
+      FLAGS.every((f) => argFault([f]) === null),
+  );
+  if (process.env.GATE_ARG_NO_SPAWN) {
+    push(
+      '臂ARG-3 SKIP：--self-test 端到端臂由父自测进程关掉（GATE_ARG_NO_SPAWN=1，防自测套自测）',
+      true,
+    );
+  } else {
+    const good = spawnSync(process.execPath, [SELF, '--self-test'], {
+      encoding: 'utf8',
+      env: { ...process.env, GATE_ARG_NO_SPAWN: '1' },
+    });
+    const goodOut = `${good.stdout || ''}\n${good.stderr || ''}`;
+    push(
+      `臂ARG-3 真 CLI 的 --self-test：rc=${good.status}（应 ≠2）且输出里有自测档收尾读数`,
+      good.status !== 2 && goodOut.includes('判据自测'),
+    );
+  }
+
   let rc = 0;
   for (const c of cases) {
     rc = c.ok ? rc : 1;
@@ -649,7 +713,14 @@ function realReading() {
 }
 
 function main() {
-  if (process.argv.includes('--self-test')) return selfTest();
+  const args = process.argv.slice(2);
+  const badArg = argFault(args);
+  if (badArg) {
+    console.error(`✘ ${badArg}`);
+    console.error(`  用法：${USAGE}`);
+    return 2;
+  }
+  if (args.includes('--self-test')) return selfTest();
   const { sites, cat } = realReading();
   // 前提：文案目录取不到时不得判绿——ambiguous 档会静默变零命中
   if (!cat.dictsOk || !cat.messages.length) {
@@ -692,4 +763,17 @@ function main() {
   return 0;
 }
 
-process.exit(main());
+/** 崩溃不得冒充产品判红：未捕获异常一律按量具故障退 2（沿用 check-settings-inert.mjs 的约定）。 */
+function toolFault(e) {
+  console.error(
+    '✘ 量具故障（未捕获异常，不得当成产品判红）：',
+    e && e.stack ? e.stack.split('\n').slice(0, 3).join('\n') : e,
+  );
+  return 2;
+}
+
+try {
+  process.exit(main());
+} catch (e) {
+  process.exit(toolFault(e));
+}

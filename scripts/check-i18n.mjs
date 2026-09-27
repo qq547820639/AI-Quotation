@@ -26,8 +26,13 @@
  *
  * 用法：node scripts/check-i18n.mjs [--self-test]
  *      --self-test  用虚拟语料逐臂验证这把尺子会开火、也不会乱开火，最后一臂打真实仓库
+ *      未识别的参数 ⇒ 退 2（量具故障），绝不折算成"通过"。R58 的原始形状就是本文件：
+ *      9d5787e 上它一处都不读 argv，`--self-tset` 这种打错字的参数被静默忽略、默认档照跑退 0，
+ *      "这一臂不存在"与"这一臂跑了且过了"在退出码上完全同形。
+ * 退码：0=通过 / 1=真实产品违规 / 2=量具故障（崩溃与打错字都不许冒充 0 或 1）
  * 由 package.json 的 `i18n:check` / `i18n:check:selftest` 脚本调用，并在 CI 中执行。
  */
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
@@ -237,6 +242,28 @@ function format(r) {
 }
 
 const emit = (lines) => lines.forEach(([level, text]) => console[level](text));
+
+/* ------------------------ 参数闸门（R58 假绿的根治位） ------------------------ */
+
+/**
+ * 本门禁真正处理的参数全集，与 `main()` 里的分支、与文件头 usage 行一一对应。
+ */
+const FLAGS = ['--self-test'];
+const USAGE = `node scripts/check-i18n.mjs [${FLAGS.join('|')}]`;
+const SELF = fileURLToPath(import.meta.url);
+
+/**
+ * 真实的参数解析入口：`main()` 与自测臂走的就是同一个函数，臂不重抄判据。
+ * @returns {string|null} 故障原因（点名被拒参数 + 列出接受集）；null = 全部接受
+ */
+function argFault(argv) {
+  const bad = argv.filter((a) => !FLAGS.includes(a));
+  if (!bad.length) return null;
+  return (
+    `未识别的参数 ${bad.map((b) => `'${b}'`).join(' ')} ⇒ 量具故障，不折算成通过。` +
+    `本门禁只认：${FLAGS.join(' / ')}`
+  );
+}
 
 /* ------------------------------ 自测（R55 余量） ------------------------------ */
 
@@ -449,6 +476,41 @@ function selfTest() {
     `判红=${realRun.red}｜guards=${JSON.stringify(realRun.guards)}`,
   );
 
+  /* 参数闸门两极性（R58）：由 spawnSync 打**真实 CLI**，臂不重抄判据。
+     · 未识别参数必须退 2 —— 打错字不得冒充通过（这一臂就是上一轮那颗假绿的根治位）
+     · 有效参数不得退 2，且 '--self-test' 必须真的抵达自测档（"拒绝一切"的解析器也不算修好）
+     子进程带 GATE_ARG_NO_SPAWN=1：只跳过会自测套自测的那一臂，其余臂照跑。 */
+  const typo = spawnSync(process.execPath, [SELF, '--self-tset'], { encoding: 'utf8' });
+  const typoMsg = `${typo.stderr || ''}\n${typo.stdout || ''}`;
+  push(
+    "臂ARG-1 参数闸门开火：真实 CLI 收到 '--self-tset' ⇒ 退 2 且点名该参数、列出接受集",
+    typo.status === 2 && typoMsg.includes('--self-tset') && FLAGS.every((f) => typoMsg.includes(f)),
+    `rc=${typo.status}｜stderr=${JSON.stringify((typo.stderr || '').trim().slice(0, 120))}`,
+  );
+  push(
+    "臂ARG-2 参数闸门反极性：无参数与 '--self-test' 都在接受集内（否则'拒绝一切'的解析器也判绿）",
+    argFault([]) === null && FLAGS.includes('--self-test') && argFault(['--self-test']) === null,
+    `FLAGS=${JSON.stringify(FLAGS)}`,
+  );
+  if (process.env.GATE_ARG_NO_SPAWN) {
+    push(
+      '臂ARG-3 SKIP：--self-test 端到端臂由父自测进程关掉（GATE_ARG_NO_SPAWN=1，防自测套自测）',
+      true,
+      '父进程注入的开关，只在被嵌套的那一子里进程里成立',
+    );
+  } else {
+    const good = spawnSync(process.execPath, [SELF, '--self-test'], {
+      encoding: 'utf8',
+      env: { ...process.env, GATE_ARG_NO_SPAWN: '1' },
+    });
+    const goodOut = `${good.stdout || ''}\n${good.stderr || ''}`;
+    push(
+      "臂ARG-3 真 CLI 的 '--self-test'：不退 2 且输出里有自测档收尾读数（dispatch 与接受集没脱钩）",
+      good.status !== 2 && goodOut.includes('判据自测'),
+      `rc=${good.status}`,
+    );
+  }
+
   let rc = 0;
   for (const c of cases) {
     if (!c.ok) rc = 1;
@@ -464,10 +526,29 @@ function selfTest() {
 
 function main() {
   const args = process.argv.slice(2);
+  const badArg = argFault(args);
+  if (badArg) {
+    console.error(`✘ ${badArg}`);
+    console.error(`  用法：${USAGE}`);
+    return 2;
+  }
   if (args.includes('--self-test')) return selfTest();
   const r = check(realLocale, realFile, realFiles);
   emit(format(r));
   return r.red ? 1 : 0;
 }
 
-process.exit(main());
+/** 崩溃不得冒充产品判红：未捕获异常一律按量具故障退 2（沿用 check-settings-inert.mjs 的约定）。 */
+function toolFault(e) {
+  console.error(
+    '✘ 量具故障（未捕获异常，不得当成产品判红）：',
+    e && e.stack ? e.stack.split('\n').slice(0, 3).join('\n') : e,
+  );
+  return 2;
+}
+
+try {
+  process.exit(main());
+} catch (e) {
+  process.exit(toolFault(e));
+}

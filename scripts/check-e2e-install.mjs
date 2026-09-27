@@ -20,14 +20,18 @@
  *   3. 平台专属的可选依赖（`@esbuild/linux-x64`、`@rollup/rollup-darwin-x64` 等）缺失是**正常的**，
  *      不判红——第一版把 47 个这样的包误报成"缺失"，那会把一次正常安装读成损坏。
  *
- * 退码：0=一致；1=有漂移（逐条列出）；2=前提不成立（锁文件缺失/不可解析，绝不静默当"通过"）。
+ * 退码：0=一致；1=有漂移（逐条列出）；2=量具故障（锁文件缺失/不可解析，或未识别的参数——
+ *      两者都不静默当"通过"。R58：9d5787e 上打错字的参数被静默忽略、默认档照跑退 0，
+ *      "这一臂不存在"与"这一臂跑了且过了"在退出码上完全同形，故未识别参数一律判 2。
  *
  * 用法：node scripts/check-e2e-install.mjs
  *      node scripts/check-e2e-install.mjs --self-test   # 验证这把尺子会开火
+ *      node scripts/check-e2e-install.mjs --root <dir>  # 对另一棵树取证（值必填，缺值判 2）
  * 接线：① `playwright.config.ts` 的 `globalSetup`（e2e/global-setup.ts）——覆盖一切会启动
  * Playwright 的路径，含 `npx playwright test`；② CI docker-e2e job 的显式一步。
  * 曾另挂 npm 的 `pree2e` 生命周期，因与 ① 完全重叠（只会让本尺子跑两遍）而删除。
  */
+import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -42,9 +46,7 @@ function applicable(meta) {
     if (want == null) return true;
     const list = Array.isArray(want) ? want : [want];
     const neg = list.some((x) => String(x).startsWith('!'));
-    const hit = list.some(
-      (x) => (x.startsWith('!') ? x.slice(1) === actual : x === actual),
-    );
+    const hit = list.some((x) => (x.startsWith('!') ? x.slice(1) === actual : x === actual));
     return neg ? !list.some((x) => x.startsWith('!') && x.slice(1) === actual) || hit : hit;
   };
   return match('os', process.platform) && match('cpu', process.arch);
@@ -128,7 +130,10 @@ export function check(root = ROOT) {
     const n = Object.keys(lock.packages || {}).length;
     return { rc: 0, lines: [`✔ 装树与锁文件一致（比对 ${n} 条）`] };
   }
-  return { rc: 1, lines: [`✘ 装树与锁文件不一致：${drift.length} 处漂移`, ...drift.map((d) => `  ${d}`)] };
+  return {
+    rc: 1,
+    lines: [`✘ 装树与锁文件不一致：${drift.length} 处漂移`, ...drift.map((d) => `  ${d}`)],
+  };
 }
 
 /* ------------------------------ 判据自测 ------------------------------ */
@@ -142,6 +147,48 @@ function mkTree(files) {
     writeFileSync(abs, typeof body === 'string' ? body : JSON.stringify(body));
   }
   return dir;
+}
+
+/* ------------------------ 参数闸门（R58 假绿的根治位） ------------------------ */
+
+/**
+ * 本门禁真正处理的参数全集，与文件末尾的分支、与文件头 usage 行一一对应。
+ * `--root` 是**带值**参数：它后面必须跟一个目录，那个值本身不当"是不是在册参数"判。
+ */
+const FLAGS = ['--self-test', '--root'];
+const USAGE = `node scripts/check-e2e-install.mjs [--self-test|--root <dir>]`;
+const SELF = fileURLToPath(import.meta.url);
+
+/**
+ * 真实的参数解析入口：文件末尾的 CLI 与自测臂走的就是同一个函数，臂不重抄判据。
+ * @returns {string|null} 故障原因（点名被拒参数 + 列出接受集）；null = 全部接受
+ */
+function argFault(argv) {
+  const bad = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--root') {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('-')) {
+        bad.push(`--root（缺少目录值，收到 ${v === undefined ? '空' : `'${v}'`}）`);
+        continue;
+      }
+      i++; // 值不是参数，跳过它继续判下一个
+    } else if (!FLAGS.includes(a)) {
+      bad.push(`'${a}'`);
+    }
+  }
+  if (!bad.length) return null;
+  return (
+    `未识别的参数 ${bad.join(' ')} ⇒ 量具故障，不折算成通过。` +
+    `本门禁只认：${FLAGS.join(' / ')}（--root 必须带一个目录值）`
+  );
+}
+
+/** 从已校验过的参数里取 `--root` 的值；没给就是当前工作树。 */
+function rootArg(argv) {
+  const i = argv.indexOf('--root');
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : ROOT;
 }
 
 async function selfTest() {
@@ -168,7 +215,11 @@ async function selfTest() {
     'node_modules/x/package.json': pkg('1.63.0'),
   });
   r = check(dir);
-  add('磁盘版本高于锁版本 → 必须开火', r.rc === 1 && r.lines.some((l) => l.includes('1.62.1')), `rc=${r.rc}`);
+  add(
+    '磁盘版本高于锁版本 → 必须开火',
+    r.rc === 1 && r.lines.some((l) => l.includes('1.62.1')),
+    `rc=${r.rc}`,
+  );
   rmSync(dir, { recursive: true, force: true });
 
   // 3) 锁里没有、磁盘上多出来的包必须开火（npm install <新包> 的痕迹）。
@@ -182,7 +233,10 @@ async function selfTest() {
     'node_modules/x/package.json': pkg('1.0.0'),
     'node_modules/@real/kept/package.json': { name: '@real/kept', version: '2.0.0' },
     'node_modules/stray/package.json': { name: 'stray', version: '9.9.9' },
-    'node_modules/@ghost/stray-scoped/package.json': { name: '@ghost/stray-scoped', version: '9.9.9' },
+    'node_modules/@ghost/stray-scoped/package.json': {
+      name: '@ghost/stray-scoped',
+      version: '9.9.9',
+    },
   });
   r = check(dir);
   add(
@@ -219,32 +273,106 @@ async function selfTest() {
 
   // 6) 真仓库当前必须一致：尺子没坏，且这轮修复确实落到了树上
   r = check(ROOT);
-  add('真实仓库 → 必须静默（尺子未坏）', r.rc === 0, `rc=${r.rc} ${(r.lines[0] || '').slice(0, 60)}`);
+  add(
+    '真实仓库 → 必须静默（尺子未坏）',
+    r.rc === 0,
+    `rc=${r.rc} ${(r.lines[0] || '').slice(0, 60)}`,
+  );
+
+  /* 参数闸门两极性（R58）：由 spawnSync 打**真实 CLI**，臂不重抄判据。
+     · 未识别参数（含 --root 少值）必须退 2 —— 打错字不得冒充通过
+     · 有效参数不得退 2，且 '--self-test' 必须真的抵达自测档（"拒绝一切"的解析器也不算修好）
+     子进程带 GATE_ARG_NO_SPAWN=1：只跳过会自测套自测的那一臂，其余臂照跑。 */
+  const typo = spawnSync(process.execPath, [SELF, '--self-tset'], { encoding: 'utf8' });
+  const typoMsg = `${typo.stderr || ''}\n${typo.stdout || ''}`;
+  add(
+    "臂ARG-1 参数闸门开火：真实 CLI 收到 '--self-tset' ⇒ 退 2 且点名该参数、列出接受集",
+    typo.status === 2 && typoMsg.includes('--self-tset') && FLAGS.every((f) => typoMsg.includes(f)),
+    `rc=${typo.status} ${(typo.stderr || '').trim().slice(0, 70)}`,
+  );
+  const bare = spawnSync(process.execPath, [SELF, '--root'], { encoding: 'utf8' });
+  add(
+    "臂ARG-1b 参数闸门开火（带值参数少值）：'--root' 后面没目录 ⇒ 退 2，不退回默认树",
+    bare.status === 2 && (bare.stderr || '').includes('--root'),
+    `rc=${bare.status}`,
+  );
+  const otherRoot = spawnSync(process.execPath, [SELF, '--root', ROOT], { encoding: 'utf8' });
+  add(
+    "臂ARG-2 参数闸门反极性：有效参数 '--root <dir>' 不被拒（退 ≠2），" +
+      '且无参数/--self-test/--root 带值都在接受集内',
+    otherRoot.status !== 2 &&
+      argFault([]) === null &&
+      FLAGS.includes('--self-test') &&
+      argFault(['--self-test']) === null &&
+      argFault(['--root', ROOT]) === null &&
+      argFault(['--root']) !== null,
+    `rc=${otherRoot.status} FLAGS=${JSON.stringify(FLAGS)}`,
+  );
+  if (process.env.GATE_ARG_NO_SPAWN) {
+    add(
+      '臂ARG-3 SKIP：--self-test 端到端臂由父自测进程关掉（GATE_ARG_NO_SPAWN=1，防自测套自测）',
+      true,
+    );
+  } else {
+    const good = spawnSync(process.execPath, [SELF, '--self-test'], {
+      encoding: 'utf8',
+      env: { ...process.env, GATE_ARG_NO_SPAWN: '1' },
+    });
+    const goodOut = `${good.stdout || ''}\n${good.stderr || ''}`;
+    add(
+      "臂ARG-3 真 CLI 的 '--self-test'：不退 2 且输出里有自测档收尾读数（dispatch 与接受集没脱钩）",
+      good.status !== 2 && goodOut.includes('判据自测'),
+      `rc=${good.status}`,
+    );
+  }
 
   let bad = 0;
   for (const c of cases) {
     if (!c.ok) bad++;
     console.log(`${c.ok ? '✔' : '✘'} ${c.name}${c.note ? ` [${c.note}]` : ''}`);
   }
-  console.log(bad === 0 ? `判据自测 ${cases.length}/${cases.length} 通过` : `判据自测 ${bad} 条失败`);
+  console.log(
+    bad === 0 ? `判据自测 ${cases.length}/${cases.length} 通过` : `判据自测 ${bad} 条失败`,
+  );
   return bad === 0 ? 0 : 1;
 }
 
-const isSelfTest = process.argv.includes('--self-test');
-if (isSelfTest) {
-  process.exit(await selfTest());
-} else {
-  // `--root <dir>`：对**另一棵树**取证，而不是只对当前工作树。
-  // 用途是拿事故现场当边界对象复放（`mv` 留档的漂移树 + 一份真锁文件），
-  // 用来说"这把尺子当时会不会红"——这比一个合成夹具强，因为被量的是真事故。
-  const ri = process.argv.indexOf('--root');
-  const root = ri >= 0 && process.argv[ri + 1] ? process.argv[ri + 1] : ROOT;
-  const out = check(root);
-  console.log(`(root=${root})`);
-  console.log(out.lines.join('\n'));
-  if (out.rc === 1) {
-    console.log('\n修法：npm ci（先 `mv node_modules node_modules.drift` 留一手，别直接 rm -rf）。');
-    console.log('若确属有意改动依赖：改 package.json 后重新生成 package-lock.json，不要手改锁。');
+/** 崩溃不得冒充产品判红：未捕获异常一律按量具故障退 2（沿用 check-settings-inert.mjs 的约定）。 */
+function toolFault(e) {
+  console.error(
+    '✘ 量具故障（未捕获异常，不得当成产品判红）：',
+    e && e.stack ? e.stack.split('\n').slice(0, 3).join('\n') : e,
+  );
+  return 2;
+}
+
+try {
+  const ARGS = process.argv.slice(2);
+  const badArg = argFault(ARGS);
+  if (badArg) {
+    console.error(`✘ ${badArg}`);
+    console.error(`  用法：${USAGE}`);
+    process.exit(2);
   }
-  process.exit(out.rc);
+  const isSelfTest = ARGS.includes('--self-test');
+  if (isSelfTest) {
+    process.exit(await selfTest());
+  } else {
+    // `--root <dir>`：对**另一棵树**取证，而不是只对当前工作树（值必填，缺值在上面就判 2）。
+    // 用途是拿事故现场当边界对象复放（`mv` 留档的漂移树 + 一份真锁文件），
+    // 用来说"这把尺子当时会不会红"——这比一个合成夹具强，因为被量的是真事故。
+    const root = rootArg(ARGS);
+    const out = check(root);
+    console.log(`(root=${root})`);
+    console.log(out.lines.join('\n'));
+    if (out.rc === 1) {
+      console.log(
+        '\n修法：npm ci（先 `mv node_modules node_modules.drift` 留一手，别直接 rm -rf）。',
+      );
+      console.log('若确属有意改动依赖：改 package.json 后重新生成 package-lock.json，不要手改锁。');
+    }
+    process.exit(out.rc);
+  }
+} catch (e) {
+  process.exit(toolFault(e));
 }
