@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### R50：本地存储的三个写函数改为返回**写回执**；新门禁 `storage:check` 带 quiet 棘轮；R48 那 11 行"未亲验"逐条读到定案
+
+- 根因：`src/utils/storage.ts` 的 `saveJSON`/`removeKey`/`clearAll` 把 `QuotaExceededError`、
+  隐私模式的 `SecurityError` 就地吞掉并返回 `void` ⇒ 调用方没有任何凭据却能弹"已保存/已清空/已重置"。
+  现改为返回 `WriteReceipt { success, key, error? }`（`:37-42`），`clearAll` 另带 `removed` 条数。
+- 接线：`src/pages/settings/index.tsx:117/:133` 接住回执，失败走新 key `storage.writeFailed`，
+  重置那一支失败时不再 reload（reload 会连失败提示与重试机会一起抹掉）；
+  `src/hooks/useInquiryDraft.ts:88-99/:130-138` 由 `try/catch` 改为读回执。
+  **连带后果**：改前 `saveJSON` 从不抛 ⇒ catch 分支结构上到不了 ⇒ `saveNow`/`saveAsTemplate` 恒真 ⇒
+  `inquiry/create/index.tsx:307` 的 `if` 恒真、`:310`「模板保存失败」与 `:609` 的 `status === 'failed'` UI
+  都是不可达代码。这三处现在才第一次可达。
+- 新门禁 `scripts/check-storage-receipt.mjs`：函数粒度 AST、四档 `checked/evidenced/quiet/lying`，
+  只有"丢弃回执 + 同函数后跟 `notifySuccess` + 无其他凭据"判红；`quiet` 档带 `QUIET_BASELINE=74` 只减不增
+  （借 `eslint-plugin-unicorn` 那条规则"有意丢弃要写 `void`"的**思路**，不借实现——现成规则都覆盖不到 app 函数）。
+  已接 `npm run storage:check`（`package.json:18`）与 CI quality 档（`.github/workflows/ci.yml:44-45`）。
+  读数：站点 85（checked=9 evidenced=2 quiet=74），与文本面 grep 独立对齐、差集为空。
+- 牙：HEAD 干净 worktree 上只换两个测试文件 ⇒ `6 failed | 11 passed`（红的正是新增的 6 条），工作树 `17 passed`；
+  棘轮在**真树**上四读数（默认 74 绿 / 73 红并点名 / 200 绿 / 夹具两臂），`--self-test` 另含"删掉成功提示必须降到 quiet"的反-过严臂。
+- R48 遗留的 11 行"未亲验"**全部读到定案**：准确 10 / 指针需更正 1（`inquiry/detail` 那条偏 7 行）/ 定位不到 0；
+  其中 3 行由 R50 吃掉，余 8 行按成因归入新登记的 R51-A/B/C/D 四桶。
+- **R51（本轮只量不改）**：判据是函数粒度的 ⇒ 写在 store action / `useEffect`、toast 由调用方弹的"跨帧宣告"
+  共 **35 对**看不见，其中把 storage 写失败真传给调用方的 **0 对**；
+  只有 R51-A 那 4 对（savedViews 3 + 草稿 `overwrite` 1）是"localStorage 唯一权威"，排在下一片。
+
 ### R48：全仓"成功宣告 vs 可知范围"普查落地 7 处（含一条死 catch）；R49 登记设置页 7 个从不上行的字段
 
 - 分母普查（子代理只读跑）：`notifySuccess` 共 **61 处宣告站点**，分档 相称 40 / 说过 20 / 说不清 1。
