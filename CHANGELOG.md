@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### R64 仪器失败的二分：regenerate 403 不是 HEAD 回归（后端权限链两 commit 间零差异）
+
+- `git diff --stat bded3ac..HEAD -- backend/app` 只有 models/settings 路由/schemas/serializers 四处（本轮那三列与其映射），
+  `inquiries.py`/`auth.py`/`permissions.py`/`database.py` 一行未变 ⇒ "HEAD 侧权限回归"这一解释被否证。
+- 当前首选解释是**我的仪器自己拼了调用序列**：同形状栈在 05:15 的全量里把 core-flow 跑绿（createAndSendInquiry 被调用数百次），
+  差的正是我手拼的上下文。下一片把 `core-flow.spec.ts:33-45` 原样搬进仪器只在外围记 response；
+  若仍 403 才轮到"三个 compose project 同挂宿主 backend/data 的 SQLite"那一支（届时用一次性 DB_PATH 起栈）。
+- 仍未出 R64 的配对读数；已清场（自建 project 残留 0，`qqi-final-*` 未动）。
+
 ### R64 计时测量：仪器先在 regenerate invitation 上撞 403，本轮未出读数
 
 - 隔离栈上 8 次全红在同一步（`e2e/helpers.ts:161` 的 regenerate fetch → 403），两个账号各跑都一样；
