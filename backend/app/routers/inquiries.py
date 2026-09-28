@@ -270,6 +270,7 @@ def list_inquiries(
     category: Optional[str] = Query(default=None),
     deadlineFrom: Optional[str] = Query(default=None),
     deadlineTo: Optional[str] = Query(default=None),
+    nodeStatus: Optional[str] = Query(default=None),
 ):
     """询价列表（P2-12 Task 17 服务端分页/筛选/搜索/排序）
 
@@ -278,14 +279,17 @@ def list_inquiries(
     - keyword 匹配 code/subject/owner_name；status 为逗号分隔的状态列表；
       dateFrom/dateTo 过滤 created_at（YYYY-MM-DD）；sort 如 "updatedAt:desc"。
     - R108 新增 code/subject/creator/category 四个**各自独立**的筛子，以及 sort=itemsCount。
-    - R109 新增 deadlineFrom/deadlineTo（日粒度闭区间，与 created_at 那两个同口径），供待报价页把
-      "截止日区间"搬上服务端。同一轮把 `keyword` 的适用面写明：它匹配 code/subject/owner_name 三者，
-      比待报价页原来的"编号或主题"子串**更宽**（多命中负责人）——这是刻意接受的口径变化，不是漏筛。
       为什么不是把 keyword 拆细就行：列表页的筛选表单是 AND 语义
       （`src/pages/inquiry/list/index.tsx` 的 filteredInquiries），而 keyword 是 OR 语义且
       前端原来只把 code 或 subject 之一塞进去——服务端分页成为默认路径后，
       两个筛子同时填会静默忽略后一个，所以必须给 AND 语义的独立参数。
       四个筛子对全量与分页两条分支同样生效，避免"两条分支行集不同"。
+    - R109 新增 deadlineFrom/deadlineTo（日粒度闭区间，与 created_at 那两个同口径），供待报价页把
+      "截止日区间"搬上服务端。同一轮把 `keyword` 的适用面写明：它匹配 code/subject/owner_name 三者，
+      比待报价页原来的"编号或主题"子串**更宽**（多命中负责人）——两支在"用户输入的是人名"
+      这一情形下会给出不同行集，记为限度，不是漏筛。
+    - R110 新增 nodeStatus（逗号分隔的审批节点状态，EXISTS approval_nodes.status），供审批页的
+      "历史"页签与"已通过/已驳回"两张统计卡把 approvalNodes 的扫描搬上服务端。
     """
     query = db.query(Inquiry)
     query = filter_visible_inquiries(query, user)
@@ -342,6 +346,19 @@ def list_inquiries(
         query = query.filter(func.substr(Inquiry.deadline, 1, 10) >= deadlineFrom)
     if deadlineTo:
         query = query.filter(func.substr(Inquiry.deadline, 1, 10) <= deadlineTo)
+    # R110：审批节点状态（逗号分隔，EXISTS approval_nodes）。审批页的"历史"页签
+    # 与"已通过/已驳回"两张统计卡原来靠整份数组扫 approvalNodes 算，搬上服务端必须给这个筛子。
+    if nodeStatus:
+        nodes = [s.strip() for s in nodeStatus.split(",") if s.strip()]
+        if nodes:
+            query = query.filter(
+                exists().where(
+                    and_(
+                        ApprovalNode.inquiry_id == Inquiry.id,
+                        ApprovalNode.status.in_(nodes),
+                    )
+                )
+            )
 
     # 排序（白名单 + 方向）
     # R108 顺手修一条潜伏的 500：旧写法 `order_col = _SORT_FIELDS.get(key) if sort else updated_at`

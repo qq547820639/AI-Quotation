@@ -639,6 +639,8 @@ export interface InquiryListParams {
   /** R109：截止时间的日粒度闭区间（含首末两日） */
   deadlineFrom?: string;
   deadlineTo?: string;
+  /** R110：逗号分隔的审批节点状态，命中"该询价存在这样一个审批节点" */
+  nodeStatus?: string;
 }
 
 /** 询价列表服务端分页响应（P2-12 Task 17） */

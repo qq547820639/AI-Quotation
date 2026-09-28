@@ -50,6 +50,13 @@ import {
 import { formatCurrency, formatDateTime } from '@/utils/format';
 import { notifyError, notifySuccess } from '@/utils/confirm';
 import i18n from '@/i18n';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { inquiryApi } from '@/api/inquiryApi';
+import { IS_DEMO_MODE } from '@/config';
+import type { PaginatedInquiries } from '@/types';
+
+/** R110：审批页的服务端取数都挂在这个前缀下，便于一次失效（列表 + 计数） */
+const APPROVAL_QUERY = ['approvals'] as const;
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -74,8 +81,14 @@ export default function ApprovalPage() {
   const approveInquiry = useInquiryStore((s) => s.approveInquiry);
   const rejectInquiry = useInquiryStore((s) => s.rejectInquiry);
   const inquiriesLoadError = useInquiryStore((s) => s.loadError);
-  // R69：本页 dataSource 直取 store，进入时必须自己补拉一次（每次挂载恰好一次）
-  useEnterRefresh(() => useInquiryStore.getState().loadFromApi());
+  const queryClient = useQueryClient();
+  // R69 → R110：演示模式仍以 store 为数据源，所以进页要补拉一次（每次挂载恰好一次）；
+  // 服务端分页那一支不再为了进页拉整份无界数组，改成把本页的查询标脏重取。
+  useEnterRefresh(async () => {
+    if (IS_DEMO_MODE) return useInquiryStore.getState().loadFromApi();
+    await queryClient.invalidateQueries({ queryKey: APPROVAL_QUERY });
+    return undefined;
+  });
 
   const currentUser = useAuthStore((s) => s.currentUser);
   const hasPermission = useAuthStore((s) => s.hasPermission);
@@ -104,16 +117,71 @@ export default function ApprovalPage() {
     [inquiries],
   );
 
-  const stats = useMemo(() => {
-    const pending = pendingList.length;
-    const approved = inquiries.filter((i) =>
-      i.approvalNodes.some((n) => n.status === ApprovalNodeStatus.APPROVED),
-    ).length;
-    const rejected = inquiries.filter((i) =>
-      i.approvalNodes.some((n) => n.status === ApprovalNodeStatus.REJECTED),
-    ).length;
-    return { pending, approved, rejected };
-  }, [pendingList, inquiries]);
+  const serverEnabled = !IS_DEMO_MODE;
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  // 分页参数跟着页签走：pending 按询价状态筛，history 按审批节点状态筛
+  const listQuery = serverEnabled
+    ? tab === 'pending'
+      ? { status: InquiryStatus.PENDING_APPROVAL }
+      : { nodeStatus: `${ApprovalNodeStatus.APPROVED},${ApprovalNodeStatus.REJECTED}` }
+    : {};
+
+  const { data: pageData, isFetching: pageFetching } = useQuery<PaginatedInquiries>({
+    queryKey: [...APPROVAL_QUERY, 'list', tab, page, pageSize],
+    queryFn: () => inquiryApi.listPage({ page, pageSize, ...listQuery }),
+    enabled: serverEnabled,
+  });
+
+  /** 三张统计卡 + 两个页签计数：都取服务端 total，不再扫整份数组 */
+  const { data: countData } = useQuery({
+    queryKey: [...APPROVAL_QUERY, 'counts'],
+    queryFn: async () => {
+      const one = { page: 1, pageSize: 1 };
+      const [pending, history, approved, rejected] = await Promise.all([
+        inquiryApi.listPage({ ...one, status: InquiryStatus.PENDING_APPROVAL }),
+        inquiryApi.listPage({
+          ...one,
+          nodeStatus: `${ApprovalNodeStatus.APPROVED},${ApprovalNodeStatus.REJECTED}`,
+        }),
+        inquiryApi.listPage({ ...one, nodeStatus: ApprovalNodeStatus.APPROVED }),
+        inquiryApi.listPage({ ...one, nodeStatus: ApprovalNodeStatus.REJECTED }),
+      ]);
+      return {
+        pending: pending.total,
+        history: history.total,
+        approved: approved.total,
+        rejected: rejected.total,
+      };
+    },
+    enabled: serverEnabled,
+  });
+
+  const rows = serverEnabled
+    ? (pageData?.items ?? [])
+    : tab === 'pending'
+      ? pendingList
+      : historyList;
+
+  const counts = serverEnabled
+    ? (countData ?? { pending: 0, history: 0, approved: 0, rejected: 0 })
+    : {
+        pending: pendingList.length,
+        history: historyList.length,
+        approved: inquiries.filter((i) =>
+          i.approvalNodes.some((n) => n.status === ApprovalNodeStatus.APPROVED),
+        ).length,
+        rejected: inquiries.filter((i) =>
+          i.approvalNodes.some((n) => n.status === ApprovalNodeStatus.REJECTED),
+        ).length,
+      };
+
+  /** 审批动作落地后必须让表格与计数重取：服务端那一支不再读 store 的乐观结果 */
+  const refreshAfterAction = () => {
+    if (serverEnabled) {
+      void queryClient.invalidateQueries({ queryKey: APPROVAL_QUERY });
+    }
+  };
 
   const openModal = (action: 'approve' | 'reject', inquiryId: string) => {
     setModalAction(action);
@@ -130,6 +198,7 @@ export default function ApprovalPage() {
       const result = await action(modalInquiryId, comment.trim());
       if (result.success) {
         setModalOpen(false);
+        refreshAfterAction();
         notifySuccess(
           modalAction === 'approve'
             ? i18n.t('approval.approvePassed')
@@ -270,7 +339,7 @@ export default function ApprovalPage() {
             <Card size="small" style={{ borderRadius: 8 }}>
               <Statistic
                 title={t('approval.pending')}
-                value={stats.pending}
+                value={counts.pending}
                 prefix={<SafetyCertificateOutlined style={{ color: 'var(--color-warning)' }} />}
               />
             </Card>
@@ -279,7 +348,7 @@ export default function ApprovalPage() {
             <Card size="small" style={{ borderRadius: 8 }}>
               <Statistic
                 title={t('approval.approved')}
-                value={stats.approved}
+                value={counts.approved}
                 prefix={<CheckCircleOutlined style={{ color: 'var(--color-success)' }} />}
               />
             </Card>
@@ -288,7 +357,7 @@ export default function ApprovalPage() {
             <Card size="small" style={{ borderRadius: 8 }}>
               <Statistic
                 title={t('approval.rejected')}
-                value={stats.rejected}
+                value={counts.rejected}
                 prefix={<CloseCircleOutlined style={{ color: 'var(--color-error)' }} />}
               />
             </Card>
@@ -299,14 +368,17 @@ export default function ApprovalPage() {
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Segmented
               value={tab}
-              onChange={(v) => setTab(v as Tab)}
+              onChange={(v) => {
+                setTab(v as Tab);
+                setPage(1);
+              }}
               options={[
                 {
-                  label: t('approval.pendingWithCount', { count: pendingList.length }),
+                  label: t('approval.pendingWithCount', { count: counts.pending }),
                   value: 'pending',
                 },
                 {
-                  label: t('approval.historyWithCount', { count: historyList.length }),
+                  label: t('approval.historyWithCount', { count: counts.history }),
                   value: 'history',
                 },
               ]}
@@ -316,8 +388,25 @@ export default function ApprovalPage() {
               rowKey="id"
               size="middle"
               columns={columns}
-              dataSource={tab === 'pending' ? pendingList : historyList}
-              pagination={{ pageSize: 10, showSizeChanger: true }}
+              dataSource={rows}
+              loading={serverEnabled && pageFetching}
+              pagination={{
+                pageSize,
+                current: serverEnabled ? page : undefined,
+                total: serverEnabled
+                  ? tab === 'pending'
+                    ? counts.pending
+                    : counts.history
+                  : undefined,
+                showSizeChanger: true,
+                onChange: (p, ps) => {
+                  setPage(p);
+                  if (ps && ps !== pageSize) {
+                    setPageSize(ps);
+                    setPage(1);
+                  }
+                },
+              }}
               scroll={{ x: 980 }}
               locale={{
                 emptyText: (

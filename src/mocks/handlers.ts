@@ -269,6 +269,15 @@ export const handlers = [
     if (deadlineTo) {
       list = list.filter((i) => (i.deadline ?? '').slice(0, 10) <= deadlineTo);
     }
+    // R110：审批节点状态筛子，与真后端 EXISTS approval_nodes.status 同形
+    const nodeStatus = url.searchParams.get('nodeStatus');
+    if (nodeStatus) {
+      const nodes = nodeStatus
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      list = list.filter((i) => i.approvalNodes.some((n) => nodes.includes(n.status)));
+    }
 
     // 排序（仅支持 createdAt/updatedAt 的 asc/desc）
     if (sort) {
