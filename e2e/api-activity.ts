@@ -14,10 +14,12 @@ import type { Page } from '@playwright/test';
 type ApiRow = { status: number; method: string; path: string };
 
 const rowsByPage = new WeakMap<Page, ApiRow[]>();
+/** 被上限挤掉的条数：没有这个数，"总条数"在超限时就安静地变成一个假的下界。 */
+const droppedByPage = new WeakMap<Page, number>();
 const armed = new WeakSet<Page>();
 
 /** 最多留多少条：常驻套件单页最多几百条 /api 响应，留上限防内存无上限增长。 */
-const MAX_ROWS = 400;
+export const MAX_ROWS = 400;
 
 /** 给一个页面装上市面账本；重复调用是幂等的（多个辅助函数都可能会调）。 */
 export function watchApi(page: Page): void {
@@ -25,6 +27,7 @@ export function watchApi(page: Page): void {
   armed.add(page);
   const rows: ApiRow[] = [];
   rowsByPage.set(page, rows);
+  droppedByPage.set(page, 0);
   page.on('response', (res) => {
     const url = res.url();
     if (!url.includes('/api/')) return;
@@ -36,7 +39,10 @@ export function watchApi(page: Page): void {
       /* 保留原始 url */
     }
     rows.push({ status: res.status(), method: res.request().method(), path });
-    if (rows.length > MAX_ROWS) rows.shift();
+    if (rows.length > MAX_ROWS) {
+      rows.shift();
+      droppedByPage.set(page, (droppedByPage.get(page) ?? 0) + 1);
+    }
   });
 }
 
@@ -47,15 +53,18 @@ export function watchApi(page: Page): void {
  */
 export function apiActivity(page: Page, only?: RegExp): string {
   const rows = rowsByPage.get(page) ?? [];
+  const dropped = droppedByPage.get(page) ?? 0;
   const bad = rows.filter((r) => r.status >= 400);
   const tail = bad
     .slice(-6)
     .map((r) => `${r.status} ${r.method} ${r.path}`)
     .join(' ; ');
+  // 超限后两个计数都只是下界，就把"是下界"写进文本，别让 400 冒充总数。
+  const capNote = dropped ? `（账本已满，挤掉最早 ${dropped} 条 ⇒ 以下为下界）` : '';
   const parts = [
     `URL=${page.url()}`,
-    `/api 响应 ${rows.length} 条（非 2xx ${bad.length} 条）`,
-    tail ? `最近的非 2xx: ${tail}` : '没有非 2xx',
+    `/api 响应 ${dropped ? '≥' : ''}${rows.length + dropped} 条${capNote}（非 2xx ${dropped ? '≥' : ''}${bad.length} 条）`,
+    tail ? `保留窗口内的非 2xx: ${tail}` : '保留窗口内没有非 2xx',
   ];
   if (only) {
     const hit = rows.filter((r) => only.test(r.path));

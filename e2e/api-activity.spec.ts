@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { apiActivity, watchApi } from './api-activity';
+import { apiActivity, MAX_ROWS, watchApi } from './api-activity';
 import { getInvitationToken } from './helpers';
 
 /**
@@ -73,6 +73,33 @@ test.describe('归因量具（apiActivity）自检', () => {
       expect(message).toContain('procurement_token not found in localStorage');
       expect(message).toContain(`URL=${s.origin}/`);
       expect(message).toMatch(/非 2xx 1 条/);
+    } finally {
+      await s.close();
+    }
+  });
+
+  test('账本超限时必须自报是下界，不能把 400 冒充总数', async ({ page }) => {
+    const s = await startServer();
+    try {
+      watchApi(page);
+      await page.goto(s.origin);
+      const fired = MAX_ROWS + 5;
+      await page.evaluate(async (n) => {
+        for (let i = 0; i < n; i++) await fetch('/api/needs401').catch(() => {});
+      }, fired);
+      const summary = apiActivity(page);
+      // 三条都得在：精确总数带 ≥、丢弃条数点名、非 2xx 也标成下界。
+      expect(summary).toContain(`/api 响应 ≥${fired} 条`);
+      expect(summary).toContain('挤掉最早 5 条');
+      expect(summary).toContain(`非 2xx ≥${MAX_ROWS} 条`);
+      // 反向对照：未超限时不许出现 ≥／丢弃字样（否则这条断言恒真，等于没测）。
+      const fresh = await page.context().newPage();
+      watchApi(fresh);
+      await fresh.goto(s.origin);
+      await fresh.evaluate(() => fetch('/api/needs401').catch(() => {}));
+      expect(apiActivity(fresh)).not.toContain('≥');
+      expect(apiActivity(fresh)).not.toContain('挤掉最早');
+      await fresh.close();
     } finally {
       await s.close();
     }
