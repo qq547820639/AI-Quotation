@@ -569,7 +569,12 @@ jobs:
           done
           curl -sf http://localhost:80
       - name: Run Playwright E2E (real frontend/backend integration)
-        timeout-minutes: 30
+        # 30 → 45 分钟：run=36382719015（`2d2d782`）一手被 `##[error]The action 'Run Playwright E2E
+        # …' has timed out after 30 minutes.` 掐死在测试 #179（分母 230），mobile-ios 整档没跑、
+        # `.last-run.json` 没落盘 ⇒ 那一轮的"21 格红"其实是**同一条 30 分钟线**切出来的半个读数。
+        # 依据：225 格时实测 28.7/29.0 分钟（R88/R91），2d2d782 加 5 格并把工件保留策略改成
+        # retain-on-failure 之后，30 分钟已经不够；留 45 分钟给 230 格的串行档（workers=1）。
+        timeout-minutes: 45
         env:
           # E2E 登录必须与后端种子用户密码一致（compose 已注入强 DEMO_USER_PASSWORD）。
           DEMO_USER_PASSWORD: ${{ format('ci-e2e-{0}-strong-password', github.run_id) }}
@@ -629,7 +634,7 @@ jobs:
               node scripts/ci-summarize-e2e.mjs "$J" 2>&1
               echo "（summarize rc=$?  报表=$J）"
             else
-              echo '（没有找到 JSON 报表：E2E 步骤可能在 reporter 落盘前就被 timeout-minutes=30 掐断，'
+              echo '（没有找到 JSON 报表：E2E 步骤可能在该步的 timeout-minutes 到点时被掐断，'
               echo '  这一轮的逐条错误文本只剩日志窗口，归因读数缺位——不要把它读成"没有失败"）'
             fi
             echo '```'
@@ -641,6 +646,23 @@ jobs:
             echo '- 失败用例目录名（含 project 与标题）：'
             echo '```'
             find test-results -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's|test-results/||' | sort | head -40
+            echo '```'
+            echo '- 失败目录里的工件（2d2d782 起零重试档是 retain-on-failure，这里才有 trace/video 文件名可核）：'
+            echo '```'
+            find test-results -mindepth 2 -maxdepth 2 -type f 2>/dev/null | sed 's|test-results/||' | sort | head -40
+            echo '```'
+            # 场地现场：这一步跑在 Cleanup environment 之前，compose 还活着，所以能直接问它。
+            # 动机是 2d2d782 那轮的形状——红全集中在 06:09 之后的那个 project 里、之前 0 红，
+            # 那读起来像"场地在跑到后半段时劣化"，而不是 21 个各自独立的用例缺陷。
+            echo '- 场地现场（健康端点与容器状态，不贴日志正文以免把环境值带进 PR）：'
+            echo '```'
+            echo "api/ready http=$(curl -s -o /tmp/rd.json -w '%{http_code}' http://localhost:8080/api/ready || echo 取不到)"
+            echo "api/ready body=$(head -c 400 /tmp/rd.json 2>/dev/null)"
+            docker compose ps --format '{{.Name}} {{.Status}}' 2>/dev/null | head -14
+            docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}' 2>/dev/null | head -14
+            echo "宿主负载：$(cat /proc/loadavg 2>/dev/null || echo 取不到)"
+            echo "内存：$(grep -E 'MemAvailable|MemTotal' /proc/meminfo 2>/dev/null | tr '\n' ' ')"
+            echo "backend 日志里的 ERROR/Traceback 行数：$(docker compose logs --tail=400 backend 2>/dev/null | grep -Ec 'ERROR|Traceback')"
             echo '```'
           } > "$OUT"
           cat "$OUT"
