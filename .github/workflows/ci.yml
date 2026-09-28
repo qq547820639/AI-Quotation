@@ -355,17 +355,24 @@ jobs:
           # COPY requirements.txt 找不到文件、构建失败（非真实漏洞）。
           docker build -t procurement-backend -f backend/Dockerfile backend
           docker build -t procurement-frontend . -f Dockerfile.frontend
-          # 先输出一份 TABLE 摘要到 stdout（不带 --exit-code：有漏洞也退出 0），
-          # 便于在 Actions 日志里直接看到命中的 HIGH/CRITICAL CVE 与 Pkg/Installed 版本，
-          # 而不是只有 JSON 报表（JSON 需下载 artifact 才能排查）。
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --no-progress --severity HIGH,CRITICAL --format table procurement-backend
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --no-progress --severity HIGH,CRITICAL --format table procurement-frontend
           # 通过 -v "$PWD:/report" 把当前目录挂载进容器，使 trivy 的 -o 报表写到宿主机
           # （否则 -o 只写进刚退出的容器内，宿主拿不到报表，失败时无法排查）。
-          # --exit-code 1 作为强门禁：命中 HIGH/CRITICAL 即非零退出，阻断 CI。
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-backend.json procurement-backend
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-frontend.json procurement-frontend
+          # 这里改成 --exit-code 0：命中与否由下面的摘要脚本判，一次扫描同时拿到报表与判决，
+          # 不再有"表格印在中段、结尾只剩 upload 噪声"的空读数（run=36380814151 的 #9 就是那样）。
+          for IMG in procurement-backend procurement-frontend; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report \
+              aquasec/trivy:0.57.1 image --exit-code 0 --no-progress --severity HIGH,CRITICAL \
+              --format json -o "trivy-${IMG#procurement-}.json" "$IMG"
+          done
+          # 自测跑在摘要之前：先证明这把尺子会开火，再信它报的"零命中"。
+          node scripts/ci-summarize-trivy.mjs --self-test
+          # 最后一行才是门禁：命中 HIGH/CRITICAL ⇒ 脚本自身 exit 1，强度与原 --exit-code 1 相同，
+          # 但退码旁边同时印着 CVE 编号、包名、当前版本与修复版本。
+          node scripts/ci-summarize-trivy.mjs trivy-backend.json trivy-frontend.json
       - name: Generate SBOM (CycloneDX via trivy, backend + frontend)
+        # if: always()——这一步是 fs 扫描，与镜像门禁的命中与否无关。原先默认 success() 时，
+        # 只要 Trivy 判红它就被 skip，两轮下来一次也没跑过（R88/R91 的 #10 全是 skipped）。
+        if: always()
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:0.57.1 fs --quiet --format cyclonedx --output sbom-backend.cdx.json backend
           docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:0.57.1 fs --quiet --format cyclonedx --output sbom-frontend.cdx.json .
@@ -572,7 +579,11 @@ jobs:
           # 判 head_ref 而不是 ref_name，因为 pull_request 事件下 ref_name 是 refs/pull/N/merge。
           # 即便这条误合进 main，条件不命中也只是回到 1，不会把主线门禁改松或改严。
           PLAYWRIGHT_RETRIES: ${{ github.head_ref == 'qoder/ci-evidence-0928' && '0' || '1' }}
-        run: npx playwright test --reporter=html,list
+          # 第三张报表面：list 的失败详情印在 4400 行日志中段（取证载体取的是结尾 60 行，
+          # 于是两轮读数只剩计数、没有一句错误文本）。JSON 由下一步逐条归因。
+          # 该变量的相对路径基准由 Playwright 内部决定，所以下一步同时找仓库根与 test-results/ 两种落点。
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-json-results.json
+        run: npx playwright test --reporter=html,list,json
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
@@ -602,9 +613,26 @@ jobs:
         run: |
           set +e
           OUT=/tmp/e2efail.md
+          # JSON 报表的落点由 Playwright 决定（基准目录有两个候选），先把它找出来。
+          J=""
+          for C in e2e-json-results.json test-results/e2e-json-results.json; do
+            if [ -f "$C" ]; then J="$C"; break; fi
+          done
           {
             echo '### docker-e2e 失败面（一手，零重试档）'
             echo "- head_ref=${HEAD_REF:-（push 事件无此值）}（取证分支即 retries=0，判据与上面 Run Playwright E2E 那一步的 env 同一条）  用例结果条目：$(ls test-results 2>/dev/null | wc -l) 个"
+            echo '- 逐条归因（`node scripts/ci-summarize-e2e.mjs`，脚本 rc 一并报出：0=无红、1=有红、2=报表读不到）：'
+            echo '```'
+            if [ -n "$J" ]; then
+              node scripts/ci-summarize-e2e.mjs --self-test >/dev/null 2>&1
+              echo "（本件自测 rc=$?，不为 0 说明摘要尺子自己坏了——条数由脚本自报，下面的读数不可信）"
+              node scripts/ci-summarize-e2e.mjs "$J" 2>&1
+              echo "（summarize rc=$?  报表=$J）"
+            else
+              echo '（没有找到 JSON 报表：E2E 步骤可能在 reporter 落盘前就被 timeout-minutes=30 掐断，'
+              echo '  这一轮的逐条错误文本只剩日志窗口，归因读数缺位——不要把它读成"没有失败"）'
+            fi
+            echo '```'
             echo '- .last-run.json：'
             echo '```'
             cat test-results/.last-run.json 2>/dev/null || echo '（没有 .last-run.json：多半 E2E 步骤没跑到）'
