@@ -34,9 +34,13 @@ export default defineConfig({
     // 而"URL 稳定"会让人误以为测的是同一份代码（2026-09-27 三格 20 s 超时的真因，
     // 核验与指纹见 e2e/global-setup.ts）。
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:80',
-    trace: 'on-first-retry',
+    // 零重试档（归因跑）里 on-first-retry 等于「永不出工件」：没有第二次就不产 trace/video，
+    // 于是 runner 上那 6 格红只能靠日志尾巴判（2026-09-28 R88 实际吃亏点）。
+    // retries===0 时改成 retain-on-failure——失败即留 trace/录像；retries>0 的默认档维持原状，
+    // 避免每轮全量产 trace 把本已满档的产物存储吃光。
+    trace: retries === 0 ? 'retain-on-failure' : 'on-first-retry',
     screenshot: 'only-on-failure',
-    video: 'on-first-retry',
+    video: retries === 0 ? 'retain-on-failure' : 'on-first-retry',
     actionTimeout: 10000,
   },
   // P2-14 Task 19：多浏览器 + 移动设备 E2E 项目

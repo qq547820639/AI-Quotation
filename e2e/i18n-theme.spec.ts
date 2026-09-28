@@ -51,6 +51,18 @@ test.describe('i18n 与主题', () => {
     await tap(chineseOption);
   });
 
+  test('键盘路径也能打开语言菜单（R88 修复的反证锚点）', async ({ page }) => {
+    // 这一格钉的是"菜单不只能靠鼠标悬停打开"：改前 antd Dropdown 的 trigger 默认只有 hover，
+    // 聚焦按钮后按 Enter 不产生任何展开 ⇒ 下面的 toBeVisible 必红；
+    // 改后 trigger 含 click ⇒ 绿。全程不碰鼠标，所以 hover 型实现在这里没有藏身之处。
+    await page.locator('button:has(.anticon-global)').first().focus();
+    await page.keyboard.press('Enter');
+    const englishOption = page
+      .locator('.ant-dropdown:not(.ant-dropdown-hidden) .ant-dropdown-menu-item')
+      .filter({ hasText: /English/ });
+    await expect(englishOption).toBeVisible();
+  });
+
   test('切换暗色主题并验证持久化', async ({ page }) => {
     // 找到主题切换按钮（aria-label 含 switchToLight/switchToDark）
     const themeBtn = page
