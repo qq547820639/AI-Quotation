@@ -586,8 +586,8 @@ jobs:
           PLAYWRIGHT_RETRIES: ${{ github.head_ref == 'qoder/ci-evidence-0928' && '0' || '1' }}
           # 第三张报表面：list 的失败详情印在 4400 行日志中段（取证载体取的是结尾 60 行，
           # 于是两轮读数只剩计数、没有一句错误文本）。JSON 由下一步逐条归因。
-          # 该变量的相对路径基准由 Playwright 内部决定，所以下一步同时找仓库根与 test-results/ 两种落点。
-          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-json-results.json
+          # 报表名不再在这里写死：本步现在按 project 分五段起跑，每段各写一份 e2e-json-<project>.json
+          # （写在下面循环里）。一次调用一份报表的话，第五档会把前四档覆盖掉，"是哪档红的"就读不出了。
         run: |
           set +e
           # 场地取样器：每 5 秒打一行（时刻、后端 /api/ready 的状态码与耗时、前端 / 的状态码与耗时、
@@ -606,11 +606,45 @@ jobs:
               sleep 5
             done ) &
           SAMPLER=$!
-          npx playwright test --reporter=html,list,json
-          RC=$?
+          # 按 project 分档跑，且**每档之间把后端容器重建一次**。依据（登记册 R105/R106，本机一手）：
+          #   ① 仪表盘取数是无界的（compose 的 backend 服务 `volumes: []` ⇒ SQLite 在容器可写层里，
+          #      `docker compose up -d --force-recreate backend` 会丢掉那一层——本机用一次性 compose 栈验过：
+          #      容器里写哨兵文件，force-recreate 后新容器读不到）；
+          #   ② 常驻跑批每档往库里多写几十行，而首屏行动卡片的延迟随行数近线性涨：
+          #      干净种子 306–463ms → 累积 304 行时 2721–3540ms（同档负载 17.7 vs 15.5，各 3 次），
+          #      再叠共享主机的争抢就撞穿用例的 10–15s 预算 ⇒ "跑到后半程集体红"是**数据累积**，不是场地寿命。
+          # 一 job 五档共用一个库的旧写法让最后一档读到 4–5 倍于种子的数据量；分档重建把每档的数据量钉回种子。
+          PROJ_RC=0
+          RESETS=0
+          RAN=""
+          for P in chromium firefox webkit mobile-android mobile-ios; do
+            if [ -n "$RAN" ]; then
+              echo "== 场地复位（第 $((RESETS+1)) 次，起跑 $P 之前）=="
+              docker compose up -d --force-recreate backend
+              RRC=$?
+              RESETS=$((RESETS+1))
+              if [ "$RRC" != 0 ]; then
+                echo "!! backend 复位失败 rc=$RRC ⇒ 后续各档都在脏库上跑，读数按'复位未生效'判读"
+                PROJ_RC=1
+              else
+                for i in $(seq 1 30); do
+                  if curl -sf -m 5 http://localhost:8080/api/ready >/dev/null; then break; fi
+                  sleep 4
+                done
+                curl -sf -m 5 http://localhost:8080/api/ready >/dev/null || echo "!! 复位后 /api/ready 30 次内没就绪（$P），继续跑但这一档读数要带这一句"
+              fi
+            fi
+            echo "==== 起跑 project=$P ===="
+            PLAYWRIGHT_JSON_OUTPUT_NAME="e2e-json-$P.json" npx playwright test --project="$P" --reporter=html,list,json
+            rc=$?
+            echo "==== project=$P rc=$rc ===="
+            if [ "$rc" != 0 ]; then PROJ_RC=1; fi
+            RAN="$RAN $P"
+          done
           kill "$SAMPLER" 2>/dev/null
-          echo "playwright rc=$RC（采样器不参与判定，本步骤按同一退码结束）"
-          exit $RC
+          echo "playwright 分档汇总 rc=$PROJ_RC（跑过的档：$RAN；场地重建次数：$RESETS）"
+          echo "采样行数：$(wc -l < "$SAM")（本步骤按同一退码结束，采样器不参与判定）"
+          exit $PROJ_RC
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
@@ -640,11 +674,16 @@ jobs:
         run: |
           set +e
           OUT=/tmp/e2efail.md
-          # JSON 报表的落点由 Playwright 决定（基准目录有两个候选），先把它找出来。
+          # JSON 报表的落点由 Playwright 决定（基准目录有两个候选），而且现在**每档一份**
+          # （e2e-json-<project>.json，五份），所以这里收集全部而不是"找第一个"——
+          # 只喂一份的话，红在哪档就读不出来了。
           J=""
-          for C in e2e-json-results.json test-results/e2e-json-results.json; do
-            if [ -f "$C" ]; then J="$C"; break; fi
+          for D in . test-results; do
+            for F in "$D"/e2e-json-*.json; do
+              [ -f "$F" ] && J="$J $F"
+            done
           done
+          set -- $J
           {
             echo '### docker-e2e 失败面（一手，零重试档）'
             echo "- head_ref=${HEAD_REF:-（push 事件无此值）}（取证分支即 retries=0，判据与上面 Run Playwright E2E 那一步的 env 同一条）  用例结果条目：$(ls test-results 2>/dev/null | wc -l) 个"
@@ -653,8 +692,8 @@ jobs:
             if [ -n "$J" ]; then
               node scripts/ci-summarize-e2e.mjs --self-test >/dev/null 2>&1
               echo "（本件自测 rc=$?，不为 0 说明摘要尺子自己坏了——条数由脚本自报，下面的读数不可信）"
-              node scripts/ci-summarize-e2e.mjs "$J" 2>&1
-              echo "（summarize rc=$?  报表=$J）"
+              node scripts/ci-summarize-e2e.mjs "$@" 2>&1
+              echo "（summarize rc=$?  报表份数：$#）"
             else
               echo '（没有找到 JSON 报表：E2E 步骤可能在该步的 timeout-minutes 到点时被掐断，'
               echo '  这一轮的逐条错误文本只剩日志窗口，归因读数缺位——不要把它读成"没有失败"）'

@@ -15,7 +15,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -241,6 +241,25 @@ function selfTestRun() {
     /TimeoutError: 带颜色的错/.test(r.out) && !r.out.includes(esc + '[31m') && r.rc === 1,
   );
 
+  // 多报表（CI 按 project 分别起跑）：红在第二份也必须 rc=1，且合计行要把两份都点名。
+  r = run(good, redDoc);
+  push(
+    '正例：多报表时红在第二份也要 rc=1，合计行点名两份',
+    r.rc === 1 &&
+      /多报表汇总（2 份）/.test(r.out) &&
+      /good\.json 红 0/.test(r.out) &&
+      /red\.json 红 3/.test(r.out),
+  );
+  // 反向对照：两份都干净时不许判红（否则上面那条恒真），但合计行仍要在——它是"确实读了两份"的证据。
+  const good2 = w('good2.json', {
+    suites: [mk('firefox', '另一档全绿', 'expected', 1000, null, '2026-09-28T05:31:00.000Z')],
+  });
+  r = run(good, good2);
+  push(
+    '反例：两份都干净必须 rc=0 且合计红 0',
+    r.rc === 0 && /多报表汇总（2 份）/.test(r.out) && /合计红 0 个/.test(r.out),
+  );
+
   rmSync(dir, { recursive: true, force: true });
   const bad = cases.filter((c) => !c.ok);
   for (const c of cases) console.log(`${c.ok ? '✓' : '✗'} ${c.name}`);
@@ -259,8 +278,18 @@ for (let i = 0; i < argv.length; i++) {
     slowN = n;
   } else files.push(argv[i]);
 }
-if (files.length !== 1)
-  fail(`用法：${SELF} [--slow N] <playwright.json>（收到 ${files.length} 个报表路径）`);
-const { lines, redCount } = summarize(files[0], slowN);
-console.log(lines.join('\n'));
-process.exit(redCount > 0 ? 1 : 0);
+if (files.length < 1) fail(`用法：${SELF} [--slow N] <playwright.json> [...更多报表]（收到 0 个）`);
+// 多报表是 CI 的常态：docker-e2e 现在按 project 分别起跑（每个 project 之前复位场地），
+// 一次调用只留一份报表的话，第五份会覆盖前四份，"哪一档红的"这个读数就没了。
+let totalRed = 0;
+const perFile = [];
+for (const f of files) {
+  const { lines, redCount } = summarize(f, slowN);
+  console.log(lines.join('\n'));
+  totalRed += redCount;
+  perFile.push(`${basename(f)} 红 ${redCount}`);
+}
+if (files.length > 1) {
+  console.log(`多报表汇总（${files.length} 份）：${perFile.join('，')} ⇒ 合计红 ${totalRed} 个`);
+}
+process.exit(totalRed > 0 ? 1 : 0);
