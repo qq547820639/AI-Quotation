@@ -588,7 +588,29 @@ jobs:
           # 于是两轮读数只剩计数、没有一句错误文本）。JSON 由下一步逐条归因。
           # 该变量的相对路径基准由 Playwright 内部决定，所以下一步同时找仓库根与 test-results/ 两种落点。
           PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-json-results.json
-        run: npx playwright test --reporter=html,list,json
+        run: |
+          set +e
+          # 场地取样器：每 5 秒打一行（时刻、后端 /api/ready 的状态码与耗时、前端 / 的状态码与耗时、
+          # 可用内存）。动机是 R92 的读数形状——`2d2d782` 那轮 21 格红全在 06:09 之后、之前 138 格全绿，
+          # 这读起来像"场地跑到后半段劣化"，但失败面那一步是在 E2E **结束之后**才看场地的，
+          # 那一刻健康不说明跑的时候健康。要判"整体事件 vs 逐格缺陷"，协变量必须按时刻采，
+          # 而不是事后取一个断面。
+          SAM=/tmp/venue-samples.tsv
+          : > "$SAM"
+          ( while :; do
+              B=$(curl -s -o /dev/null -m 3 -w '%{http_code} %{time_total}' http://localhost:8080/api/ready 2>/dev/null || echo 'ERR -')
+              F=$(curl -s -o /dev/null -m 3 -w '%{http_code} %{time_total}' http://localhost:80 2>/dev/null || echo 'ERR -')
+              M=$(awk '/MemAvailable/{print $2}' /proc/meminfo 2>/dev/null || echo NA)
+              L=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo NA)
+              printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$B" "$F" "$M" "$L" >> "$SAM"
+              sleep 5
+            done ) &
+          SAMPLER=$!
+          npx playwright test --reporter=html,list,json
+          RC=$?
+          kill "$SAMPLER" 2>/dev/null
+          echo "playwright rc=$RC（采样器不参与判定，本步骤按同一退码结束）"
+          exit $RC
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
@@ -663,6 +685,20 @@ jobs:
             echo "宿主负载：$(cat /proc/loadavg 2>/dev/null || echo 取不到)"
             echo "内存：$(grep -E 'MemAvailable|MemTotal' /proc/meminfo 2>/dev/null | tr '\n' ' ')"
             echo "backend 日志里的 ERROR/Traceback 行数：$(docker compose logs --tail=400 backend 2>/dev/null | grep -Ec 'ERROR|Traceback')"
+            # 采样序列（每 5 s 一行，跑在 E2E 的整个时间轴上）：把"红从哪个时刻开始"与
+            # "后端什么时候变慢/变红"对齐，这是 R92 那两个候选档唯一的分辨读数。
+            echo '-- 场地采样序列（时刻 / 后端 状态码 耗时s / 前端 状态码 耗时s / 可用内存kB / load1）--'
+            if [ -s /tmp/venue-samples.tsv ]; then
+              N=$(wc -l < /tmp/venue-samples.tsv)
+              BAD=$(awk -F '\t' '{split($2,a," "); split($3,b," "); if (a[1]!="200" || b[1]!="200" || a[2]+0>2 || b[2]+0>2) c++} END{print c+0}' /tmp/venue-samples.tsv)
+              FIRST=$(awk -F '\t' '{split($2,a," "); split($3,b," "); if (a[1]!="200" || b[1]!="200" || a[2]+0>2 || b[2]+0>2) {print $1" 后端="a[1]"/"a[2]"s 前端="b[1]"/"b[2]"s"; exit}}' /tmp/venue-samples.tsv)
+              SLOW=$(awk -F '\t' '{split($2,a," "); if (a[2]+0>m) {m=a[2]+0; t=$1}} END{if (m>0) printf "%s 后端最慢 %.2fs", t, m}' /tmp/venue-samples.tsv)
+              echo "样本 ${N} 个｜劣化(非 200 或 >2s) ${BAD} 个｜首个劣化：${FIRST:-无}｜${SLOW:-无}"
+              echo "（每 12 个样本取 1 行 ≈ 每分钟一行，最多 45 行）"
+              awk 'NR % 12 == 1' /tmp/venue-samples.tsv | head -45 | tr '\t' ' '
+            else
+              echo '（采样器没写出任何行：多半是 E2E 步骤在采样器起来前就失败，或 curl 不在 PATH）'
+            fi
             echo '```'
           } > "$OUT"
           cat "$OUT"
