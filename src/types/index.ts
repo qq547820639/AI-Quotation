@@ -627,8 +627,15 @@ export interface InquiryListParams {
   dateFrom?: string;
   /** 创建时间范围终点 YYYY-MM-DD */
   dateTo?: string;
-  /** 排序，如 "updatedAt:desc" */
+  /** 排序，如 "updatedAt:desc"；R108 起还支持 "itemsCount:asc|desc"（按商品数排全集） */
   sort?: string;
+  /** R108：列表页筛选表单的独立筛子（AND 语义），与 keyword 的 OR 语义不同 */
+  code?: string;
+  subject?: string;
+  /** 创建人姓名（createdByName）子串 */
+  creator?: string;
+  /** 商品品类子串：命中该询价任一明细行即算 */
+  category?: string;
 }
 
 /** 询价列表服务端分页响应（P2-12 Task 17） */

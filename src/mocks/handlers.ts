@@ -240,6 +240,26 @@ export const handlers = [
     if (dateTo) {
       list = list.filter((i) => (i.createdAt ?? '').slice(0, 10) <= dateTo);
     }
+    // R108：与真后端 `GET /api/inquiries` 的四个独立筛子同形（AND 语义）。
+    // 不补这一份的话，演示模式与真实后端在"同时填编号+主题"上会给出不同行集。
+    const codeFilter = url.searchParams.get('code');
+    const subjectFilter = url.searchParams.get('subject');
+    const creatorFilter = url.searchParams.get('creator');
+    const categoryFilter = url.searchParams.get('category');
+    if (codeFilter) {
+      const kw = codeFilter.toLowerCase();
+      list = list.filter((i) => i.code.toLowerCase().includes(kw));
+    }
+    if (subjectFilter) {
+      const kw = subjectFilter.toLowerCase();
+      list = list.filter((i) => i.subject.toLowerCase().includes(kw));
+    }
+    if (creatorFilter) {
+      list = list.filter((i) => (i.createdByName ?? '').includes(creatorFilter));
+    }
+    if (categoryFilter) {
+      list = list.filter((i) => i.items.some((item) => item.category.includes(categoryFilter)));
+    }
 
     // 排序（仅支持 createdAt/updatedAt 的 asc/desc）
     if (sort) {

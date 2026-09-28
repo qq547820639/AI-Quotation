@@ -76,6 +76,7 @@ import {
 } from '@/hooks/useTablePreferences';
 import { useSavedViews, type SavedFilterView } from '@/hooks/useSavedViews';
 import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
+import type { TableProps } from 'antd';
 import {
   useBatchInquiries,
   type BatchActionKind,
@@ -95,6 +96,18 @@ interface SavedViewFilter {
   deadline: [string, string] | null;
   category: string | undefined;
 }
+
+/** 列 → 服务端 sort 键（backend/app/routers/inquiries.py 的 _SORT_FIELDS 与 _SORT_EXPRS 白名单） */
+const SERVER_SORT_KEYS: Record<string, string> = {
+  itemCount: 'itemsCount',
+  invitedCount: 'invitedCount',
+  submittedCount: 'submittedCount',
+  deadline: 'deadline',
+  status: 'status',
+  createdAt: 'createdAt',
+  code: 'code',
+  subject: 'subject',
+};
 
 export default function InquiryListPage() {
   const { t } = useTranslation();
@@ -202,20 +215,30 @@ export default function InquiryListPage() {
 
   // ===== P2-12 Task 17：URL 同步筛选/排序/分页状态 =====
   const [searchParams, setSearchParams] = useSearchParams();
-  // 服务端分页状态（page/sort 来自 URL，向后兼容：无 page 参数时走客户端全量筛选）
+  // R108：服务端分页成为非演示模式的默认取数路径（原来要 URL 带 ?page= 才走，
+  // 于是默认视图读的是全局 store 的无界全量数组——脏库实测那条全量自己就 2.3–2.8 s / 942 KB）。
   const serverPage = Number(searchParams.get('page') ?? '1');
   const serverSort = searchParams.get('sort') ?? 'createdAt:desc';
 
-  // 挂载时从 URL 恢复筛选条件（keyword/status/dateFrom/dateTo），与 sessionStorage 取并集
+  // 挂载时从 URL 恢复筛选条件，与 sessionStorage 取并集。
+  // R108：code/subject/creator/category 各自一个参数——旧写法把同一个 keyword 同时塞进
+  // code 与 subject，两个筛子就变成"必须同时命中同一串"，与表单的 AND 语义不是回事。
+  // 仍兼容只带 keyword 的旧链接：那种情况按"编号子串"恢复（与旧版实际生效的那一支一致）。
   useEffect(() => {
     const urlKeyword = searchParams.get('keyword');
+    const urlCode = searchParams.get('code') ?? urlKeyword;
+    const urlSubject = searchParams.get('subject');
+    const urlCreator = searchParams.get('creator');
+    const urlCategory = searchParams.get('category');
     const urlStatus = searchParams.get('status');
     const urlFrom = searchParams.get('dateFrom');
     const urlTo = searchParams.get('dateTo');
     setApplied((prev) => ({
       ...prev,
-      code: urlKeyword ?? prev.code,
-      subject: urlKeyword ?? prev.subject,
+      code: urlCode ?? prev.code,
+      subject: urlSubject ?? prev.subject,
+      creator: urlCreator ?? prev.creator,
+      category: urlCategory ?? prev.category,
       status: urlStatus ? (urlStatus.split(',') as InquiryStatus[]) : prev.status,
       createdAt:
         urlFrom || urlTo
@@ -225,11 +248,13 @@ export default function InquiryListPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 查询后同步 URL（keyword=code|subject、status、dateFrom/dateTo、sort、page）
+  // 查询后同步 URL（code/subject/creator/category、status、dateFrom/dateTo、sort、page）
   const syncUrl = (next: typeof applied, page = 1, sort = serverSort) => {
     const params = new URLSearchParams();
-    const keyword = next.code || next.subject;
-    if (keyword) params.set('keyword', keyword);
+    if (next.code) params.set('code', next.code);
+    if (next.subject) params.set('subject', next.subject);
+    if (next.creator) params.set('creator', next.creator);
+    if (next.category) params.set('category', next.category);
     if (next.status.length > 0) params.set('status', next.status.join(','));
     if (next.createdAt?.[0]) params.set('dateFrom', next.createdAt[0].format('YYYY-MM-DD'));
     if (next.createdAt?.[1]) params.set('dateTo', next.createdAt[1].format('YYYY-MM-DD'));
@@ -238,22 +263,30 @@ export default function InquiryListPage() {
     setSearchParams(params, { replace: true });
   };
 
-  // P2-12 Task 17：服务端分页查询（生产模式启用；演示模式回退客户端全量筛选）
-  const serverEnabled = !IS_DEMO_MODE && searchParams.get('page') !== null;
-  const keyword = serverEnabled ? applied.code || applied.subject : undefined;
+  // P2-12 Task 17 + R108：服务端分页查询（非演示模式默认启用；演示模式回退客户端全量筛选）
+  const serverEnabled = !IS_DEMO_MODE;
   const statusStr =
     serverEnabled && applied.status.length > 0 ? applied.status.join(',') : undefined;
   const dateFrom =
     serverEnabled && applied.createdAt?.[0] ? applied.createdAt[0].format('YYYY-MM-DD') : undefined;
   const dateTo =
     serverEnabled && applied.createdAt?.[1] ? applied.createdAt[1].format('YYYY-MM-DD') : undefined;
+  // 四个筛子各自直传（原来是 `applied.code || applied.subject` 挤成一个 keyword：
+  // 两个都填时后一个被静默丢掉，服务端与客户端两条路径会给出不同行集）
+  const codeFilter = serverEnabled ? applied.code || undefined : undefined;
+  const subjectFilter = serverEnabled ? applied.subject || undefined : undefined;
+  const creatorFilter = serverEnabled ? applied.creator || undefined : undefined;
+  const categoryFilter = serverEnabled ? applied.category || undefined : undefined;
   const { data: serverData, isLoading: serverLoading } = useQuery<PaginatedInquiries>({
     queryKey: [
       QUERY_KEYS.inquiries,
       'page',
       serverPage,
       serverSort,
-      keyword,
+      codeFilter,
+      subjectFilter,
+      creatorFilter,
+      categoryFilter,
       statusStr,
       dateFrom,
       dateTo,
@@ -262,7 +295,10 @@ export default function InquiryListPage() {
       inquiryApi.listPage({
         page: serverPage,
         pageSize: 10,
-        keyword,
+        code: codeFilter,
+        subject: subjectFilter,
+        creator: creatorFilter,
+        category: categoryFilter,
         status: statusStr,
         dateFrom,
         dateTo,
@@ -270,6 +306,34 @@ export default function InquiryListPage() {
       }),
     enabled: serverEnabled,
   });
+
+  // R108：服务端分页下，点表头排的必须是"筛选后的全集"，而不是当页这 10 行——
+  // 所以列上的 sorter 只声明"可排"，序由 URL 的 sort 决定，比较器只留给演示模式。
+  const sortOf = (columnKey: string) => {
+    if (!serverEnabled) return undefined;
+    const [field, dir] = serverSort.split(':');
+    if (SERVER_SORT_KEYS[columnKey] !== field) return null;
+    return dir === 'asc' ? ('ascend' as const) : ('descend' as const);
+  };
+
+  const handleTableChange: NonNullable<TableProps<Inquiry>['onChange']> = (
+    _p,
+    _f,
+    sorter,
+    extra,
+  ) => {
+    if (!serverEnabled) return;
+    // 只认表头动作：antd 的 Table onChange 在**翻页**时同样会触发，那时 sorter 还是旧值，
+    // 不加这道判据就会把刚写进 URL 的 page 抹回 1，桌面表格永远翻不了页
+    // （这一条不是推演：inquiryList.serverPaging.test.tsx 第 7 格当场把它判红了）。
+    if (extra?.action !== 'sort') return;
+    const one = Array.isArray(sorter) ? sorter[0] : sorter;
+    const field = SERVER_SORT_KEYS[String(one?.columnKey ?? '')];
+    if (!field) return;
+    const dir = one?.order === 'ascend' ? 'asc' : one?.order === 'descend' ? 'desc' : null;
+    // 取消排序回到默认序（createdAt:desc），与 syncUrl 的"只在非默认时写 sort"配套
+    syncUrl(applied, 1, dir ? `${field}:${dir}` : 'createdAt:desc');
+  };
 
   // 已提交报价数量映射：inquiryId -> count
   const submittedCountMap = useMemo(() => {
@@ -872,7 +936,8 @@ export default function InquiryListPage() {
       width: 90,
       align: 'center',
       render: (_, record) => record.items.length,
-      sorter: (a, b) => a.items.length - b.items.length,
+      sorter: serverEnabled ? true : (a, b) => a.items.length - b.items.length,
+      sortOrder: sortOf('itemCount'),
     },
     {
       title: t('inquiry.list.invitedCount'),
@@ -880,7 +945,10 @@ export default function InquiryListPage() {
       width: 100,
       align: 'center',
       render: (_, record) => record.invitedSupplierIds.length,
-      sorter: (a, b) => a.invitedSupplierIds.length - b.invitedSupplierIds.length,
+      sorter: serverEnabled
+        ? true
+        : (a, b) => a.invitedSupplierIds.length - b.invitedSupplierIds.length,
+      sortOrder: sortOf('invitedCount'),
     },
     {
       title: t('inquiry.list.submittedCount'),
@@ -902,7 +970,10 @@ export default function InquiryListPage() {
           </Text>
         );
       },
-      sorter: (a, b) => (submittedCountMap.get(a.id) ?? 0) - (submittedCountMap.get(b.id) ?? 0),
+      sorter: serverEnabled
+        ? true
+        : (a, b) => (submittedCountMap.get(a.id) ?? 0) - (submittedCountMap.get(b.id) ?? 0),
+      sortOrder: sortOf('submittedCount'),
     },
     {
       title: t('inquiry.list.deadlineLabel'),
@@ -910,7 +981,10 @@ export default function InquiryListPage() {
       key: 'deadline',
       width: 180,
       render: (deadline: string) => renderDeadline(deadline),
-      sorter: (a, b) => dayjs(a.deadline).valueOf() - dayjs(b.deadline).valueOf(),
+      sorter: serverEnabled
+        ? true
+        : (a, b) => dayjs(a.deadline).valueOf() - dayjs(b.deadline).valueOf(),
+      sortOrder: sortOf('deadline'),
     },
     {
       title: t('inquiry.list.currentStatus'),
@@ -918,7 +992,8 @@ export default function InquiryListPage() {
       key: 'status',
       width: 120,
       render: (status: InquiryStatus) => <InquiryStatusTag status={status} />,
-      sorter: (a, b) => a.status.localeCompare(b.status),
+      sorter: serverEnabled ? true : (a, b) => a.status.localeCompare(b.status),
+      sortOrder: sortOf('status'),
     },
     {
       title: t('inquiry.list.creator'),
@@ -932,8 +1007,11 @@ export default function InquiryListPage() {
       key: 'createdAt',
       width: 160,
       render: (createdAt: string) => formatDateTime(createdAt),
-      sorter: (a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf(),
-      defaultSortOrder: 'descend',
+      sorter: serverEnabled
+        ? true
+        : (a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf(),
+      sortOrder: sortOf('createdAt'),
+      defaultSortOrder: serverEnabled ? undefined : 'descend',
     },
     {
       title: t('inquiry.list.actions'),
@@ -1561,6 +1639,7 @@ export default function InquiryListPage() {
         ) : (
           <Table<Inquiry>
             rowKey="id"
+            onChange={handleTableChange}
             rowSelection={{
               selectedRowKeys,
               onChange: setSelectedRowKeys,

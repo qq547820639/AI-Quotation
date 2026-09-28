@@ -12,7 +12,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -25,7 +25,7 @@ from ..delivery import (
 )
 from ..models import (
     User, Inquiry, InquiryItem, InquiryLog, ApprovalNode, Quotation,
-    Supplier, AppSettings, SupplierInvitation, QuotationSnapshot,
+    Supplier, AppSettings, SupplierInvitation, QuotationSnapshot, inquiry_supplier,
 )
 from pydantic import ValidationError
 
@@ -222,6 +222,34 @@ _SORT_FIELDS = {
     "deadline": Inquiry.deadline,
     "code": Inquiry.code,
     "subject": Inquiry.subject,
+    "status": Inquiry.status,
+}
+
+# R108：列表页默认走服务端分页后，"按这一列排"必须排的是筛选后的全集，
+# 而不是当页 10 行——所以三个"数出来的列"（商品数／邀请数／已提交数）也要能在服务端排。
+# 用相关子查询而不是先拉行再数：不新增往返，也不改变行数。
+_ITEMS_COUNT_EXPR = (
+    select(func.count(InquiryItem.id))
+    .where(InquiryItem.inquiry_id == Inquiry.id)
+    .correlate(Inquiry)
+    .scalar_subquery()
+)
+_INVITED_COUNT_EXPR = (
+    select(func.count(inquiry_supplier.c.supplier_id))
+    .where(inquiry_supplier.c.inquiry_id == Inquiry.id)
+    .correlate(Inquiry)
+    .scalar_subquery()
+)
+_SUBMITTED_COUNT_EXPR = (
+    select(func.count(Quotation.id))
+    .where(and_(Quotation.inquiry_id == Inquiry.id, Quotation.status == "SUBMITTED"))
+    .correlate(Inquiry)
+    .scalar_subquery()
+)
+_SORT_EXPRS = {
+    "itemsCount": _ITEMS_COUNT_EXPR,
+    "invitedCount": _INVITED_COUNT_EXPR,
+    "submittedCount": _SUBMITTED_COUNT_EXPR,
 }
 
 
@@ -236,6 +264,10 @@ def list_inquiries(
     dateFrom: Optional[str] = Query(default=None),
     dateTo: Optional[str] = Query(default=None),
     sort: Optional[str] = Query(default=None),
+    code: Optional[str] = Query(default=None),
+    subject: Optional[str] = Query(default=None),
+    creator: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
 ):
     """询价列表（P2-12 Task 17 服务端分页/筛选/搜索/排序）
 
@@ -243,6 +275,12 @@ def list_inquiries(
     - 传入 page/pageSize 时返回分页结构 {items, total, page, pageSize}。
     - keyword 匹配 code/subject/owner_name；status 为逗号分隔的状态列表；
       dateFrom/dateTo 过滤 created_at（YYYY-MM-DD）；sort 如 "updatedAt:desc"。
+    - R108 新增 code/subject/creator/category 四个**各自独立**的筛子，以及 sort=itemsCount。
+      为什么不是把 keyword 拆细就行：列表页的筛选表单是 AND 语义
+      （`src/pages/inquiry/list/index.tsx` 的 filteredInquiries），而 keyword 是 OR 语义且
+      前端原来只把 code 或 subject 之一塞进去——服务端分页成为默认路径后，
+      两个筛子同时填会静默忽略后一个，所以必须给 AND 语义的独立参数。
+      四个筛子对全量与分页两条分支同样生效，避免"两条分支行集不同"。
     """
     query = db.query(Inquiry)
     query = filter_visible_inquiries(query, user)
@@ -269,16 +307,42 @@ def list_inquiries(
         statuses = [s.strip() for s in status.split(",") if s.strip()]
         if statuses:
             query = query.filter(Inquiry.status.in_(statuses))
-    # 创建时间范围
+    # 创建时间范围（R108：改成日粒度闭区间，与 MSW 的 dateFrom/dateTo 分支
+    # src/mocks/handlers.ts:233 和仪表盘的 applyWorkbenchFilter 同口径。
+    # 旧写法 `created_at <= '2026-09-28'` 会把当天整天排除掉——两条取数路径此前都不是这个意思）
     if dateFrom:
-        query = query.filter(Inquiry.created_at >= dateFrom)
+        query = query.filter(func.substr(Inquiry.created_at, 1, 10) >= dateFrom)
     if dateTo:
-        query = query.filter(Inquiry.created_at <= dateTo)
+        query = query.filter(func.substr(Inquiry.created_at, 1, 10) <= dateTo)
+    # R108：列表页筛选表单的四个独立筛子（AND 语义），全量与分页两条分支都生效
+    if code:
+        query = query.filter(Inquiry.code.like(f"%{code.strip()}%"))
+    if subject:
+        query = query.filter(Inquiry.subject.like(f"%{subject.strip()}%"))
+    if creator:
+        query = query.filter(Inquiry.created_by_name.like(f"%{creator.strip()}%"))
+    if category:
+        query = query.filter(
+            exists().where(
+                and_(
+                    InquiryItem.inquiry_id == Inquiry.id,
+                    InquiryItem.category.like(f"%{category.strip()}%"),
+                )
+            )
+        )
 
     # 排序（白名单 + 方向）
-    order_col = _SORT_FIELDS.get(sort.split(":")[0]) if sort else Inquiry.updated_at
+    # R108 顺手修一条潜伏的 500：旧写法 `order_col = _SORT_FIELDS.get(key) if sort else updated_at`
+    # 在"sort 给了但不认识的键"时取到 None，下一行 order_col.asc() 直接 AttributeError ⇒ 500。
+    sort_key = sort.split(":")[0] if sort else ""
+    # R108 修 bug 的 bug：`or` 链会对 `.scalar_subquery()` 返回的 ScalarSelect 调 bool()，
+    # SQLAlchemy 2.0.36 里 ScalarSelect.__bool__ 直接抛 TypeError（实测 elements.py:748），
+    # 于是 sort=itemsCount/invitedCount/submittedCount 三个键全部 500。退回必须显式判 None。
+    expr = _SORT_EXPRS.get(sort_key)
+    if expr is None:
+        expr = _SORT_FIELDS.get(sort_key) or Inquiry.updated_at
     direction = sort.split(":", 1)[1] if sort and ":" in sort else "desc"
-    col = order_col.asc() if direction == "asc" else order_col.desc()
+    col = expr.asc() if direction == "asc" else expr.desc()
     # Task 7：id 作为稳定次排序键，避免分页边界重复/漏行
     query = query.order_by(col, Inquiry.id)
 
