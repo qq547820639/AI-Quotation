@@ -5,6 +5,11 @@
  * - 从 store 数据（询价 / 报价）计算各行动卡片的数量
  * - 提供负责人 / 时间范围筛选
  * - 拆分为纯函数以支持可靠的单元测试
+ *
+ * R107 起本模块的角色：语义参考实现（oracle）。
+ * 生产路径上 ActionWorkbench 改读 `GET /api/dashboard/workbench` 的 SQL 聚合，
+ * 演示模式的 MSW 处理器仍用这里算数；两边的逐条一致性由常驻差分闸
+ * `scripts/check-workbench-parity.mjs` 钉住（同一份夹具，各算一遍再 diff）。
  */
 import { InquiryStatus, LogType, QuotationStatus, type Inquiry, type Quotation } from '@/types';
 import { getRemainingTime } from '@/utils/format';
@@ -57,16 +62,23 @@ export function filterByOwner(inquiries: Inquiry[], owner?: string): Inquiry[] {
   return inquiries.filter((i) => i.ownerName === owner);
 }
 
-/** 按创建时间范围过滤（半开区间：from <= t <= to） */
+/** 按创建时间范围过滤（日粒度闭区间：from 当日 00:00 起，到 当日 23:59 止）
+ *
+ * R107 口径更正：旧实现把边界交给 `new Date('YYYY-MM-DD')`（按 UTC 零点解析）、
+ * 把记录交给 `new Date('YYYY-MM-DD HH:mm:ss')`（按本地解析），于是选"到今天"会把
+ * 今天整天创建的询价静默丢掉，也与本函数原注释写的 `from <= t <= to` 相反。
+ * 现在按日期前缀比较，与后端 `GET /api/dashboard/workbench`、以及服务端分页列表
+ * 的 dateFrom/dateTo 分支（src/mocks/handlers.ts:233）同一口径。
+ */
 export function filterByDate(
   inquiries: Inquiry[],
   dateFrom?: string | null,
   dateTo?: string | null,
 ): Inquiry[] {
   return inquiries.filter((i) => {
-    const t = new Date(i.createdAt).getTime();
-    if (dateFrom && t < new Date(dateFrom).getTime()) return false;
-    if (dateTo && t > new Date(dateTo).getTime()) return false;
+    const day = (i.createdAt ?? '').slice(0, 10);
+    if (dateFrom && day < dateFrom) return false;
+    if (dateTo && day > dateTo) return false;
     return true;
   });
 }

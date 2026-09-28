@@ -12,6 +12,11 @@ import { inquiries as mockInquiries } from '@/mock/inquiries';
 import { suppliers as mockSuppliers } from '@/mock/suppliers';
 import { materials as mockMaterials } from '@/mock/materials';
 import { quotations as mockQuotations } from '@/mock/quotations';
+import {
+  applyWorkbenchFilter,
+  computeDashboardActions,
+  getOwnerOptions,
+} from '@/pages/dashboard/workbenchActions';
 import { users, currentUser, supervisorUser } from '@/mock/users';
 import {
   ApprovalNodeStatus,
@@ -465,6 +470,28 @@ export const handlers = [
   }),
 
   // ===== 供应商 =====
+  // ===== 仪表盘聚合（R107）=====
+  // 演示模式没有真后端：这里用与真端点同一份语义参考实现（workbenchActions）算数，
+  // 让"前端不再为算计数拉全量"这条改动在开发模式下也走得通。
+  http.get(`${baseUrl}/dashboard/workbench`, ({ request }) => {
+    const url = new URL(request.url);
+    const owner = url.searchParams.get('owner') ?? undefined;
+    const dateFrom = url.searchParams.get('dateFrom');
+    const dateTo = url.searchParams.get('dateTo');
+    const organization = url.searchParams.get('organization');
+    const visible =
+      !organization || organization === '__ALL__'
+        ? inquiries
+        : inquiries.filter((i) => i.organization === organization);
+    const filtered = applyWorkbenchFilter(visible, { owner, dateFrom, dateTo });
+    return HttpResponse.json({
+      ...computeDashboardActions(filtered, quotations),
+      // 负责人选项与真端点一致：按可见范围给，不随 owner/日期参数收窄
+      owners: getOwnerOptions(visible),
+      total: filtered.length,
+    });
+  }),
+
   http.get(`${baseUrl}/suppliers`, () => HttpResponse.json(suppliers)),
 
   http.get(`${baseUrl}/suppliers/:id`, ({ params }) => {

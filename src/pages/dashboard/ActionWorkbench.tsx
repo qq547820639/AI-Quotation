@@ -1,14 +1,16 @@
-import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
- * 行动工作台（P2 Task 14）
+ * 行动工作台（P2 Task 14；R107 改为服务端聚合取数）
  * - 8 个行动卡片：待发送 / 即将截止 / 未报价 / 发送失败 / 异常报价 / 待审批 / 审批超时 / 待定标
  * - 每个卡片可跳转到对应筛选结果
  * - 支持按负责人 / 创建时间范围筛选
  * - 加载态骨架屏、空态下一步操作、错误态重试
  * - 数量为 0 的卡片不可点击（不落入无效占位）
  * - 移动端响应式（xs 每行 2 卡）
+ *
+ * R107：卡片计数由 `GET /api/dashboard/workbench` 给出，本组件不再依赖全量询价/报价数组。
+ * 语义参考实现留在 ./workbenchActions（演示模式的 MSW 处理器与差分闸都用它）。
  */
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -40,17 +42,11 @@ import {
   SolutionOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { useInquiryStore } from '@/store/useInquiryStore';
-import { useQuotationStore } from '@/store/useQuotationStore';
+import { dashboardApi, type WorkbenchSummary } from '@/api/dashboardApi';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useConnectivityStore } from '@/store/useConnectivityStore';
+import { useUIStore } from '@/store/useUIStore';
 import type { Permission } from '@/types';
-import {
-  applyWorkbenchFilter,
-  computeDashboardActions,
-  getOwnerOptions,
-  type ActionKey,
-} from './workbenchActions';
+import type { ActionCounts, ActionKey } from './workbenchActions';
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
@@ -160,48 +156,73 @@ const COLOR_BG_VAR: Record<string, string> = {
 export default function ActionWorkbench() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const loading = useInquiryStore((s) => s.loading);
-  const isOnline = useConnectivityStore((s) => s.isOnline);
-  const quotations = useQuotationStore((s) => s.quotations);
   const hasPermission = useAuthStore((s) => s.hasPermission);
+  const currentOrganization = useUIStore((s) => s.currentOrganization);
 
   const [owner, setOwner] = useState<string | undefined>(undefined);
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+  const [summary, setSummary] = useState<WorkbenchSummary | null>(null);
+  const [failed, setFailed] = useState(false);
 
-  const allInquiries = useVisibleInquiries();
-  const ownerOptions = useMemo(() => getOwnerOptions(allInquiries), [allInquiries]);
+  const dateFrom = dateRange?.[0] ? dateRange[0].format('YYYY-MM-DD') : undefined;
+  const dateTo = dateRange?.[1] ? dateRange[1].format('YYYY-MM-DD') : undefined;
+  const filterActive = Boolean(owner || dateFrom || dateTo);
 
-  const filtered = useMemo(
+  // 切换筛选很快时，后到的旧响应不得覆盖新筛选的读数：每次取数领一个序号，只认最新那次
+  const seq = useRef(0);
+
+  const load = useCallback(() => {
+    const mine = ++seq.current;
+    setFailed(false);
+    dashboardApi
+      .workbench({ owner, dateFrom, dateTo, organization: currentOrganization })
+      .then((data) => {
+        if (mine === seq.current) setSummary(data);
+      })
+      .catch(() => {
+        if (mine !== seq.current) return;
+        setSummary(null);
+        setFailed(true);
+      });
+  }, [owner, dateFrom, dateTo, currentOrganization]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const counts = useMemo<ActionCounts | null>(
     () =>
-      applyWorkbenchFilter(allInquiries, {
-        owner,
-        dateFrom: dateRange?.[0] ? dateRange[0].format('YYYY-MM-DD') : null,
-        dateTo: dateRange?.[1] ? dateRange[1].format('YYYY-MM-DD') : null,
-      }),
-    [allInquiries, owner, dateRange],
-  );
-
-  const counts = useMemo(
-    () => computeDashboardActions(filtered, quotations),
-    [filtered, quotations],
+      summary
+        ? {
+            pendingSend: summary.pendingSend,
+            deadlineApproaching: summary.deadlineApproaching,
+            unquotedSuppliers: summary.unquotedSuppliers,
+            failedDeliveries: summary.failedDeliveries,
+            abnormalQuotations: summary.abnormalQuotations,
+            pendingApproval: summary.pendingApproval,
+            approvalTimeout: summary.approvalTimeout,
+            pendingConfirm: summary.pendingConfirm,
+          }
+        : null,
+    [summary],
   );
 
   const cards = useMemo(
     () =>
-      CARD_CONFIGS.filter((c) => !c.permission || hasPermission(c.permission)).map((c) => ({
-        ...c,
-        count: counts[c.key] as number,
-      })),
+      counts
+        ? CARD_CONFIGS.filter((c) => !c.permission || hasPermission(c.permission)).map((c) => ({
+            ...c,
+            count: counts[c.key] as number,
+          }))
+        : [],
     [counts, hasPermission],
   );
 
-  const retry = () => {
-    void useInquiryStore.getState().loadFromApi();
-    void useQuotationStore.getState().loadFromApi();
-  };
+  const ownerOptions = summary?.owners ?? [];
+  const hasAnyAction = counts ? Object.values(counts).some((value) => value > 0) : false;
 
-  // 错误态：后端离线时提供重试
-  if (!isOnline && allInquiries.length === 0) {
+  // 错误态：聚合请求失败时提供重试（R107 起这条请求是本组件唯一的数据源）
+  if (failed) {
     return (
       <Card title={t('dashboard.workbench.title')} style={{ borderRadius: 8 }}>
         <Result
@@ -209,7 +230,7 @@ export default function ActionWorkbench() {
           title={t('dashboard.workbench.errorTitle')}
           subTitle={t('dashboard.workbench.errorDesc')}
           extra={
-            <Button type="primary" icon={<ReloadOutlined />} onClick={retry}>
+            <Button type="primary" icon={<ReloadOutlined />} onClick={load}>
               {t('common.retry')}
             </Button>
           }
@@ -218,8 +239,8 @@ export default function ActionWorkbench() {
     );
   }
 
-  // 加载态：骨架屏（无数据且加载中）
-  if (loading && allInquiries.length === 0) {
+  // 加载态：骨架屏（还没拿到任何一次聚合读数）
+  if (!counts || !summary) {
     return (
       <Card title={t('dashboard.workbench.title')} style={{ borderRadius: 8 }}>
         <Row gutter={[16, 16]}>
@@ -235,8 +256,9 @@ export default function ActionWorkbench() {
     );
   }
 
-  // 空态：无可执行数据时展示下一步操作
-  if (allInquiries.length === 0 && !loading) {
+  // 空态：范围内既没有询价单、也没有任何可行动计数，才给下一步操作
+  // （异常报价那条口径上不随询价范围收窄，所以单看 total 会把它一起藏掉）
+  if (summary.total === 0 && !hasAnyAction && !filterActive) {
     return (
       <Card title={t('dashboard.workbench.title')} style={{ borderRadius: 8 }}>
         <Empty description={t('dashboard.workbench.empty')} style={{ padding: '24px 0' }}>
@@ -280,7 +302,7 @@ export default function ActionWorkbench() {
         </Button>
       </Space>
 
-      {allInquiries.length > 0 && filtered.length === 0 && (
+      {filterActive && summary.total === 0 && !hasAnyAction && (
         <Alert
           type="info"
           showIcon

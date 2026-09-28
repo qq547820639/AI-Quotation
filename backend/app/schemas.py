@@ -233,6 +233,20 @@ class UnreadCountSchema(BaseModel):
     count: int
 
 
+class DashboardWorkbenchSchema(BaseModel):
+    """行动工作台聚合计数（R107）：8 个卡片数字 + 负责人选项 + 范围内询价单总数"""
+    pendingSend: int
+    deadlineApproaching: int
+    unquotedSuppliers: int
+    failedDeliveries: int
+    abnormalQuotations: int
+    pendingApproval: int
+    approvalTimeout: int
+    pendingConfirm: int
+    owners: List[str]
+    total: int
+
+
 class DeliveryRecordSchema(BaseModel):
     """逐供应商交付状态（采购端查看）"""
     supplierId: str
