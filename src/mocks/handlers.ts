@@ -26,6 +26,8 @@ import {
   QuotationStatus,
   type ApprovalNode,
   type Inquiry,
+  type InquiryCountsRequest,
+  type InquiryFilterSet,
   type Material,
   type Notification,
   type Quotation,
@@ -191,6 +193,88 @@ interface PortalDraftBody {
 
 const portalDrafts: Record<string, PortalDraft> = {};
 
+/**
+ * R111：询价筛子只留一份实现——`GET /inquiries` 与 `POST /inquiries/counts` 共用，
+ * 镜像真后端 `backend/app/routers/inquiries.py` 的 `_apply_inquiry_filters`（唯一 WHERE 来源）。
+ * 若两处各写一遍，聚合计数就会和分页 total 悄悄分叉，而这是本次改动唯一的收益前提。
+ */
+function applyInquiryFilters(list: Inquiry[], f: InquiryFilterSet): Inquiry[] {
+  let out = [...list];
+  if (f.keyword) {
+    const kw = f.keyword.toLowerCase();
+    out = out.filter(
+      (i) =>
+        i.code.toLowerCase().includes(kw) ||
+        i.subject.toLowerCase().includes(kw) ||
+        (i.ownerName ?? '').toLowerCase().includes(kw),
+    );
+  }
+  if (f.status) {
+    const statuses = f.status
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (statuses.length) out = out.filter((i) => statuses.includes(i.status));
+  }
+  if (f.dateFrom) out = out.filter((i) => (i.createdAt ?? '').slice(0, 10) >= f.dateFrom!);
+  if (f.dateTo) out = out.filter((i) => (i.createdAt ?? '').slice(0, 10) <= f.dateTo!);
+  // R108：四个独立筛子（AND 语义），与 keyword 的 OR 语义不同
+  if (f.code) {
+    const kw = f.code.toLowerCase();
+    out = out.filter((i) => i.code.toLowerCase().includes(kw));
+  }
+  if (f.subject) {
+    const kw = f.subject.toLowerCase();
+    out = out.filter((i) => i.subject.toLowerCase().includes(kw));
+  }
+  if (f.creator) out = out.filter((i) => (i.createdByName ?? '').includes(f.creator!));
+  if (f.category)
+    out = out.filter((i) => i.items.some((item) => item.category.includes(f.category!)));
+  // R109：截止日区间（日粒度闭区间）
+  if (f.deadlineFrom) out = out.filter((i) => (i.deadline ?? '').slice(0, 10) >= f.deadlineFrom!);
+  if (f.deadlineTo) out = out.filter((i) => (i.deadline ?? '').slice(0, 10) <= f.deadlineTo!);
+  // R110：审批节点状态（存在一个这样的节点即算）
+  if (f.nodeStatus) {
+    const nodes = f.nodeStatus
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    out = out.filter((i) => i.approvalNodes.some((n) => nodes.includes(n.status)));
+  }
+  return out;
+}
+
+/** 与后端 `backend/app/routers/inquiries.py` 的 `_MAX_COUNT_ITEMS` 同值 */
+const MAX_COUNT_ITEMS = 32;
+
+const FILTER_KEYS: (keyof InquiryFilterSet)[] = [
+  'keyword',
+  'status',
+  'dateFrom',
+  'dateTo',
+  'code',
+  'subject',
+  'creator',
+  'category',
+  'deadlineFrom',
+  'deadlineTo',
+  'nodeStatus',
+];
+
+function inquiryFilterSetFromParams(sp: URLSearchParams): InquiryFilterSet {
+  const f: InquiryFilterSet = {};
+  for (const k of FILTER_KEYS) {
+    const v = sp.get(k);
+    if (v !== null) f[k] = v;
+  }
+  return f;
+}
+
+/** 真后端用 pydantic `extra="forbid"` 挡下拼错的筛子名；桩侧同样拒，否则演示模式会静默忽略 */
+function unknownFilterKeys(f: Record<string, unknown>): string[] {
+  return Object.keys(f).filter((k) => !FILTER_KEYS.includes(k as keyof InquiryFilterSet));
+}
+
 export const handlers = [
   // ===== 认证 =====
   http.post(`${baseUrl}/auth/login`, async ({ request }) => {
@@ -208,10 +292,6 @@ export const handlers = [
     const url = new URL(request.url);
     const page = Number(url.searchParams.get('page') ?? '');
     const pageSize = Number(url.searchParams.get('pageSize') ?? '');
-    const keyword = url.searchParams.get('keyword');
-    const statusStr = url.searchParams.get('status');
-    const dateFrom = url.searchParams.get('dateFrom');
-    const dateTo = url.searchParams.get('dateTo');
     const sort = url.searchParams.get('sort');
 
     // P2-12 Task 17：无分页参数时向后兼容返回全量列表
@@ -219,65 +299,8 @@ export const handlers = [
       return HttpResponse.json(inquiries);
     }
 
-    // 筛选
-    let list = [...inquiries];
-    if (keyword) {
-      const kw = keyword.toLowerCase();
-      list = list.filter(
-        (i) =>
-          i.code.toLowerCase().includes(kw) ||
-          i.subject.toLowerCase().includes(kw) ||
-          (i.ownerName ?? '').toLowerCase().includes(kw),
-      );
-    }
-    if (statusStr) {
-      const statuses = statusStr.split(',');
-      list = list.filter((i) => statuses.includes(i.status));
-    }
-    if (dateFrom) {
-      list = list.filter((i) => (i.createdAt ?? '').slice(0, 10) >= dateFrom);
-    }
-    if (dateTo) {
-      list = list.filter((i) => (i.createdAt ?? '').slice(0, 10) <= dateTo);
-    }
-    // R108：与真后端 `GET /api/inquiries` 的四个独立筛子同形（AND 语义）。
-    // 不补这一份的话，演示模式与真实后端在"同时填编号+主题"上会给出不同行集。
-    const codeFilter = url.searchParams.get('code');
-    const subjectFilter = url.searchParams.get('subject');
-    const creatorFilter = url.searchParams.get('creator');
-    const categoryFilter = url.searchParams.get('category');
-    if (codeFilter) {
-      const kw = codeFilter.toLowerCase();
-      list = list.filter((i) => i.code.toLowerCase().includes(kw));
-    }
-    if (subjectFilter) {
-      const kw = subjectFilter.toLowerCase();
-      list = list.filter((i) => i.subject.toLowerCase().includes(kw));
-    }
-    if (creatorFilter) {
-      list = list.filter((i) => (i.createdByName ?? '').includes(creatorFilter));
-    }
-    if (categoryFilter) {
-      list = list.filter((i) => i.items.some((item) => item.category.includes(categoryFilter)));
-    }
-    // R109：截止日区间（日粒度闭区间），与真后端 deadlineFrom/deadlineTo 同形
-    const deadlineFrom = url.searchParams.get('deadlineFrom');
-    const deadlineTo = url.searchParams.get('deadlineTo');
-    if (deadlineFrom) {
-      list = list.filter((i) => (i.deadline ?? '').slice(0, 10) >= deadlineFrom);
-    }
-    if (deadlineTo) {
-      list = list.filter((i) => (i.deadline ?? '').slice(0, 10) <= deadlineTo);
-    }
-    // R110：审批节点状态筛子，与真后端 EXISTS approval_nodes.status 同形
-    const nodeStatus = url.searchParams.get('nodeStatus');
-    if (nodeStatus) {
-      const nodes = nodeStatus
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      list = list.filter((i) => i.approvalNodes.some((n) => nodes.includes(n.status)));
-    }
+    // 筛选（R111：实现抽到 applyInquiryFilters，与 POST /inquiries/counts 共用一份）
+    const list = applyInquiryFilters(inquiries, inquiryFilterSetFromParams(url.searchParams));
 
     // 排序（仅支持 createdAt/updatedAt 的 asc/desc）
     if (sort) {
@@ -296,6 +319,40 @@ export const handlers = [
     const total = list.length;
     const items = list.slice((page - 1) * pageSize, page * pageSize);
     return HttpResponse.json({ items, total, page, pageSize });
+  }),
+
+  /**
+   * R111：一次请求拿多档计数，镜像真后端 `POST /api/inquiries/counts`
+   * （含 `_MAX_COUNT_ITEMS = 32` 上限与 label 的两条 400）。
+   */
+  http.post(`${baseUrl}/inquiries/counts`, async ({ request }) => {
+    const body = (await request.json()) as InquiryCountsRequest;
+    const items = body?.items ?? [];
+    const labels = items.map((it) => it?.label ?? '');
+    if (labels.some((l) => !String(l).trim())) {
+      return HttpResponse.json({ detail: 'label 不能为空' }, { status: 400 });
+    }
+    if (new Set(labels).size !== labels.length) {
+      return HttpResponse.json({ detail: 'label 不得重复' }, { status: 400 });
+    }
+    if (labels.length > MAX_COUNT_ITEMS) {
+      return HttpResponse.json({ detail: `items 最多 ${MAX_COUNT_ITEMS} 档` }, { status: 400 });
+    }
+    for (const it of items) {
+      const f = (it?.filters ?? {}) as Record<string, unknown>;
+      const unknown = unknownFilterKeys(f);
+      if (unknown.length) {
+        return HttpResponse.json(
+          { detail: `filters 含未知筛子：${unknown.join(', ')}` },
+          { status: 422 },
+        );
+      }
+    }
+    const counts: Record<string, number> = {};
+    for (const it of items) {
+      counts[it.label] = applyInquiryFilters(inquiries, it.filters ?? {}).length;
+    }
+    return HttpResponse.json({ counts });
   }),
 
   http.get(`${baseUrl}/inquiries/:id`, ({ params }) => {

@@ -616,9 +616,12 @@ export interface ApprovalConfig {
 /* ==================== P2-12 Task 17：服务端分页 / 表偏好 / 快照 / 导出 ==================== */
 
 /** 询价列表服务端分页查询参数（P2-12 Task 17） */
-export interface InquiryListParams {
-  page?: number;
-  pageSize?: number;
+/**
+ * R111：询价筛子集合（与后端 `InquiryFilterSet` 一一对应）。
+ * 单独提到契约层，是为了让"列表分页的筛子"和"聚合计数的一档筛子"共用同一份字段名——
+ * 后端 `_apply_inquiry_filters` 也只有这一个 WHERE 来源。
+ */
+export interface InquiryFilterSet {
   /** 关键词：匹配 code / subject / ownerName */
   keyword?: string;
   /** 逗号分隔的状态列表，如 "INQUIRING,ALL_QUOTED" */
@@ -627,8 +630,6 @@ export interface InquiryListParams {
   dateFrom?: string;
   /** 创建时间范围终点 YYYY-MM-DD */
   dateTo?: string;
-  /** 排序，如 "updatedAt:desc"；R108 起还支持 "itemsCount:asc|desc"（按商品数排全集） */
-  sort?: string;
   /** R108：列表页筛选表单的独立筛子（AND 语义），与 keyword 的 OR 语义不同 */
   code?: string;
   subject?: string;
@@ -641,6 +642,29 @@ export interface InquiryListParams {
   deadlineTo?: string;
   /** R110：逗号分隔的审批节点状态，命中"该询价存在这样一个审批节点" */
   nodeStatus?: string;
+}
+
+export interface InquiryListParams extends InquiryFilterSet {
+  page?: number;
+  pageSize?: number;
+  /** 排序，如 "updatedAt:desc"；R108 起还支持 "itemsCount:asc|desc"（按商品数排全集） */
+  sort?: string;
+}
+
+/** R111：一次请求里的一档计数（label 由调用方命名，filters 省略即全集） */
+export interface InquiryCountSpec {
+  label: string;
+  filters?: InquiryFilterSet;
+}
+
+/** R111：`POST /api/inquiries/counts` 的请求体 */
+export interface InquiryCountsRequest {
+  items: InquiryCountSpec[];
+}
+
+/** R111：响应体，counts 的键即请求里的 label */
+export interface InquiryCountsResponse {
+  counts: Record<string, number>;
 }
 
 /** 询价列表服务端分页响应（P2-12 Task 17） */

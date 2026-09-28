@@ -133,25 +133,28 @@ export default function ApprovalPage() {
     enabled: serverEnabled,
   });
 
-  /** 三张统计卡 + 两个页签计数：都取服务端 total，不再扫整份数组 */
+  /**
+   * 三张统计卡 + 两个页签计数：都取服务端 total，不再扫整份数组。
+   * R111：四档计数合成一次 `POST /api/inquiries/counts`——原来这里是 4 发
+   * `pageSize=1` 的分页请求，每发都要后端把整条筛选再跑一遍并把 4 份响应穿过网络。
+   */
   const { data: countData } = useQuery({
     queryKey: [...APPROVAL_QUERY, 'counts'],
     queryFn: async () => {
-      const one = { page: 1, pageSize: 1 };
-      const [pending, history, approved, rejected] = await Promise.all([
-        inquiryApi.listPage({ ...one, status: InquiryStatus.PENDING_APPROVAL }),
-        inquiryApi.listPage({
-          ...one,
-          nodeStatus: `${ApprovalNodeStatus.APPROVED},${ApprovalNodeStatus.REJECTED}`,
-        }),
-        inquiryApi.listPage({ ...one, nodeStatus: ApprovalNodeStatus.APPROVED }),
-        inquiryApi.listPage({ ...one, nodeStatus: ApprovalNodeStatus.REJECTED }),
+      const c = await inquiryApi.counts([
+        { label: 'pending', filters: { status: InquiryStatus.PENDING_APPROVAL } },
+        {
+          label: 'history',
+          filters: { nodeStatus: `${ApprovalNodeStatus.APPROVED},${ApprovalNodeStatus.REJECTED}` },
+        },
+        { label: 'approved', filters: { nodeStatus: ApprovalNodeStatus.APPROVED } },
+        { label: 'rejected', filters: { nodeStatus: ApprovalNodeStatus.REJECTED } },
       ]);
       return {
-        pending: pending.total,
-        history: history.total,
-        approved: approved.total,
-        rejected: rejected.total,
+        pending: c.pending,
+        history: c.history,
+        approved: c.approved,
+        rejected: c.rejected,
       };
     },
     enabled: serverEnabled,

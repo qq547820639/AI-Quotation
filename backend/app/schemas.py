@@ -442,6 +442,42 @@ class PaginatedInquiriesSchema(BaseModel):
     pageSize: int
 
 
+class InquiryFilterSet(BaseModel):
+    """一组筛选条件，键与 `GET /api/inquiries` 的查询参数逐一对应（R111）。
+
+    extra="forbid"：写错键名一律 422，不静默忽略——静默忽略会让调用方把
+    "筛子没生效的全集数"读成"这一格的数"。
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    keyword: Optional[str] = None
+    status: Optional[str] = None
+    code: Optional[str] = None
+    subject: Optional[str] = None
+    creator: Optional[str] = None
+    category: Optional[str] = None
+    dateFrom: Optional[str] = None
+    dateTo: Optional[str] = None
+    deadlineFrom: Optional[str] = None
+    deadlineTo: Optional[str] = None
+    nodeStatus: Optional[str] = None
+
+
+class InquiryCountSpec(BaseModel):
+    """一个计数档位：label 是回显键，filters 是该档的筛子（R111）"""
+    label: str
+    filters: InquiryFilterSet = InquiryFilterSet()
+
+
+class InquiryCountsRequest(BaseModel):
+    """批量计数请求体（R111）：审批页的四个总数一次问完，不再发四次 pageSize=1"""
+    items: List[InquiryCountSpec]
+
+
+class InquiryCountsSchema(BaseModel):
+    counts: Dict[str, int]
+
+
 class PaginatedQuotationsSchema(BaseModel):
     """报价列表服务端分页响应（P2 Task 22：分页结构与其他列表统一）"""
     items: List[QuotationSchema]

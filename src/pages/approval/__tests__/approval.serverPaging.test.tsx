@@ -6,11 +6,13 @@
  *     表格行来自 listPage 返回值而不是全局 store 的无界询价数组（store 里那条不得出现）；
  *   2 切「审批历史」页签 → 下一次列表入参 nodeStatus='APPROVED,REJECTED'（ApprovalNodeStatus 两值逗号串），
  *     且页码回到 1（已翻到第 2 页时切页签不得停在 page:2 读空白页）；
- *   3 三张统计卡 + 两个页签计数读的是四次 pageSize=1 调用各自的 total，
- *     既不是当前页 items 的条数、也不是列表响应自带的 total（这一格把 items 与 total 做成不一致：
- *     列表 items 只给 1 条、列表 total 也只给 1，而计数调用给 7/5/3/2）；
+ *   3 三张统计卡 + 两个页签计数读的是服务端计数返回值的四个 label，
+ *     既不是当前页 items 的条数、也不是列表响应自带的 total（这一格把 items 与计数做成不一致：
+ *     列表 items 只给 1 条、列表 total 也只 1，而计数给 7/5/3/2）；
+ *     R111 起四档计数合成一发 `POST /api/inquiries/counts`，同一格钉"只有这一发、
+ *     且再没有任何 pageSize=1 的分页请求"——否则改动没落地也测不出来；
  *   4 点分页第 2 页真的换页：入参 page:2 且表格换成第 2 页的行；
- *   5 审批动作成功后重取本页数据（列表与计数都再来一次，listPage 次数增加），
+ *   5 审批动作成功后重取本页数据（列表与计数各再来一次），
  *     且不再回落到 store 的 loadFromApi；
  *   6 非演示模式进页不再调 inquiryApi.list（无参全量那条）——R110 的正面主张；
  *     同一格里带一支"这个 spy 确实观测得到全量拉取"的对照，缺席断言才不是恒真；
@@ -19,7 +21,7 @@
  *
  * 桩法照抄 src/pages/quotation/pending/__tests__/quotationPending.serverPaging.test.tsx：
  * vi.mock('@/config') 用 getter 伪造成可切换的 IS_DEMO_MODE（默认 false＝服务端分页那一支）；
- * vi.mock('@/api/inquiryApi') 桩掉 listPage/list；matchMedia 强制桌面端（Table 分支）；
+ * vi.mock('@/api/inquiryApi') 桩掉 listPage/counts/list；matchMedia 强制桌面端（Table 分支）；
  * auth/ui/inquiry store 用 setState 造登录态与行集，store 动作按用例装 spy 并在 beforeEach 复位。
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
@@ -31,7 +33,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import i18n from '@/i18n';
 import { inDays } from '@/test/temporalFixtures';
 import { inquiryApi } from '@/api/inquiryApi';
-import type { InquiryListParams, PaginatedInquiries } from '@/types';
+import type {
+  InquiryCountSpec,
+  InquiryFilterSet,
+  InquiryListParams,
+  PaginatedInquiries,
+} from '@/types';
 import {
   ApprovalNodeStatus,
   Currency,
@@ -58,10 +65,12 @@ vi.mock('@/config', () => ({
   },
 }));
 
-// 本页唯一的取数入口；list 是「进页拉全量」那条（R110 要钉它非演示模式不再被调用），一并桩掉
+// 本页的取数入口：listPage 是列表那一发，counts 是 R111 的合成计数那一发，
+// list 是「进页拉全量」那条（R110 要钉它非演示模式不再被调用），三条都桩掉
 vi.mock('@/api/inquiryApi', () => ({
   inquiryApi: {
     listPage: vi.fn(),
+    counts: vi.fn(),
     list: vi.fn(async () => []),
     export: vi.fn(async () => undefined),
     get: vi.fn(),
@@ -71,6 +80,7 @@ vi.mock('@/api/inquiryApi', () => ({
 import ApprovalPage from '../index';
 
 const listPageMock = vi.mocked(inquiryApi.listPage);
+const countsApiMock = vi.mocked(inquiryApi.counts);
 const listMock = vi.mocked(inquiryApi.list);
 
 /* ==================== 服务端入参字面量 ==================== */
@@ -150,9 +160,11 @@ function makePage(params: InquiryListParams, items: Inquiry[], total: number): P
 /* ==================== 服务端桩的可配面 ==================== */
 
 /**
- * 一次挂载共 5 发 listPage：1 发列表（pageSize=10）+ 4 发计数（pageSize=1，
- * 依次是 pending / history / APPROVED / REJECTED）。桩按入参分派，
- * 未预期的计数入参直接抛错——不让"没命中分支"静默回落到某个默认 total。
+ * 一次挂载共 2 发：1 发列表（pageSize=10）+ 1 发计数（POST /api/inquiries/counts，四档 label）。
+ * R110 时这里是 5 发（列表 + 4 发 pageSize=1），R111 把四档合成一发。
+ * 桩按各档 filters 认领哪一张卡的数，未预期的筛子直接抛错——
+ * 不让"没命中分支"静默回落到某个默认 total；而对 listPage 的 pageSize=1 一律抛错，
+ * 这样"改动没落地、还是四发分页"会被当场看见，而不是两种形状都能跑绿。
  */
 const DEFAULT_COUNTS = { pending: 7, history: 5, approved: 3, rejected: 2 };
 const counts = { ...DEFAULT_COUNTS };
@@ -163,13 +175,13 @@ let listResolver: (params: InquiryListParams) => { items: Inquiry[]; total: numb
   total: 0,
 });
 
-/** 计数调用的 total：按入参认领哪一张卡的数 */
-function countTotalFor(params: InquiryListParams): number {
-  if (params.status === PENDING_STATUS && params.nodeStatus === undefined) return counts.pending;
-  if (params.nodeStatus === NODE_CSV) return counts.history;
-  if (params.nodeStatus === NODE_APPROVED) return counts.approved;
-  if (params.nodeStatus === NODE_REJECTED) return counts.rejected;
-  throw new Error(`未预期的计数调用入参：${JSON.stringify(params)}`);
+/** 计数的一档：按筛子认领哪一张卡的数 */
+function countTotalFor(f: InquiryFilterSet): number {
+  if (f.status === PENDING_STATUS && f.nodeStatus === undefined) return counts.pending;
+  if (f.nodeStatus === NODE_CSV) return counts.history;
+  if (f.nodeStatus === NODE_APPROVED) return counts.approved;
+  if (f.nodeStatus === NODE_REJECTED) return counts.rejected;
+  throw new Error(`未预期的计数档筛子：${JSON.stringify(f)}`);
 }
 
 function installApiStub(): void {
@@ -177,9 +189,17 @@ function installApiStub(): void {
   listResolver = () => ({ items: [], total: counts.pending });
   listPageMock.mockReset();
   listPageMock.mockImplementation(async (params: InquiryListParams) => {
-    if (params.pageSize === 1) return makePage(params, [], countTotalFor(params));
+    if (params.pageSize === 1) {
+      throw new Error(`R111 后不该再有 pageSize=1 的计数分页：${JSON.stringify(params)}`);
+    }
     const { items, total } = listResolver(params);
     return makePage(params, items, total);
+  });
+  countsApiMock.mockReset();
+  countsApiMock.mockImplementation(async (items: InquiryCountSpec[]) => {
+    const out: Record<string, number> = {};
+    for (const it of items) out[it.label] = countTotalFor(it.filters ?? {});
+    return out;
   });
   listMock.mockReset();
   listMock.mockResolvedValue([]);
@@ -217,6 +237,14 @@ async function waitCall(subset: Partial<InquiryListParams>): Promise<InquiryList
   await waitFor(() => expect(callsMatching(subset).length).toBeGreaterThan(0));
   const hit = callsMatching(subset)[0];
   if (!hit) throw new Error(`命中的调用读不到：${JSON.stringify(subset)}`);
+  return hit;
+}
+
+/** 等第 n 发聚合计数请求发生，返回那一发的档位数组（读不到就抛错） */
+async function waitCountsCall(n = 1): Promise<InquiryCountSpec[]> {
+  await waitFor(() => expect(countsApiMock.mock.calls.length).toBeGreaterThanOrEqual(n));
+  const hit = countsApiMock.mock.calls[n - 1]?.[0];
+  if (!hit) throw new Error(`第 ${n} 发计数调用读不到`);
   return hit;
 }
 
@@ -414,8 +442,8 @@ describe('R110 切「审批历史」页签按节点状态筛并回到第 1 页',
   });
 });
 
-describe('R110 统计卡与页签计数读服务端 total', () => {
-  it('四次 pageSize=1 的调用各自 total=7/5/3/2 ⇒ 卡上 7/3/2、页签 7 与 5；而列表只给了 1 行、total 也只有 1', async () => {
+describe('R110 统计卡与页签计数读服务端 total（R111 起四档合成一发）', () => {
+  it('一发 counts 的四档读数 7/5/3/2 ⇒ 卡上 7/3/2、页签 7 与 5；而列表只给了 1 行、total 也只有 1', async () => {
     // 列表响应刻意做成与计数不一致：items 1 条、自带 total 也 1。
     // 若实现是「数行」或「读列表响应 total」，三张卡都会是 1，而不是 7/3/2。
     listResolver = () => ({
@@ -424,27 +452,20 @@ describe('R110 统计卡与页签计数读服务端 total', () => {
     });
     renderPage();
 
-    // 四发计数调用逐条钉入参（谁对应哪张卡）
-    expect(await waitCall({ pageSize: 1, status: PENDING_STATUS })).toEqual({
-      page: 1,
-      pageSize: 1,
-      status: PENDING_STATUS,
-    });
-    expect(await waitCall({ pageSize: 1, nodeStatus: NODE_CSV })).toEqual({
-      page: 1,
-      pageSize: 1,
-      nodeStatus: NODE_CSV,
-    });
-    expect(await waitCall({ pageSize: 1, nodeStatus: NODE_APPROVED })).toEqual({
-      page: 1,
-      pageSize: 1,
-      nodeStatus: NODE_APPROVED,
-    });
-    expect(await waitCall({ pageSize: 1, nodeStatus: NODE_REJECTED })).toEqual({
-      page: 1,
-      pageSize: 1,
-      nodeStatus: NODE_REJECTED,
-    });
+    // 四档计数逐字钉筛子（谁对应哪张卡），且整份挂载只发这一发
+    const specs = await waitCountsCall(1);
+    expect(specs).toEqual([
+      { label: 'pending', filters: { status: PENDING_STATUS } },
+      { label: 'history', filters: { nodeStatus: NODE_CSV } },
+      { label: 'approved', filters: { nodeStatus: NODE_APPROVED } },
+      { label: 'rejected', filters: { nodeStatus: NODE_REJECTED } },
+    ]);
+    // 上界 2 而不是恰好 1：挂载后的 useEnterRefresh 会 invalidate 一次 APPROVAL_QUERY，
+    // 那一发重取与本发同形，计入两次仍是"四档一发"；真正要钉死的是它不是四发。
+    expect(countsApiMock.mock.calls.length).toBeLessThanOrEqual(2);
+    // 反向极性：R110 那四发 pageSize=1 的分页请求已经不存在（桩对 pageSize=1 会抛错，
+    // 这一句再把"一次都没发生"钉成读数，免得实现退回旧形状还全绿）
+    expect(listPageMock.mock.calls.filter((c) => c[0].pageSize === 1)).toHaveLength(0);
 
     await waitStat('待审批', '7');
     expect(statValue('已通过')).toBe('3');
@@ -478,6 +499,9 @@ describe('R110 翻页真的换页', () => {
     const first = await waitCall({ status: PENDING_STATUS, page: 1 });
     expect(first.pageSize).toBe(10);
     await screen.findByText('INQ-APPROVAL-P1');
+    // 先把挂载期那批发数抄下来（useEnterRefresh 的 invalidate 可能让它变成 2 发），
+    // 再断翻页一发都不加——用相对量而不是绝对量，免得把"恰好 1 发"写成随实现时序漂移的断言
+    const countsBeforeClick = countsApiMock.mock.calls.length;
 
     clickPageItem(2);
 
@@ -486,7 +510,7 @@ describe('R110 翻页真的换页', () => {
     expect(await screen.findByText('INQ-APPROVAL-P2')).toBeInTheDocument();
     expect(screen.queryByText('INQ-APPROVAL-P1')).not.toBeInTheDocument();
     // 翻页只换列表那一发：计数查询的 key 里不含 page，不得被顺手重发
-    expect(callsMatching({ pageSize: 1, status: PENDING_STATUS })).toHaveLength(1);
+    expect(countsApiMock.mock.calls.length).toBe(countsBeforeClick);
   });
 });
 
@@ -524,6 +548,7 @@ describe('R110 审批动作成功后重取本页数据', () => {
     await screen.findByText('INQ-APPROVE-1');
     await waitStat('待审批', '7'); // 两批查询都落地后再比次数，免得把首屏在飞的那发算成重取
     const before = listPageMock.mock.calls.length;
+    const beforeCounts = countsApiMock.mock.calls.length;
 
     await clickRowApprove('INQ-APPROVE-1');
     typeComment('  同意采购  ');
@@ -532,13 +557,12 @@ describe('R110 审批动作成功后重取本页数据', () => {
     // 动作本身打到 store：id 是这一行的 id，意见按实现做了 trim
     await waitFor(() => expect(approveSpy).toHaveBeenCalledWith('inq-approve-1', '同意采购'));
 
-    // 重取：列表 1 发 + 计数 4 发 ⇒ 至少再来 5 发（invalidateQueries 命中 APPROVAL_QUERY 前缀）
-    await waitFor(() => expect(listPageMock.mock.calls.length).toBeGreaterThanOrEqual(before + 5));
-    expect(callsMatching({ status: PENDING_STATUS, pageSize: 10 }).length).toBeGreaterThanOrEqual(
-      2,
+    // 重取：列表 1 发 + 计数 1 发（R111 前计数是 4 发）⇒ invalidateQueries 命中 APPROVAL_QUERY 前缀
+    await waitFor(() => expect(listPageMock.mock.calls.length).toBeGreaterThanOrEqual(before + 1));
+    await waitFor(() =>
+      expect(countsApiMock.mock.calls.length).toBeGreaterThanOrEqual(beforeCounts + 1),
     );
-    expect(callsMatching({ pageSize: 1, status: PENDING_STATUS }).length).toBeGreaterThanOrEqual(2);
-    expect(callsMatching({ pageSize: 1, nodeStatus: NODE_REJECTED }).length).toBeGreaterThanOrEqual(
+    expect(callsMatching({ status: PENDING_STATUS, pageSize: 10 }).length).toBeGreaterThanOrEqual(
       2,
     );
 
@@ -554,18 +578,21 @@ describe('R110 进页不再拉全量询价数组', () => {
 
     await waitCall({ status: PENDING_STATUS, pageSize: 10 });
     await waitStat('待审批', '7');
-    // 正面主张：整份挂载只有分页那几发（列表 1 + 计数 4），无参全量那条一发都没有
+    // 正面主张：整份挂载只有列表与聚合计数两路（R110 是 1+4 路），无参全量那条一发都没有。
+    // 上界取 2 是给 useEnterRefresh 挂载后那次 invalidate 留的，不是给四发计数留的。
     expect(listMock).not.toHaveBeenCalled();
-    const pageCalls = listPageMock.mock.calls.length;
-    expect(pageCalls).toBeGreaterThanOrEqual(5);
+    expect(listPageMock.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(countsApiMock.mock.calls.length).toBeLessThanOrEqual(2);
+    const totalCalls = listPageMock.mock.calls.length + countsApiMock.mock.calls.length;
+    expect(totalCalls).toBeGreaterThanOrEqual(2);
     expect(useInquiryStore.getState().inquiries).toHaveLength(0);
 
     // 对照（缺席断言的牙齿）：同一个 mock 面在 store 真去拉全量时确实记录得到——
     // 手动调一次 loadFromApi，list 立刻被记上一笔；没有这支对照，上面那句"没被调用"是恒真。
     await useInquiryStore.getState().loadFromApi();
     expect(listMock).toHaveBeenCalledTimes(1);
-    // 全量那条与本页的分页查询互不相干：它补上时 listPage 一发不多
-    expect(listPageMock.mock.calls.length).toBe(pageCalls);
+    // 全量那条与本页的两路查询互不相干：它补上时那两路一发不多
+    expect(listPageMock.mock.calls.length + countsApiMock.mock.calls.length).toBe(totalCalls);
   });
 });
 
@@ -614,6 +641,7 @@ describe('R110 演示模式那一支', () => {
     expect(screen.getByText('待审批（1）')).toBeInTheDocument();
     expect(screen.getByText('审批历史（1）')).toBeInTheDocument();
     expect(listPageMock).not.toHaveBeenCalled();
+    expect(countsApiMock).not.toHaveBeenCalled();
 
     // R69 那一半在演示模式下必须还在：每次挂载恰好补拉一次 store
     await waitFor(() => expect(loadSpy).toHaveBeenCalledTimes(1));

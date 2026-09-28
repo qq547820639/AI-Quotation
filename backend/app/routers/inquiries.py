@@ -34,7 +34,7 @@ from ..schemas import (
     QuotationSchema, SuccessResult, VersionBody,
     DeliveryRecordSchema, DeliverySummarySchema,
     PaginatedInquiriesSchema, ExportRequest, QuotationSnapshotSchema,
-    InquiryItemSchema,
+    InquiryItemSchema, InquiryFilterSet, InquiryCountsRequest, InquiryCountsSchema,
 )
 from ..auth import get_current_user, require_permission, resolve_permissions
 from ..serializers import inquiry_to_schema, quotation_to_schema, gen_id, now_str
@@ -252,6 +252,75 @@ _SORT_EXPRS = {
     "submittedCount": _SUBMITTED_COUNT_EXPR,
 }
 
+# 批量计数的档位上限：审批页现在用 4 档，仪表盘统计卡将来约 6 档；
+# 设上限是为了让"一格一档"不会被误用成几百次全表扫描。
+_MAX_COUNT_ITEMS = 32
+
+
+def _apply_inquiry_filters(query, f: InquiryFilterSet):
+    """把一组筛子加到询价查询上——列表与批量计数**共用这一个函数**（R111）。
+
+    分开写两份 WHERE 迟早会漂移：计数端点会把"筛子没生效的全集数"当成某一格的数报出去。
+    所以谓词只在这里定义一次，`GET /api/inquiries` 与 `POST /api/inquiries/counts` 都走它。
+    """
+    # 关键词搜索（code / subject / owner_name）
+    if f.keyword:
+        kw = f"%{f.keyword.strip()}%"
+        query = query.filter(or_(
+            Inquiry.code.like(kw),
+            Inquiry.subject.like(kw),
+            Inquiry.owner_name.like(kw),
+        ))
+    # 状态筛选
+    if f.status:
+        statuses = [s.strip() for s in f.status.split(",") if s.strip()]
+        if statuses:
+            query = query.filter(Inquiry.status.in_(statuses))
+    # 创建时间范围（R108：改成日粒度闭区间，与 MSW 的 dateFrom/dateTo 分支
+    # src/mocks/handlers.ts:233 和仪表盘的 applyWorkbenchFilter 同口径。
+    # 旧写法 `created_at <= '2026-09-28'` 会把当天整天排除掉——两条取数路径此前都不是这个意思）
+    if f.dateFrom:
+        query = query.filter(func.substr(Inquiry.created_at, 1, 10) >= f.dateFrom)
+    if f.dateTo:
+        query = query.filter(func.substr(Inquiry.created_at, 1, 10) <= f.dateTo)
+    # R108：列表页筛选表单的四个独立筛子（AND 语义），全量与分页两条分支都生效
+    if f.code:
+        query = query.filter(Inquiry.code.like(f"%{f.code.strip()}%"))
+    if f.subject:
+        query = query.filter(Inquiry.subject.like(f"%{f.subject.strip()}%"))
+    if f.creator:
+        query = query.filter(Inquiry.created_by_name.like(f"%{f.creator.strip()}%"))
+    if f.category:
+        query = query.filter(
+            exists().where(
+                and_(
+                    InquiryItem.inquiry_id == Inquiry.id,
+                    InquiryItem.category.like(f"%{f.category.strip()}%"),
+                )
+            )
+        )
+    # R109：截止时间范围（同样是日粒度闭区间）。待报价页原来在整份数组上按
+    # `startOf('day') … endOf('day')` 过滤 deadline，搬上服务端必须给同口径的界，
+    # 否则那个页面上的"截止日区间"筛子会在分页路径上静默失效。
+    if f.deadlineFrom:
+        query = query.filter(func.substr(Inquiry.deadline, 1, 10) >= f.deadlineFrom)
+    if f.deadlineTo:
+        query = query.filter(func.substr(Inquiry.deadline, 1, 10) <= f.deadlineTo)
+    # R110：审批节点状态（逗号分隔，EXISTS approval_nodes）。审批页的"历史"页签
+    # 与"已通过/已驳回"两张统计卡原来靠整份数组扫 approvalNodes 算，搬上服务端必须给这个筛子。
+    if f.nodeStatus:
+        nodes = [s.strip() for s in f.nodeStatus.split(",") if s.strip()]
+        if nodes:
+            query = query.filter(
+                exists().where(
+                    and_(
+                        ApprovalNode.inquiry_id == Inquiry.id,
+                        ApprovalNode.status.in_(nodes),
+                    )
+                )
+            )
+    return query
+
 
 @router.get("")
 def list_inquiries(
@@ -303,62 +372,24 @@ def list_inquiries(
         selectinload(Inquiry.invited_suppliers),
     )
 
-    # 关键词搜索（code / subject / owner_name）
-    if keyword:
-        kw = f"%{keyword.strip()}%"
-        query = query.filter(or_(
-            Inquiry.code.like(kw),
-            Inquiry.subject.like(kw),
-            Inquiry.owner_name.like(kw),
-        ))
-    # 状态筛选
-    if status:
-        statuses = [s.strip() for s in status.split(",") if s.strip()]
-        if statuses:
-            query = query.filter(Inquiry.status.in_(statuses))
-    # 创建时间范围（R108：改成日粒度闭区间，与 MSW 的 dateFrom/dateTo 分支
-    # src/mocks/handlers.ts:233 和仪表盘的 applyWorkbenchFilter 同口径。
-    # 旧写法 `created_at <= '2026-09-28'` 会把当天整天排除掉——两条取数路径此前都不是这个意思）
-    if dateFrom:
-        query = query.filter(func.substr(Inquiry.created_at, 1, 10) >= dateFrom)
-    if dateTo:
-        query = query.filter(func.substr(Inquiry.created_at, 1, 10) <= dateTo)
-    # R108：列表页筛选表单的四个独立筛子（AND 语义），全量与分页两条分支都生效
-    if code:
-        query = query.filter(Inquiry.code.like(f"%{code.strip()}%"))
-    if subject:
-        query = query.filter(Inquiry.subject.like(f"%{subject.strip()}%"))
-    if creator:
-        query = query.filter(Inquiry.created_by_name.like(f"%{creator.strip()}%"))
-    if category:
-        query = query.filter(
-            exists().where(
-                and_(
-                    InquiryItem.inquiry_id == Inquiry.id,
-                    InquiryItem.category.like(f"%{category.strip()}%"),
-                )
-            )
-        )
-    # R109：截止时间范围（同样是日粒度闭区间）。待报价页原来在整份数组上按
-    # `startOf('day') … endOf('day')` 过滤 deadline，搬上服务端后必须给同口径的界，
-    # 否则那个页面上的"截止日区间"筛子会在分页路径上静默失效。
-    if deadlineFrom:
-        query = query.filter(func.substr(Inquiry.deadline, 1, 10) >= deadlineFrom)
-    if deadlineTo:
-        query = query.filter(func.substr(Inquiry.deadline, 1, 10) <= deadlineTo)
-    # R110：审批节点状态（逗号分隔，EXISTS approval_nodes）。审批页的"历史"页签
-    # 与"已通过/已驳回"两张统计卡原来靠整份数组扫 approvalNodes 算，搬上服务端必须给这个筛子。
-    if nodeStatus:
-        nodes = [s.strip() for s in nodeStatus.split(",") if s.strip()]
-        if nodes:
-            query = query.filter(
-                exists().where(
-                    and_(
-                        ApprovalNode.inquiry_id == Inquiry.id,
-                        ApprovalNode.status.in_(nodes),
-                    )
-                )
-            )
+    # 筛子谓词与 `POST /api/inquiries/counts` 同源（R111）：不在两条路上各写一份 WHERE
+    query = _apply_inquiry_filters(
+        query,
+        InquiryFilterSet(
+            keyword=keyword,
+            status=status,
+            dateFrom=dateFrom,
+            dateTo=dateTo,
+            code=code,
+            subject=subject,
+            creator=creator,
+            category=category,
+            deadlineFrom=deadlineFrom,
+            deadlineTo=deadlineTo,
+            nodeStatus=nodeStatus,
+        ),
+    )
+
 
     # 排序（白名单 + 方向）
     # R108 顺手修一条潜伏的 500：旧写法 `order_col = _SORT_FIELDS.get(key) if sort else updated_at`
@@ -390,6 +421,42 @@ def list_inquiries(
         page=_page,
         pageSize=_size,
     )
+
+
+@router.post("/counts", response_model=InquiryCountsSchema)
+def inquiry_counts(
+    body: InquiryCountsRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """一次问完多组筛子各自的条数（R111）
+
+    存在理由：审批页要四个数（待审批 / 历史 / 已通过 / 已驳回）。R110 的实现是发四次
+    `pageSize=1` 的分页请求读 `total`，进页因此变成 17–19 个请求；计数不该按"几格"线性涨。
+    每个档位都走 `filter_visible_inquiries` + 与列表端点同一个 `_apply_inquiry_filters`，
+    所以 `counts[x]` 与 `GET /api/inquiries?x…` 的 `total` 结构上不可能各说一套
+    （这条由 backend/tests/test_inquiries_counts.py 逐档对账钉住）。
+    """
+    labels = [item.label for item in body.items]
+    if any(not label.strip() for label in labels):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="label 不能为空"
+        )
+    if len(labels) != len(set(labels)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="label 不得重复"
+        )
+    if len(labels) > _MAX_COUNT_ITEMS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"items 最多 {_MAX_COUNT_ITEMS} 档",
+        )
+    counts: dict[str, int] = {}
+    for item in body.items:
+        query = filter_visible_inquiries(db.query(Inquiry), user)
+        query = _apply_inquiry_filters(query, item.filters)
+        counts[item.label] = query.count()
+    return InquiryCountsSchema(counts=counts)
 
 
 @router.get("/{inquiry_id}/quotations", response_model=list[QuotationSchema])
