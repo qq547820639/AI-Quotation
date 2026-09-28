@@ -25,14 +25,32 @@ async function startServer(): Promise<{ origin: string; close: () => Promise<voi
       res.end('{"detail":"unauthorized"}');
       return;
     }
+    if (req.url === '/api/dies') {
+      // 网络层失败这一档：连接直接被掐，浏览器只会发 requestfailed，不会发 response。
+      res.destroy();
+      return;
+    }
+    if (req.url === '/api/hang') {
+      return; // 在飞这一档：收下了但永远不回，账本里应保持 status=-1。
+    }
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end('<html><body><p>api-activity probe</p></body></html>');
+  });
+  // 挂住的连接会让 srv.close() 一直等，所以自己记下 socket 并在收尾时销毁。
+  const sockets = new Set<import('node:net').Socket>();
+  srv.on('connection', (s) => {
+    sockets.add(s);
+    s.on('close', () => sockets.delete(s));
   });
   await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
   const { port } = srv.address() as AddressInfo;
   return {
     origin: `http://127.0.0.1:${port}`,
-    close: () => new Promise<void>((resolve) => srv.close(() => resolve())),
+    close: async () => {
+      for (const s of sockets) s.destroy();
+      sockets.clear();
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+    },
   };
 }
 
@@ -100,6 +118,38 @@ test.describe('归因量具（apiActivity）自检', () => {
       expect(apiActivity(fresh)).not.toContain('≥');
       expect(apiActivity(fresh)).not.toContain('挤掉最早');
       await fresh.close();
+    } finally {
+      await s.close();
+    }
+  });
+
+  test('三种终态各有各的句子：网络层断掉／在飞没回，外加"根本没发"当对照', async ({ page }) => {
+    const s = await startServer();
+    try {
+      watchApi(page);
+      await page.goto(s.origin);
+
+      // 档②：连接被掐——浏览器只发 requestfailed，不发 response。
+      // 少了这一档，账本会把"发了但被掐"读成下面那句"根本没发"（R99 的动机）。
+      await page.evaluate(() => fetch('/api/dies').catch(() => {}));
+      await expect
+        .poll(() => apiActivity(page, /\/api\/dies/), { message: 'requestfailed 没进账本' })
+        .toContain('网络层失败');
+
+      // 档③：收下了但永远不回——既不该算"回了"，也不该算"没发"。
+      void page.evaluate(() => fetch('/api/hang').catch(() => {}));
+      await expect
+        .poll(() => apiActivity(page, /\/api\/hang/), { message: '在飞的那条没进账本' })
+        .toContain('在飞没回');
+
+      // 摘要头部三档各自计数，别糊成一个"响应 N 条"。
+      const head = apiActivity(page);
+      expect(head).toContain('网络层失败 1 条');
+      expect(head).toContain('在飞 1 条');
+
+      // 档①的对照：什么都没发生时，必须仍然说"根本没发"。
+      // 这句是分辨句的零侧——上一段两档若写坏，这句会跟着一起绿，所以它必须自己站得住。
+      expect(apiActivity(page, /\/api\/never/)).toContain('的响应 0 条：一条都没有');
     } finally {
       await s.close();
     }
