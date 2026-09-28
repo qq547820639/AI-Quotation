@@ -5,6 +5,7 @@
  * - 关键步骤直接断言，不 `if visible` 跳过
  */
 import { expect, type Locator, type Page } from '@playwright/test';
+import { apiActivity, watchApi } from './api-activity';
 
 /**
  * 用键盘 Enter 触发按钮（等价于点击，但不做命中测试）。
@@ -51,6 +52,9 @@ export const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || 'dev-demo-pass-12
 
 /** 登录（选中用户 + 任意密码），登录本身直接断言跳转 */
 export async function login(page: Page, name: string, password = DEMO_PASSWORD) {
+  // 装上市面账本：登录之后如果 token 不见了、或某次读根本没响应，
+  // 失败文本里要能回答"当时已经被 401 踢回 /login 了吗"（R92 那两格红缺的就是这一句）。
+  watchApi(page);
   await page.goto('/login');
   await page.locator('.ant-select-selector').click();
   // 只认"当前展开的那个"下拉：antd 收起后节点仍挂在 DOM 里（只是 hidden），
@@ -182,21 +186,31 @@ export async function getInvitationToken(
   inquiryId: string,
   supplierId: string,
 ): Promise<string> {
-  const token = await page.evaluate(
-    async ({ inquiryId, supplierId }) => {
-      const authToken = localStorage.getItem('procurement_token');
-      if (!authToken) throw new Error('procurement_token not found in localStorage');
-      const res = await fetch(`/api/inquiries/${inquiryId}/invitations/${supplierId}/regenerate`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) throw new Error(`regenerate invitation failed: ${res.status} ${res.statusText}`);
-      const data = await res.json();
-      if (!data.token) throw new Error('regenerate invitation returned no token');
-      return data.token as string;
-    },
-    { inquiryId, supplierId },
-  );
+  const token = await page
+    .evaluate(
+      async ({ inquiryId, supplierId }) => {
+        const authToken = localStorage.getItem('procurement_token');
+        if (!authToken) throw new Error('procurement_token not found in localStorage');
+        const res = await fetch(
+          `/api/inquiries/${inquiryId}/invitations/${supplierId}/regenerate`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+          },
+        );
+        if (!res.ok)
+          throw new Error(`regenerate invitation failed: ${res.status} ${res.statusText}`);
+        const data = await res.json();
+        if (!data.token) throw new Error('regenerate invitation returned no token');
+        return data.token as string;
+      },
+      { inquiryId, supplierId },
+    )
+    .catch((e: Error) => {
+      // 这一格在 runner 上红过（R92：登录已自证 2xx 且落到 /dashboard，token 却不在库）。
+      // 光一句 "not found" 判不了档，所以把当时的 URL 与 /api 非 2xx 记录并进错误文本。
+      throw new Error(`${e.message}｜${apiActivity(page)}`);
+    });
   return token;
 }
 

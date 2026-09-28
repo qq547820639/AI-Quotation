@@ -10,6 +10,7 @@ import {
   SUPPLIER_A,
   expectWriteLanded,
 } from './helpers';
+import { apiActivity } from './api-activity';
 
 /**
  * E2E：异常场景（Task 11）
@@ -119,7 +120,11 @@ async function openSupplierPageAndToggle(page: Page) {
       { timeout: 20000 },
     ),
     page.goto('/supplier'),
-  ]);
+  ]).catch((e: Error) => {
+    // R92：runner 上这类红原文只有"等满 20 s"，判不了是"请求没发出去"还是"发出去没回"，
+    // 也判不了当时是不是已经被 401 踢回 /login。带上市面账本再抛，不改超时预算。
+    throw new Error(`${e.message}｜${apiActivity(page, /\/api\/suppliers/)}`);
+  });
   await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
   const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
   await expect(row).toBeVisible({ timeout: 5000 });
