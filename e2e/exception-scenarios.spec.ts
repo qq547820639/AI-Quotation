@@ -602,6 +602,9 @@ test.describe('异常场景', () => {
     const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
     // R65 续：这一格之后没有任何持久断言，用瞬时提示当凭据会把"写其实没落地"也读成成功；
     // 换成等那次 PUT 返回 2xx（同一用例前半格已经在数 putCount 了，两半合起来才是完整凭据）。
+    // R102 把话说准：这条 PUT 的 2xx 是上面那个桩 fulfill 出来的（本仓没有真后端可落），
+    // 所以本格断的是"客户端确实带着同一次写重试了第二次"，不是"后端把状态存下了"；
+    // expectWriteLanded 现在默认拒绝把无网络往返的 2xx 当后端回执，要这么读必须显式声明 via。
     await expectWriteLanded(
       page,
       /\/api\/suppliers\/[^/]+$/,
@@ -610,6 +613,7 @@ test.describe('异常场景', () => {
         await confirmOk(page);
       },
       'PUT',
+      { via: 'stub' },
     );
   });
 

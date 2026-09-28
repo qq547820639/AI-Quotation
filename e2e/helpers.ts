@@ -5,7 +5,7 @@
  * - 关键步骤直接断言，不 `if visible` 跳过
  */
 import { expect, type Locator, type Page } from '@playwright/test';
-import { apiActivity, watchApi } from './api-activity';
+import { apiActivity, networkPhase, watchApi } from './api-activity';
 
 /**
  * 用键盘 Enter 触发按钮（等价于点击，但不做命中测试）。
@@ -152,13 +152,20 @@ export async function confirmOk(page: Page) {
  *
  * 用法：把触发写的两次点击包进 action，本函数先挂响应监听再执行，
  * 断到 2xx 才返回；后续步骤原有的可见性断言继续负责"状态真的变了"。
+ *
+ * R102 加的牙：`page.route` 的 `fulfill` 照样会发 `response`（实测见登记册），所以同一条用例
+ * 自己下的桩能给这个"写落地凭据"送回 2xx——不点名就不许当后端回执用。
+ * 确实要按"客户端重试了这次写"解读的格子（如 `exception-scenarios.spec.ts` 的 PUT 重试格），
+ * 显式传 `{ via: 'stub' }`，让这句话由调用方说出口而不是由守卫默认。
  */
 export async function expectWriteLanded(
   page: Page,
   urlPattern: RegExp,
   action: () => Promise<void>,
   method = 'POST',
+  opts: { via?: 'backend' | 'stub' } = {},
 ): Promise<void> {
+  const via = opts.via ?? 'backend';
   const pending = page.waitForResponse(
     (r) => urlPattern.test(r.url()) && r.request().method() === method,
     {
@@ -167,6 +174,13 @@ export async function expectWriteLanded(
   );
   await action();
   const res = await pending;
+  if (via !== 'stub' && networkPhase(res.request()) === false) {
+    throw new Error(
+      `这次 ${method} 的 ${res.status()} 没有网络层 request 阶段 ⇒ 是本用例自己的 route 桩给的，不是后端回执；` +
+        '若这一格断的是"客户端重试了这次写"，请显式传 { via: \'stub\' }' +
+        `｜${apiActivity(page, urlPattern)}`,
+    );
+  }
   expect(res.status(), `写请求未成功：${method} ${res.url()}`).toBeLessThan(300);
 }
 

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { apiActivity, MAX_ROWS, watchApi } from './api-activity';
-import { getInvitationToken } from './helpers';
+import { expectWriteLanded, getInvitationToken } from './helpers';
 
 /**
  * 归因量具自己的常驻用例（R95）。
@@ -295,6 +295,51 @@ test.describe('归因量具（apiActivity）自检', () => {
       await fresh.evaluate(() => fetch('/api/needs401').catch(() => {}));
       expect(apiActivity(fresh)).not.toContain('两类各只留最近 3 条');
       await fresh.close();
+    } finally {
+      await s.close();
+    }
+  });
+
+  test('写回执守卫不许把自家桩的 200 当后端回执：未声明必须拒、声明后放行、真失败仍是另一句话', async ({
+    page,
+  }) => {
+    const s = await startServer();
+    const fire = (path: string) => () =>
+      page.evaluate((p) => {
+        void fetch(`/api/${p}`, { method: 'POST' }).catch(() => {});
+      }, path);
+    try {
+      watchApi(page);
+      await page.route('**/api/stubwrite', (route) =>
+        route.fulfill({ status: 200, body: '{}', contentType: 'application/json' }),
+      );
+      await page.goto(s.origin);
+
+      // ① 桩给的 200、没声明 via ⇒ 必须拒（这是牙齿：旧形状在这里是静默通过）。
+      let msg = '';
+      try {
+        await expectWriteLanded(page, /\/api\/stubwrite/, fire('stubwrite'), 'POST');
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      expect(msg).toContain('是本用例自己的 route 桩给的');
+      expect(msg).toContain('URL=');
+
+      // ② 同一形状、显式声明 stub ⇒ 必须放行（否则这条守卫恒红，等于把用例做废）。
+      await expectWriteLanded(page, /\/api\/stubwrite/, fire('stubwrite'), 'POST', { via: 'stub' });
+
+      // ③ 真后端的 200 不得被误判成桩（分档判错会一片假红）。
+      await expectWriteLanded(page, /\/api\/realwrite/, fire('realwrite'), 'POST');
+
+      // ④ 真后端的 401 走的是另一句话：写没成功，而不是"这是桩"。
+      let msg401 = '';
+      try {
+        await expectWriteLanded(page, /\/api\/needs401/, fire('needs401'), 'POST');
+      } catch (e) {
+        msg401 = (e as Error).message;
+      }
+      expect(msg401).toContain('写请求未成功');
+      expect(msg401).not.toContain('route 桩');
     } finally {
       await s.close();
     }

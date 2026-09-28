@@ -58,8 +58,9 @@ const isApi = (url: string) => url.includes('/api/');
 /**
  * 有没有真的走网络。实测：`route.fulfill` 的响应 timing 各键都在但 `requestStart` 为 0，
  * 真请求（同机 http）`requestStart` > 0。`timing()` 抛或给空 ⇒ undefined，不折成任何一种。
+ * 导出给写回执守卫用（`e2e/helpers.ts` 的 `expectWriteLanded`），同一把尺子不抄第二份。
  */
-function networkPhase(req: Request): boolean | undefined {
+export function networkPhase(req: Request): boolean | undefined {
   try {
     const t = req.timing();
     if (!t) return undefined;
