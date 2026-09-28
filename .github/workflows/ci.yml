@@ -355,24 +355,17 @@ jobs:
           # COPY requirements.txt 找不到文件、构建失败（非真实漏洞）。
           docker build -t procurement-backend -f backend/Dockerfile backend
           docker build -t procurement-frontend . -f Dockerfile.frontend
+          # 先输出一份 TABLE 摘要到 stdout（不带 --exit-code：有漏洞也退出 0），
+          # 便于在 Actions 日志里直接看到命中的 HIGH/CRITICAL CVE 与 Pkg/Installed 版本，
+          # 而不是只有 JSON 报表（JSON 需下载 artifact 才能排查）。
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --no-progress --severity HIGH,CRITICAL --format table procurement-backend
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image --no-progress --severity HIGH,CRITICAL --format table procurement-frontend
           # 通过 -v "$PWD:/report" 把当前目录挂载进容器，使 trivy 的 -o 报表写到宿主机
           # （否则 -o 只写进刚退出的容器内，宿主拿不到报表，失败时无法排查）。
-          # 这里改成 --exit-code 0：命中与否由下面的摘要脚本判，一次扫描同时拿到报表与判决，
-          # 不再有"表格印在中段、结尾只剩 upload 噪声"的空读数（run=36380814151 的 #9 就是那样）。
-          for IMG in procurement-backend procurement-frontend; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report \
-              aquasec/trivy:0.57.1 image --exit-code 0 --no-progress --severity HIGH,CRITICAL \
-              --format json -o "trivy-${IMG#procurement-}.json" "$IMG"
-          done
-          # 自测跑在摘要之前：先证明这把尺子会开火，再信它报的"零命中"。
-          node scripts/ci-summarize-trivy.mjs --self-test
-          # 最后一行才是门禁：命中 HIGH/CRITICAL ⇒ 脚本自身 exit 1，强度与原 --exit-code 1 相同，
-          # 但退码旁边同时印着 CVE 编号、包名、当前版本与修复版本。
-          node scripts/ci-summarize-trivy.mjs trivy-backend.json trivy-frontend.json
+          # --exit-code 1 作为强门禁：命中 HIGH/CRITICAL 即非零退出，阻断 CI。
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-backend.json procurement-backend
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/report" -w /report aquasec/trivy:0.57.1 image --exit-code 1 --no-progress --severity HIGH,CRITICAL --format json -o trivy-frontend.json procurement-frontend
       - name: Generate SBOM (CycloneDX via trivy, backend + frontend)
-        # if: always()——这一步是 fs 扫描，与镜像门禁的命中与否无关。原先默认 success() 时，
-        # 只要 Trivy 判红它就被 skip，两轮下来一次也没跑过（R88/R91 的 #10 全是 skipped）。
-        if: always()
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:0.57.1 fs --quiet --format cyclonedx --output sbom-backend.cdx.json backend
           docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:0.57.1 fs --quiet --format cyclonedx --output sbom-frontend.cdx.json .
@@ -569,12 +562,7 @@ jobs:
           done
           curl -sf http://localhost:80
       - name: Run Playwright E2E (real frontend/backend integration)
-        # 30 → 45 分钟：run=36382719015（`2d2d782`）一手被 `##[error]The action 'Run Playwright E2E
-        # …' has timed out after 30 minutes.` 掐死在测试 #179（分母 230），mobile-ios 整档没跑、
-        # `.last-run.json` 没落盘 ⇒ 那一轮的"21 格红"其实是**同一条 30 分钟线**切出来的半个读数。
-        # 依据：225 格时实测 28.7/29.0 分钟（R88/R91），2d2d782 加 5 格并把工件保留策略改成
-        # retain-on-failure 之后，30 分钟已经不够；留 45 分钟给 230 格的串行档（workers=1）。
-        timeout-minutes: 45
+        timeout-minutes: 30
         env:
           # E2E 登录必须与后端种子用户密码一致（compose 已注入强 DEMO_USER_PASSWORD）。
           DEMO_USER_PASSWORD: ${{ format('ci-e2e-{0}-strong-password', github.run_id) }}
@@ -584,33 +572,7 @@ jobs:
           # 判 head_ref 而不是 ref_name，因为 pull_request 事件下 ref_name 是 refs/pull/N/merge。
           # 即便这条误合进 main，条件不命中也只是回到 1，不会把主线门禁改松或改严。
           PLAYWRIGHT_RETRIES: ${{ github.head_ref == 'qoder/ci-evidence-0928' && '0' || '1' }}
-          # 第三张报表面：list 的失败详情印在 4400 行日志中段（取证载体取的是结尾 60 行，
-          # 于是两轮读数只剩计数、没有一句错误文本）。JSON 由下一步逐条归因。
-          # 该变量的相对路径基准由 Playwright 内部决定，所以下一步同时找仓库根与 test-results/ 两种落点。
-          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-json-results.json
-        run: |
-          set +e
-          # 场地取样器：每 5 秒打一行（时刻、后端 /api/ready 的状态码与耗时、前端 / 的状态码与耗时、
-          # 可用内存）。动机是 R92 的读数形状——`2d2d782` 那轮 21 格红全在 06:09 之后、之前 138 格全绿，
-          # 这读起来像"场地跑到后半段劣化"，但失败面那一步是在 E2E **结束之后**才看场地的，
-          # 那一刻健康不说明跑的时候健康。要判"整体事件 vs 逐格缺陷"，协变量必须按时刻采，
-          # 而不是事后取一个断面。
-          SAM=/tmp/venue-samples.tsv
-          : > "$SAM"
-          ( while :; do
-              B=$(curl -s -o /dev/null -m 3 -w '%{http_code} %{time_total}' http://localhost:8080/api/ready 2>/dev/null || echo 'ERR -')
-              F=$(curl -s -o /dev/null -m 3 -w '%{http_code} %{time_total}' http://localhost:80 2>/dev/null || echo 'ERR -')
-              M=$(awk '/MemAvailable/{print $2}' /proc/meminfo 2>/dev/null || echo NA)
-              L=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo NA)
-              printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$B" "$F" "$M" "$L" >> "$SAM"
-              sleep 5
-            done ) &
-          SAMPLER=$!
-          npx playwright test --reporter=html,list,json
-          RC=$?
-          kill "$SAMPLER" 2>/dev/null
-          echo "playwright rc=$RC（采样器不参与判定，本步骤按同一退码结束）"
-          exit $RC
+        run: npx playwright test --reporter=html,list
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
@@ -640,26 +602,9 @@ jobs:
         run: |
           set +e
           OUT=/tmp/e2efail.md
-          # JSON 报表的落点由 Playwright 决定（基准目录有两个候选），先把它找出来。
-          J=""
-          for C in e2e-json-results.json test-results/e2e-json-results.json; do
-            if [ -f "$C" ]; then J="$C"; break; fi
-          done
           {
             echo '### docker-e2e 失败面（一手，零重试档）'
             echo "- head_ref=${HEAD_REF:-（push 事件无此值）}（取证分支即 retries=0，判据与上面 Run Playwright E2E 那一步的 env 同一条）  用例结果条目：$(ls test-results 2>/dev/null | wc -l) 个"
-            echo '- 逐条归因（`node scripts/ci-summarize-e2e.mjs`，脚本 rc 一并报出：0=无红、1=有红、2=报表读不到）：'
-            echo '```'
-            if [ -n "$J" ]; then
-              node scripts/ci-summarize-e2e.mjs --self-test >/dev/null 2>&1
-              echo "（本件自测 rc=$?，不为 0 说明摘要尺子自己坏了——条数由脚本自报，下面的读数不可信）"
-              node scripts/ci-summarize-e2e.mjs "$J" 2>&1
-              echo "（summarize rc=$?  报表=$J）"
-            else
-              echo '（没有找到 JSON 报表：E2E 步骤可能在该步的 timeout-minutes 到点时被掐断，'
-              echo '  这一轮的逐条错误文本只剩日志窗口，归因读数缺位——不要把它读成"没有失败"）'
-            fi
-            echo '```'
             echo '- .last-run.json：'
             echo '```'
             cat test-results/.last-run.json 2>/dev/null || echo '（没有 .last-run.json：多半 E2E 步骤没跑到）'
@@ -668,37 +613,6 @@ jobs:
             echo '- 失败用例目录名（含 project 与标题）：'
             echo '```'
             find test-results -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's|test-results/||' | sort | head -40
-            echo '```'
-            echo '- 失败目录里的工件（2d2d782 起零重试档是 retain-on-failure，这里才有 trace/video 文件名可核）：'
-            echo '```'
-            find test-results -mindepth 2 -maxdepth 2 -type f 2>/dev/null | sed 's|test-results/||' | sort | head -40
-            echo '```'
-            # 场地现场：这一步跑在 Cleanup environment 之前，compose 还活着，所以能直接问它。
-            # 动机是 2d2d782 那轮的形状——红全集中在 06:09 之后的那个 project 里、之前 0 红，
-            # 那读起来像"场地在跑到后半段时劣化"，而不是 21 个各自独立的用例缺陷。
-            echo '- 场地现场（健康端点与容器状态，不贴日志正文以免把环境值带进 PR）：'
-            echo '```'
-            echo "api/ready http=$(curl -s -o /tmp/rd.json -w '%{http_code}' http://localhost:8080/api/ready || echo 取不到)"
-            echo "api/ready body=$(head -c 400 /tmp/rd.json 2>/dev/null)"
-            docker compose ps --format '{{.Name}} {{.Status}}' 2>/dev/null | head -14
-            docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}' 2>/dev/null | head -14
-            echo "宿主负载：$(cat /proc/loadavg 2>/dev/null || echo 取不到)"
-            echo "内存：$(grep -E 'MemAvailable|MemTotal' /proc/meminfo 2>/dev/null | tr '\n' ' ')"
-            echo "backend 日志里的 ERROR/Traceback 行数：$(docker compose logs --tail=400 backend 2>/dev/null | grep -Ec 'ERROR|Traceback')"
-            # 采样序列（每 5 s 一行，跑在 E2E 的整个时间轴上）：把"红从哪个时刻开始"与
-            # "后端什么时候变慢/变红"对齐，这是 R92 那两个候选档唯一的分辨读数。
-            echo '-- 场地采样序列（时刻 / 后端 状态码 耗时s / 前端 状态码 耗时s / 可用内存kB / load1）--'
-            if [ -s /tmp/venue-samples.tsv ]; then
-              N=$(wc -l < /tmp/venue-samples.tsv)
-              BAD=$(awk -F '\t' '{split($2,a," "); split($3,b," "); if (a[1]!="200" || b[1]!="200" || a[2]+0>2 || b[2]+0>2) c++} END{print c+0}' /tmp/venue-samples.tsv)
-              FIRST=$(awk -F '\t' '{split($2,a," "); split($3,b," "); if (a[1]!="200" || b[1]!="200" || a[2]+0>2 || b[2]+0>2) {print $1" 后端="a[1]"/"a[2]"s 前端="b[1]"/"b[2]"s"; exit}}' /tmp/venue-samples.tsv)
-              SLOW=$(awk -F '\t' '{split($2,a," "); if (a[2]+0>m) {m=a[2]+0; t=$1}} END{if (m>0) printf "%s 后端最慢 %.2fs", t, m}' /tmp/venue-samples.tsv)
-              echo "样本 ${N} 个｜劣化(非 200 或 >2s) ${BAD} 个｜首个劣化：${FIRST:-无}｜${SLOW:-无}"
-              echo "（每 12 个样本取 1 行 ≈ 每分钟一行，最多 45 行）"
-              awk 'NR % 12 == 1' /tmp/venue-samples.tsv | head -45 | tr '\t' ' '
-            else
-              echo '（采样器没写出任何行：多半是 E2E 步骤在采样器起来前就失败，或 curl 不在 PATH）'
-            fi
             echo '```'
           } > "$OUT"
           cat "$OUT"
