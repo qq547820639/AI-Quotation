@@ -30,6 +30,8 @@ type ApiRow = {
   failed?: string;
   /** true＝有网络层 request 阶段；false＝没有（页面级 route 桩，或缓存直接给的响应）；undefined＝解不开 */
   net?: boolean;
+  /** 入册时刻（ms）：在飞这一档必须带挂钟时长，否则"事件晚到"与"后端真没回"读起来一模一样 */
+  t0: number;
 };
 
 /** 被上限挤掉的条数按终态分开记：混成一个数，"响应 N 条"就会把在飞与失败的行也算成回了。 */
@@ -73,9 +75,15 @@ export function networkPhase(req: Request): boolean | undefined {
 const dropKind = (r: ApiRow): DropKind =>
   r.status === -1 ? 'inflight' : r.status === 0 ? 'failed' : 'answered';
 
-/** 新请求入册；超限时挤掉**最早**的一条，并按它当时的终态归类记账。 */
+/**
+ * 新请求入册；超限时挤掉**最早**的一条，并按它当时的终态归类记账。
+ * `t0` 只能用**事件送达账本**的时刻：实测 `request` 事件当时 `timing().startTime` 还没填充
+ * （本机健康场地批量送达时 8 行都读成 0.0s，改取 startTime 之后仍是 0.0s），
+ * startTime 要等请求结束后才可用（压 1500 ms 的服务器实测 `Date.now() - startTime` = 1511 ms）。
+ * 所以这里的时长是"送达起算"，读法上只能用来分档，不能当请求真实发出时刻（限度写进输出文本）。
+ */
 function push(page: Page, rows: Map<Request, ApiRow>, req: Request): void {
-  rows.set(req, { method: req.method(), path: pathOf(req.url()), status: -1 });
+  rows.set(req, { method: req.method(), path: pathOf(req.url()), status: -1, t0: Date.now() });
   if (rows.size > MAX_ROWS) {
     const oldest = rows.keys().next().value;
     if (oldest !== undefined) {
@@ -145,11 +153,26 @@ export function apiActivity(page: Page, only?: RegExp): string {
   const stubNote = stubbed
     ? `｜回了的里面有 ${stubbed} 条没有网络层 request 阶段（页面级 route 桩或缓存，不等于后端真回过）`
     : '';
+  // 在飞要把路径与"送达起算"的时长带出来。一手实测（登记册 R103）：本机健康场地（compose :80）在登录刚结束时
+  // 读到 `在飞 8 条`，同一页静置 3 s 后读成 `响应 14 条／在飞 0 条` ⇒ 只给条数就会把"事件晚到"读成"后端没回"。
+  // 反过来，本应用的常驻 SSE（`/api/events/stream`）在账本里是"回了 200"（响应头先到），不落在飞档，
+  // 所以这一档也不是"含长驻连接"。
+  const now = Date.now();
+  const secs = (r: ApiRow) => ((now - r.t0) / 1000).toFixed(1);
+  const oldestRow = inflight.reduce((m, r) => (r.t0 < m.t0 ? r : m), inflight[0]);
+  const inflightNote = inflight.length
+    ? `（最近：${inflight
+        .slice(-3)
+        .map((r) => `${r.method} ${r.path} 入册 ${secs(r)}s`)
+        .join(
+          ', ',
+        )}${inflight.length > 3 ? ', …' : ''}；最长 ${secs(oldestRow)}s（口径：送达起算，不是发出起算）⇒ 秒级以内不能判后端没回）`
+    : '';
   const parts = [
     `URL=${page.url()}`,
     `/api 响应 ${d.answered ? '≥' : ''}${answered.length + d.answered} 条${capNote}` +
       `（非 2xx ${d.answered ? '≥' : ''}${bad.length} 条｜网络层失败 ${d.failed ? '≥' : ''}${netFailed.length + d.failed} 条` +
-      `｜在飞 ${d.inflight ? '≥' : ''}${inflight.length + d.inflight} 条）${stubNote}`,
+      `｜在飞 ${d.inflight ? '≥' : ''}${inflight.length + d.inflight} 条${inflightNote}）${stubNote}`,
     shown
       ? `保留窗口内的非 2xx 与失败: ${shown}${clipped ? '（两类各只留最近 3 条）' : ''}`
       : '保留窗口内没有非 2xx、也没有网络层失败',
@@ -171,7 +194,11 @@ export function apiActivity(page: Page, only?: RegExp): string {
                 }`
               : '',
             hitFailed.length ? `网络层失败 ${hitFailed.map((r) => r.failed).join(',')}` : '',
-            hitInflight.length ? `发出后仍有 ${hitInflight.length} 条在飞没回` : '',
+            hitInflight.length
+              ? `发出后仍有 ${hitInflight.length} 条在飞没回（送达起算最长 ${secs(
+                  hitInflight.reduce((m, r) => (r.t0 < m.t0 ? r : m), hitInflight[0]),
+                )}s）`
+              : '',
           ]
             .filter(Boolean)
             .join('｜');

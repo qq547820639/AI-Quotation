@@ -165,6 +165,19 @@ test.describe('归因量具（apiActivity）自检', () => {
       const head = apiActivity(page);
       expect(head).toContain('网络层失败 1 条');
       expect(head).toContain('在飞 1 条');
+      // 在飞必须带路径与"送达起算"时长（R103）：本机健康场地刚登录时读到"在飞 8 条"、静置 3 s 变 0 条，
+      // 只给条数会把"事件晚到"读成"后端没回"；而时长只能从送达算起（发出时刻在 request 事件里读不到），
+      // 所以这句必须把口径写在脸上。
+      expect(head).toMatch(/在飞 1 条（最近：GET \/api\/hang 入册 \d+\.\ds/);
+      expect(head).toContain('口径：送达起算');
+      expect(apiActivity(page, /\/api\/hang/)).toMatch(/在飞没回（送达起算最长 \d+\.\ds）/);
+      // 反向对照：零条在飞时不许出现这一串（否则上面三句恒真）。
+      const zero = await page.context().newPage();
+      watchApi(zero);
+      await zero.goto(s.origin);
+      await zero.evaluate(() => fetch('/api/needs401').catch(() => {}));
+      expect(apiActivity(zero)).not.toContain('入册');
+      await zero.close();
 
       // 档①的对照：什么都没发生时，必须仍然说"没发出"。
       // 这句是分辨句的零侧——上一段两档若写坏，这句会跟着一起绿，所以它必须自己站得住。
