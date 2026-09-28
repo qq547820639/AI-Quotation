@@ -38,6 +38,10 @@ import PageHeader from '@/components/PageHeader';
 import { InquiryStatusTag } from '@/components/StatusTag';
 import { formatDateTime, getRemainingTime } from '@/utils/format';
 import { useIsMobile } from '@/utils/useIsMobile';
+import { useQuery } from '@tanstack/react-query';
+import { inquiryApi } from '@/api/inquiryApi';
+import { IS_DEMO_MODE } from '@/config';
+import type { PaginatedInquiries } from '@/types';
 
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -103,13 +107,53 @@ export default function QuotationPendingPage() {
   const [deadlineRange, setDeadlineRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [keyword, setKeyword] = useState('');
 
-  /** 获取某询价单的所有报价 */
-  const getQuotationsByInquiry = (inquiryId: string): Quotation[] =>
-    quotations.filter((q) => q.inquiryId === inquiryId);
+  // R109：这一页原来把整份无界询价数组读进来，再在每行上数 invited/submitted/draft/timeout。
+  // 现在按 R108 的同一手法走服务端分页：状态/关键词/截止日区间都下推，行内统计只用该行自带的报价。
+  const serverEnabled = !IS_DEMO_MODE;
+  const [serverPage, setServerPage] = useState(1);
+  const [serverPageSize, setServerPageSize] = useState(10);
+
+  const statusCsv = statusFilter ? statusFilter : VISIBLE_STATUSES.join(',');
+  const deadlineFrom = deadlineRange ? deadlineRange[0].format('YYYY-MM-DD') : undefined;
+  const deadlineTo = deadlineRange ? deadlineRange[1].format('YYYY-MM-DD') : undefined;
+  const kw = keyword.trim() || undefined;
+
+  const { data: serverData, isFetching: serverFetching } = useQuery<PaginatedInquiries>({
+    queryKey: [
+      'inquiries',
+      'pending-page',
+      serverPage,
+      serverPageSize,
+      statusCsv,
+      kw,
+      deadlineFrom,
+      deadlineTo,
+    ],
+    queryFn: () =>
+      inquiryApi.listPage({
+        page: serverPage,
+        pageSize: serverPageSize,
+        status: statusCsv,
+        keyword: kw,
+        deadlineFrom,
+        deadlineTo,
+      }),
+    enabled: serverEnabled,
+  });
+
+  /** 换了筛子必须回到第一页：否则"第 4 页 + 新筛子"会读到一页空白，看着像没数据 */
+  const applyFilter = (fn: () => void) => {
+    fn();
+    setServerPage(1);
+  };
+
+  /** 获取某询价单的所有报价（服务端分页时随行返回；演示模式仍从报价 store 里数） */
+  const rowQuotations = (inquiry: Inquiry): Quotation[] =>
+    serverEnabled ? inquiry.quotations : quotations.filter((q) => q.inquiryId === inquiry.id);
 
   /** 未报价供应商列表（无 SUBMITTED 报价的受邀供应商，便于测试） */
   const getUnquotedSuppliers = (inquiry: Inquiry): Supplier[] => {
-    const quos = getQuotationsByInquiry(inquiry.id);
+    const quos = rowQuotations(inquiry);
     const submittedIds = new Set(
       quos.filter((q) => q.status === QuotationStatus.SUBMITTED).map((q) => q.supplierId),
     );
@@ -143,6 +187,21 @@ export default function QuotationPendingPage() {
     }
     return list;
   }, [inquiries, statusFilter, deadlineRange, keyword]);
+
+  // 服务端分页时表格只装当页；总数用服务端给的筛选后全集条数
+  const displayRows = serverEnabled ? (serverData?.items ?? []) : filteredInquiries;
+  const displayTotal = serverEnabled ? (serverData?.total ?? 0) : filteredInquiries.length;
+  const hasFilters = Boolean(statusFilter || deadlineRange || keyword.trim());
+  // 空态文案分两种：一条可见状态的询价都没有（空），与"有数据但筛没了"（无匹配）
+  const emptyNode = (
+    <Empty
+      description={
+        displayTotal === 0 && !hasFilters
+          ? t('quotation.pending.empty')
+          : t('quotation.pending.noMatch')
+      }
+    />
+  );
 
   /** 表格列 */
   const columns: ColumnsType<Inquiry> = [
@@ -191,7 +250,7 @@ export default function QuotationPendingPage() {
       key: 'invited',
       width: 110,
       align: 'center',
-      render: (_, record) => calcStat(record, getQuotationsByInquiry(record.id)).invited,
+      render: (_, record) => calcStat(record, rowQuotations(record)).invited,
     },
     {
       title: t('quotation.pending.submittedCount'),
@@ -199,7 +258,7 @@ export default function QuotationPendingPage() {
       width: 100,
       align: 'center',
       render: (_, record) => {
-        const stat = calcStat(record, getQuotationsByInquiry(record.id));
+        const stat = calcStat(record, rowQuotations(record));
         return (
           <Text style={{ color: 'var(--color-success)', fontWeight: 600 }}>{stat.submitted}</Text>
         );
@@ -211,7 +270,7 @@ export default function QuotationPendingPage() {
       width: 90,
       align: 'center',
       render: (_, record) => {
-        const stat = calcStat(record, getQuotationsByInquiry(record.id));
+        const stat = calcStat(record, rowQuotations(record));
         return <Text style={{ color: 'var(--color-warning)' }}>{stat.draft}</Text>;
       },
     },
@@ -221,7 +280,7 @@ export default function QuotationPendingPage() {
       width: 100,
       align: 'center',
       render: (_, record) => {
-        const stat = calcStat(record, getQuotationsByInquiry(record.id));
+        const stat = calcStat(record, rowQuotations(record));
         return <Text style={{ color: 'var(--color-text-tertiary)' }}>{stat.unquoted}</Text>;
       },
     },
@@ -231,7 +290,7 @@ export default function QuotationPendingPage() {
       width: 90,
       align: 'center',
       render: (_, record) => {
-        const stat = calcStat(record, getQuotationsByInquiry(record.id));
+        const stat = calcStat(record, rowQuotations(record));
         return (
           <Text
             style={{
@@ -248,7 +307,7 @@ export default function QuotationPendingPage() {
       key: 'progress',
       width: 160,
       render: (_, record) => {
-        const stat = calcStat(record, getQuotationsByInquiry(record.id));
+        const stat = calcStat(record, rowQuotations(record));
         return (
           <Progress
             percent={stat.progress}
@@ -321,12 +380,14 @@ export default function QuotationPendingPage() {
             value={statusFilter}
             style={{ width: 160 }}
             options={statusFilterOptions}
-            onChange={setStatusFilter}
+            onChange={(v) => applyFilter(() => setStatusFilter(v))}
             placeholder={t('inquiry.list.filterStatus')}
           />
           <RangePicker
             value={deadlineRange}
-            onChange={(dates) => setDeadlineRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
+            onChange={(dates) =>
+              applyFilter(() => setDeadlineRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null))
+            }
             placeholder={[t('quotation.pending.deadlineStart'), t('quotation.pending.deadlineEnd')]}
           />
           <Input.Search
@@ -334,31 +395,30 @@ export default function QuotationPendingPage() {
             style={{ width: 240 }}
             placeholder={t('quotation.pending.searchPlaceholder')}
             allowClear
-            onChange={(e) => setKeyword(e.target.value)}
+            onChange={(e) => applyFilter(() => setKeyword(e.target.value))}
           />
           <Text type="secondary" style={{ marginLeft: 'auto' }}>
-            {t('common.total', { count: filteredInquiries.length })}
+            {t('common.total', { count: displayTotal })}
           </Text>
         </Space>
 
         {isMobile ? (
           <List
-            dataSource={filteredInquiries}
+            dataSource={displayRows}
+            loading={serverEnabled && serverFetching}
             locale={{
-              emptyText:
-                inquiries.filter((i) => VISIBLE_STATUSES.includes(i.status)).length === 0 ? (
-                  <Empty description={t('quotation.pending.empty')} />
-                ) : (
-                  <Empty description={t('quotation.pending.noMatch')} />
-                ),
+              emptyText: emptyNode,
             }}
             pagination={{
-              pageSize: 10,
+              pageSize: serverPageSize,
               simple: true,
+              current: serverPage,
+              total: displayTotal,
+              onChange: (p) => setServerPage(p),
               showTotal: (total) => t('common.total', { count: total }),
             }}
             renderItem={(record) => {
-              const stat = calcStat(record, getQuotationsByInquiry(record.id));
+              const stat = calcStat(record, rowQuotations(record));
               const remaining = getRemainingTime(record.deadline);
               const unquotedSuppliers = getUnquotedSuppliers(record);
               return (
@@ -475,21 +535,24 @@ export default function QuotationPendingPage() {
             rowKey="id"
             size="small"
             columns={columns}
-            dataSource={filteredInquiries}
+            dataSource={displayRows}
+            loading={serverEnabled && serverFetching}
             pagination={{
-              pageSize: 10,
+              pageSize: serverPageSize,
+              current: serverPage,
+              total: displayTotal,
               showSizeChanger: true,
+              onChange: (p, ps) => {
+                setServerPage(p);
+                if (ps && ps !== serverPageSize) {
+                  setServerPageSize(ps);
+                  setServerPage(1);
+                }
+              },
               showTotal: (total) => t('common.total', { count: total }),
             }}
             scroll={{ x: 'max-content' }}
-            locale={{
-              emptyText:
-                inquiries.filter((i) => VISIBLE_STATUSES.includes(i.status)).length === 0 ? (
-                  <Empty description={t('quotation.pending.empty')} />
-                ) : (
-                  <Empty description={t('quotation.pending.noMatch')} />
-                ),
-            }}
+            locale={{ emptyText: emptyNode }}
           />
         )}
       </Card>

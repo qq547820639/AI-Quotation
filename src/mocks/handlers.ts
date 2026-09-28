@@ -260,6 +260,15 @@ export const handlers = [
     if (categoryFilter) {
       list = list.filter((i) => i.items.some((item) => item.category.includes(categoryFilter)));
     }
+    // R109：截止日区间（日粒度闭区间），与真后端 deadlineFrom/deadlineTo 同形
+    const deadlineFrom = url.searchParams.get('deadlineFrom');
+    const deadlineTo = url.searchParams.get('deadlineTo');
+    if (deadlineFrom) {
+      list = list.filter((i) => (i.deadline ?? '').slice(0, 10) >= deadlineFrom);
+    }
+    if (deadlineTo) {
+      list = list.filter((i) => (i.deadline ?? '').slice(0, 10) <= deadlineTo);
+    }
 
     // 排序（仅支持 createdAt/updatedAt 的 asc/desc）
     if (sort) {

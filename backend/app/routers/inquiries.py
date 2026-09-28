@@ -268,6 +268,8 @@ def list_inquiries(
     subject: Optional[str] = Query(default=None),
     creator: Optional[str] = Query(default=None),
     category: Optional[str] = Query(default=None),
+    deadlineFrom: Optional[str] = Query(default=None),
+    deadlineTo: Optional[str] = Query(default=None),
 ):
     """询价列表（P2-12 Task 17 服务端分页/筛选/搜索/排序）
 
@@ -276,6 +278,9 @@ def list_inquiries(
     - keyword 匹配 code/subject/owner_name；status 为逗号分隔的状态列表；
       dateFrom/dateTo 过滤 created_at（YYYY-MM-DD）；sort 如 "updatedAt:desc"。
     - R108 新增 code/subject/creator/category 四个**各自独立**的筛子，以及 sort=itemsCount。
+    - R109 新增 deadlineFrom/deadlineTo（日粒度闭区间，与 created_at 那两个同口径），供待报价页把
+      "截止日区间"搬上服务端。同一轮把 `keyword` 的适用面写明：它匹配 code/subject/owner_name 三者，
+      比待报价页原来的"编号或主题"子串**更宽**（多命中负责人）——这是刻意接受的口径变化，不是漏筛。
       为什么不是把 keyword 拆细就行：列表页的筛选表单是 AND 语义
       （`src/pages/inquiry/list/index.tsx` 的 filteredInquiries），而 keyword 是 OR 语义且
       前端原来只把 code 或 subject 之一塞进去——服务端分页成为默认路径后，
@@ -330,6 +335,13 @@ def list_inquiries(
                 )
             )
         )
+    # R109：截止时间范围（同样是日粒度闭区间）。待报价页原来在整份数组上按
+    # `startOf('day') … endOf('day')` 过滤 deadline，搬上服务端后必须给同口径的界，
+    # 否则那个页面上的"截止日区间"筛子会在分页路径上静默失效。
+    if deadlineFrom:
+        query = query.filter(func.substr(Inquiry.deadline, 1, 10) >= deadlineFrom)
+    if deadlineTo:
+        query = query.filter(func.substr(Inquiry.deadline, 1, 10) <= deadlineTo)
 
     # 排序（白名单 + 方向）
     # R108 顺手修一条潜伏的 500：旧写法 `order_col = _SORT_FIELDS.get(key) if sort else updated_at`

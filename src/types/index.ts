@@ -636,6 +636,9 @@ export interface InquiryListParams {
   creator?: string;
   /** 商品品类子串：命中该询价任一明细行即算 */
   category?: string;
+  /** R109：截止时间的日粒度闭区间（含首末两日） */
+  deadlineFrom?: string;
+  deadlineTo?: string;
 }
 
 /** 询价列表服务端分页响应（P2-12 Task 17） */
