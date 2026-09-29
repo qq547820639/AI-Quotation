@@ -35,9 +35,16 @@ from ..schemas import (
     DeliveryRecordSchema, DeliverySummarySchema,
     PaginatedInquiriesSchema, ExportRequest, QuotationSnapshotSchema,
     InquiryItemSchema, InquiryFilterSet, InquiryCountsRequest, InquiryCountsSchema,
+    PaginatedLogsSchema,
 )
 from ..auth import get_current_user, require_permission, resolve_permissions
-from ..serializers import inquiry_to_schema, quotation_to_schema, gen_id, now_str
+from ..serializers import (
+    inquiry_to_schema,
+    inquiry_log_to_schema,
+    quotation_to_schema,
+    gen_id,
+    now_str,
+)
 from ..policy import require_inquiry_access, require_inquiry_edit, filter_visible_inquiries, set_create_ownership
 from ..state_machine import (
     assert_inquiry_transition, S_PENDING_SEND, S_INQUIRING, S_CANCELLED, S_COMPLETED,
@@ -256,6 +263,21 @@ _SORT_EXPRS = {
 # 设上限是为了让"一格一档"不会被误用成几百次全表扫描。
 _MAX_COUNT_ITEMS = 32
 
+# 日志分页的排序白名单（R112）：页面只有"操作时间"一列可排，
+# 不认识的键退回默认列而不是 500（同 R108 修过的那条潜伏 500）。
+_LOG_SORT_FIELDS = {"time": InquiryLog.time}
+
+
+def _contains(col, needle: str):
+    """子串匹配，但把用户输入里的 LIKE 通配符当**字面量**。
+
+    R112 记账：此前六处筛子直接 `col.like(f"%{x}%")`，`%`/`_` 会被当通配符——
+    实测 `keyword=%` 命中全集（子代理复算读数：35/35），而前端与 MSW 桩都是
+    `.toLowerCase().includes(x)` 的字面语义，三条路径在这里并不同形。
+    """
+    esc = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return col.like(f"%{esc}%", escape="\\")
+
 
 def _apply_inquiry_filters(query, f: InquiryFilterSet):
     """把一组筛子加到询价查询上——列表与批量计数**共用这一个函数**（R111）。
@@ -265,11 +287,11 @@ def _apply_inquiry_filters(query, f: InquiryFilterSet):
     """
     # 关键词搜索（code / subject / owner_name）
     if f.keyword:
-        kw = f"%{f.keyword.strip()}%"
+        kw = f.keyword.strip()
         query = query.filter(or_(
-            Inquiry.code.like(kw),
-            Inquiry.subject.like(kw),
-            Inquiry.owner_name.like(kw),
+            _contains(Inquiry.code, kw),
+            _contains(Inquiry.subject, kw),
+            _contains(Inquiry.owner_name, kw),
         ))
     # 状态筛选
     if f.status:
@@ -285,17 +307,17 @@ def _apply_inquiry_filters(query, f: InquiryFilterSet):
         query = query.filter(func.substr(Inquiry.created_at, 1, 10) <= f.dateTo)
     # R108：列表页筛选表单的四个独立筛子（AND 语义），全量与分页两条分支都生效
     if f.code:
-        query = query.filter(Inquiry.code.like(f"%{f.code.strip()}%"))
+        query = query.filter(_contains(Inquiry.code, f.code.strip()))
     if f.subject:
-        query = query.filter(Inquiry.subject.like(f"%{f.subject.strip()}%"))
+        query = query.filter(_contains(Inquiry.subject, f.subject.strip()))
     if f.creator:
-        query = query.filter(Inquiry.created_by_name.like(f"%{f.creator.strip()}%"))
+        query = query.filter(_contains(Inquiry.created_by_name, f.creator.strip()))
     if f.category:
         query = query.filter(
             exists().where(
                 and_(
                     InquiryItem.inquiry_id == Inquiry.id,
-                    InquiryItem.category.like(f"%{f.category.strip()}%"),
+                    _contains(InquiryItem.category, f.category.strip()),
                 )
             )
         )
@@ -457,6 +479,65 @@ def inquiry_counts(
         query = _apply_inquiry_filters(query, item.filters)
         counts[item.label] = query.count()
     return InquiryCountsSchema(counts=counts)
+
+
+@router.get("/logs", response_model=PaginatedLogsSchema)
+def list_logs(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=10, ge=1, le=200),
+    operator: Optional[str] = Query(default=None),
+    type: Optional[str] = Query(default=None, alias="type"),
+    keyword: Optional[str] = Query(default=None),
+    timeFrom: Optional[str] = Query(default=None),
+    timeTo: Optional[str] = Query(default=None),
+    sort: Optional[str] = Query(default=None),
+):
+    """操作日志按**日志行**分页（R112）
+
+    存在理由：日志页 `src/pages/log/index.tsx` 原来把整份询价数组拉下来
+    （每条带全部 logs）再 `flatMap` 排序过滤——一页 10 行要付全集的价，
+    它是开放项 8 里最重的一个消费者。
+
+    - 可见性与询价列表同源：`filter_visible_inquiries` 加在 join 到 Inquiry 的查询上，
+      所以"看不见的询价单，它的日志也读不到"，不需要另写一份策略。
+    - 筛子与页面原实现逐条对齐：operator/content 子串（大小写不敏感）、
+      type 精确等值、timeFrom/timeTo 日粒度闭区间（含首末两日）。
+    - 口径差一处（记为限度，不改页面语义也不假装对齐）：页面带区间时会用
+      `dayjs(time).isValid()` 把空/畸形时间戳整条丢掉，而日粒度 substr 比较
+      对空串天然为假 ⇒ 两边都不带区间时畸形行两档都保留，带区间时两档都排除。
+    - 排序白名单 `time`（默认 desc），次排序键固定为 `InquiryLog.id`：
+      同一秒多条日志在翻页边界上不得重复或漏行。
+    """
+    query = db.query(InquiryLog).join(Inquiry, InquiryLog.inquiry_id == Inquiry.id)
+    query = filter_visible_inquiries(query, user)
+
+    if operator:
+        query = query.filter(_contains(func.lower(InquiryLog.operator), operator.strip().lower()))
+    if keyword:
+        query = query.filter(_contains(func.lower(InquiryLog.content), keyword.strip().lower()))
+    if type:
+        query = query.filter(InquiryLog.type == type.strip())
+    if timeFrom:
+        query = query.filter(func.substr(InquiryLog.time, 1, 10) >= timeFrom)
+    if timeTo:
+        query = query.filter(func.substr(InquiryLog.time, 1, 10) <= timeTo)
+
+    sort_key = sort.split(":")[0] if sort else ""
+    expr = _LOG_SORT_FIELDS.get(sort_key) or InquiryLog.time
+    direction = sort.split(":", 1)[1] if sort and ":" in sort else "desc"
+    col = expr.asc() if direction == "asc" else expr.desc()
+    query = query.order_by(col, InquiryLog.id)
+
+    total = query.count()
+    rows = query.offset((page - 1) * pageSize).limit(pageSize).all()
+    return PaginatedLogsSchema(
+        items=[inquiry_log_to_schema(r) for r in rows],
+        total=total,
+        page=page,
+        pageSize=pageSize,
+    )
 
 
 @router.get("/{inquiry_id}/quotations", response_model=list[QuotationSchema])

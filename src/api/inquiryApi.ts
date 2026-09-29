@@ -7,6 +7,8 @@ import type {
   InquiryListParams,
   InquiryCountSpec,
   InquiryCountsResponse,
+  LogListParams,
+  PaginatedLogs,
   PaginatedInquiries,
   QuotationSnapshot,
   ExportRequest,
@@ -25,6 +27,12 @@ export const inquiryApi = {
    */
   counts: (items: InquiryCountSpec[]) =>
     client.post<InquiryCountsResponse>('/inquiries/counts', { items }).then((r) => r.data.counts),
+  /**
+   * R112：操作日志按日志行分页（`GET /api/inquiries/logs`）。
+   * 日志页原来拉整份询价数组再 flatMap，一页 10 行付全集的价。
+   */
+  logs: (params: LogListParams) =>
+    client.get<PaginatedLogs>('/inquiries/logs', { params }).then((r) => r.data),
   /** P2-12 Task 17：服务端生成 PDF/Excel 导出，返回文件流并触发下载 */
   export: async (id: string, body: ExportRequest): Promise<void> => {
     const resp = await client.post(`/inquiries/${id}/export`, body, { responseType: 'blob' });

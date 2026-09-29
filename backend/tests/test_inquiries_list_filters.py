@@ -299,3 +299,44 @@ def test_keyword_branch_still_works(client, buyer_headers, cleanup_units):
     assert ids == ["inq-2"]
     # 片段同样命中（LIKE 子串语义没被动过）
     assert "inq-2" in _full(client, buyer_headers, keyword="20260801002")
+
+
+# ============ 12. R112：LIKE 通配符按字面量命中（四把子串筛子共用 _contains） ============
+
+def test_like_wildcards_match_literally_across_the_four_substring_filters(
+    client, buyer_headers, cleanup_units
+):
+    """`%` / `_` 在 code / subject / creator / category / keyword 上都必须是普通字符。
+
+    这五把筛子都走 `backend/app/routers/inquiries.py:271-279 _contains()`
+    （R112 之前是 `col.like(f"%{输入}%")`，`%`＝任意串、`_`＝任意单字符）。
+    口径的来源不是"我觉得应该字面"：`src/pages/inquiry/list/index.tsx` 的客户端筛子
+    与 `src/mocks/handlers.ts` 的桩都用 `.includes()`，两条路径一直是字面语义，
+    服务端比它们宽就是缺陷——所以这条断言钉的是"服务端==前端==桩"。
+    """
+    m = f"{UNITS}T12"
+    pct = _insert_inquiry(f"{m}-pct", code=f"INQ{m}50%OFF", subject=f"{m} 普通主题",
+                          created_by_name=f"{m} 张三丰")
+    und = _insert_inquiry(f"{m}-und", code=f"INQ{m}PLAIN", subject=f"{m} 键 x_y 主题",
+                          created_by_name=f"{m} 李四光", categories=("合金材料",))
+    plain = _insert_inquiry(f"{m}-plain", code=f"INQ{m}OTHER", subject=f"{m} 像 xay 的主题",
+                            created_by_name=f"{m} 王五")
+    # 基础盘：三行都在（否则下面的"只剩一行"可能是空集上的恒真）
+    assert set(_full(client, buyer_headers, code=f"INQ{m}")) == {pct, und, plain}
+
+    # code：`50%` 只命中字面含它的那行；旧写法里 `%` 会当任意串吃掉别的行
+    assert _full(client, buyer_headers, code="50%") == [pct]
+    assert _full(client, buyer_headers, code="%") == [pct]
+    # subject：`x_y` 不得命中 "xay"
+    assert _full(client, buyer_headers, subject="x_y") == [und]
+    assert _full(client, buyer_headers, subject="xay") == [plain]   # 字面 xay 命中第三行
+    # creator / category 同一把尺
+    assert _full(client, buyer_headers, creator="李四光") == [und]
+    assert _full(client, buyer_headers, category="合%") == []        # 没有哪一行的品类含字面 "合%"
+    # `_` 当"任意单字符"时 "合_材" 会命中品类 "合金材料"；转义后必须只剩字面量，即空集
+    assert _full(client, buyer_headers, category="合_材") == []
+    assert _full(client, buyer_headers, category="金%") == []        # 同理：字面 "金%" 不存在
+    assert _full(client, buyer_headers, category="合金材料") == [und]
+    # keyword 是 OR(code,subject,owner_name) 三支，每支都得转义：
+    # `%` 只该命中 code 里带字面 % 的那行（owner_name 全是 UNITS 标记，不含 %）
+    assert _full(client, buyer_headers, keyword="50%") == [pct]

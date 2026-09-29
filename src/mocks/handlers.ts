@@ -355,6 +355,51 @@ export const handlers = [
     return HttpResponse.json({ counts });
   }),
 
+  /**
+   * R112：操作日志按日志行分页，镜像真后端 `GET /api/inquiries/logs`。
+   * 必须注册在 `/inquiries/:id` **之前**——MSW 按注册顺序匹配，`:id` 会把
+   * `logs` 当成一个询价单 id 吃掉（桩与实现的这条顺序差一处，演示模式就会读成 404）。
+   */
+  http.get(`${baseUrl}/inquiries/logs`, ({ request }) => {
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get('page') ?? '1') || 1;
+    const pageSize = Number(url.searchParams.get('pageSize') ?? '10') || 10;
+    const operator = url.searchParams.get('operator');
+    const type = url.searchParams.get('type');
+    const keyword = url.searchParams.get('keyword');
+    const timeFrom = url.searchParams.get('timeFrom');
+    const timeTo = url.searchParams.get('timeTo');
+    const sort = url.searchParams.get('sort');
+
+    let rows = inquiries.flatMap((i) => i.logs);
+    if (operator) {
+      const kw = operator.trim().toLowerCase();
+      rows = rows.filter((l) => l.operator.toLowerCase().includes(kw));
+    }
+    if (keyword) {
+      const kw = keyword.trim().toLowerCase();
+      rows = rows.filter((l) => l.content.toLowerCase().includes(kw));
+    }
+    if (type) rows = rows.filter((l) => l.type === type.trim());
+    if (timeFrom) rows = rows.filter((l) => (l.time ?? '').slice(0, 10) >= timeFrom);
+    if (timeTo) rows = rows.filter((l) => (l.time ?? '').slice(0, 10) <= timeTo);
+
+    // 排序：白名单只有 time，默认 desc；次排序固定 id asc，与实现的 order_by(time, id) 同形
+    const asc = sort === 'time:asc';
+    rows = [...rows].sort((a, b) => {
+      if (a.time !== b.time) return (a.time < b.time ? -1 : 1) * (asc ? 1 : -1);
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+    const total = rows.length;
+    return HttpResponse.json({
+      items: rows.slice((page - 1) * pageSize, page * pageSize),
+      total,
+      page,
+      pageSize,
+    });
+  }),
+
   http.get(`${baseUrl}/inquiries/:id`, ({ params }) => {
     const inquiry = inquiries.find((i) => i.id === params.id);
     if (!inquiry) return new HttpResponse(null, { status: 404 });

@@ -675,6 +675,35 @@ export interface PaginatedInquiries {
   pageSize: number;
 }
 
+/**
+ * R112：操作日志的服务端分页入参。
+ * 与 `InquiryFilterSet` 不是一套键：那一份筛的是**询价单**，这一份筛的是**日志行**
+ * （operator/type/keyword/timeFrom/timeTo），两者语义不同层，共用会互相污染。
+ */
+export interface LogListParams {
+  page?: number;
+  pageSize?: number;
+  /** 操作人子串（大小写不敏感） */
+  operator?: string;
+  /** 日志类型精确等值 */
+  type?: string;
+  /** 操作内容子串（大小写不敏感） */
+  keyword?: string;
+  /** 操作时间的日粒度闭区间 YYYY-MM-DD（含首末两日） */
+  timeFrom?: string;
+  timeTo?: string;
+  /** 排序，如 "time:desc" */
+  sort?: string;
+}
+
+/** R112：日志分页响应（items 是日志行，不是询价单） */
+export interface PaginatedLogs {
+  items: InquiryLog[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 /** 用户级表格偏好请求/响应（P2-12 Task 17，与 useTablePreferences 结构对齐） */
 export interface TablePreferencesPayload {
   pageKey: string;

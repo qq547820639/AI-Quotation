@@ -478,6 +478,19 @@ class InquiryCountsSchema(BaseModel):
     counts: Dict[str, int]
 
 
+class PaginatedLogsSchema(BaseModel):
+    """操作日志的服务端分页响应（R112）
+
+    与 `PaginatedInquiriesSchema` 的区别是这份按**日志行**分页，不是按询价单分页：
+    日志页原来把整份询价数组（每条带全部 logs）拉下来再 flatMap，
+    一页 10 行要付全集的价。
+    """
+    items: List[InquiryLogSchema]
+    total: int
+    page: int
+    pageSize: int
+
+
 class PaginatedQuotationsSchema(BaseModel):
     """报价列表服务端分页响应（P2 Task 22：分页结构与其他列表统一）"""
     items: List[QuotationSchema]
