@@ -5,3 +5,6 @@ package-lock.json
 vite.config.js
 vite.config.d.ts
 .trae
+# 生成物：msw 的 worker 脚本（重排会改掉上游产物）与 pytest 缓存目录的 README
+public/mockServiceWorker.js
+.pytest_cache

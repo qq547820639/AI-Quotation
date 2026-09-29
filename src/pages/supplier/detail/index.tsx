@@ -5,23 +5,9 @@
 import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import {
-  Button,
-  Card,
-  Descriptions,
-  Empty,
-  Result,
-  Space,
-  Table,
-  Tag,
-  Typography,
-} from 'antd';
+import { Button, Card, Descriptions, Empty, Result, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import {
-  ArrowLeftOutlined,
-  CheckCircleOutlined,
-  StopOutlined,
-} from '@ant-design/icons';
+import { ArrowLeftOutlined, CheckCircleOutlined, StopOutlined } from '@ant-design/icons';
 import PageHeader from '@/components/PageHeader';
 import {
   CooperationStatusTag,
@@ -32,14 +18,9 @@ import {
 import { useSupplierStore } from '@/store/useSupplierStore';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
-import {
-  CooperationStatus,
-  QuotationStatus,
-  type Inquiry,
-  type Quotation,
-} from '@/types';
+import { CooperationStatus, QuotationStatus, type Inquiry, type Quotation } from '@/types';
 import { formatCurrency, formatDate, formatDateTime, formatPercent } from '@/utils/format';
-import { confirmAction, notifySuccess } from '@/utils/confirm';
+import { confirmAction, notifyError, notifySuccess } from '@/utils/confirm';
 
 const { Text } = Typography;
 
@@ -100,13 +81,20 @@ export default function SupplierDetailPage() {
         : t('supplier.list.confirmDisable', { name: supplier.name }),
       okText: isDisabled ? t('supplier.list.enable') : t('supplier.list.disable'),
       danger: !isDisabled,
-      onOk: () => {
-        toggleSupplierStatus(supplier.id);
-        notifySuccess(
-          isDisabled
-            ? t('supplier.list.enableSuccess', { name: supplier.name })
-            : t('supplier.list.disableSuccess', { name: supplier.name }),
-        );
+      onOk: async () => {
+        // 同 R32：停用/启用是 async 写操作，不 await 就弹成功，
+        // 版本冲突或被并发挤掉时用户看到的是「已启用/已停用」而实际没生效。
+        // 供应商列表页的同一个开关早就是 await + 分支的写法，这里是漏网点。
+        const result = await toggleSupplierStatus(supplier.id);
+        if (result.success) {
+          notifySuccess(
+            isDisabled
+              ? t('supplier.list.enableSuccess', { name: supplier.name })
+              : t('supplier.list.disableSuccess', { name: supplier.name }),
+          );
+        } else if (result.reason !== 'pending') {
+          notifyError(result.error?.message ?? t('common.operateFailed'));
+        }
       },
     });
   };
@@ -218,11 +206,7 @@ export default function SupplierDetailPage() {
       key: 'action',
       width: 100,
       render: (_, record) => (
-        <Button
-          type="link"
-          size="small"
-          onClick={() => navigate(`/inquiry/detail/${record.id}`)}
-        >
+        <Button type="link" size="small" onClick={() => navigate(`/inquiry/detail/${record.id}`)}>
           {t('supplier.list.viewDetail')}
         </Button>
       ),
@@ -253,10 +237,18 @@ export default function SupplierDetailPage() {
       {/* 基本信息 */}
       <Card title={t('supplier.detail.basicInfo')} style={cardStyle}>
         <Descriptions column={3} bordered size="small">
-          <Descriptions.Item label={t('supplier.detail.supplierNumber')}>{supplier.code}</Descriptions.Item>
-          <Descriptions.Item label={t('supplier.detail.supplierName')}>{supplier.name}</Descriptions.Item>
-          <Descriptions.Item label={t('supplier.detail.belongRegion')}>{supplier.region}</Descriptions.Item>
-          <Descriptions.Item label={t('supplier.detail.contact')}>{supplier.contact}</Descriptions.Item>
+          <Descriptions.Item label={t('supplier.detail.supplierNumber')}>
+            {supplier.code}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('supplier.detail.supplierName')}>
+            {supplier.name}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('supplier.detail.belongRegion')}>
+            {supplier.region}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('supplier.detail.contact')}>
+            {supplier.contact}
+          </Descriptions.Item>
           <Descriptions.Item label={t('supplier.detail.phone')}>{supplier.phone}</Descriptions.Item>
           <Descriptions.Item label={t('supplier.detail.email')}>{supplier.email}</Descriptions.Item>
           <Descriptions.Item label={t('supplier.detail.mainCategory')} span={3}>

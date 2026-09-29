@@ -27,6 +27,7 @@ import { useInquiryStore } from '@/store/useInquiryStore';
 import { useUIStore } from '@/store/useUIStore';
 import { NotificationType, type Notification } from '@/types';
 import { formatDateTime } from '@/utils/format';
+import { notifyError } from '@/utils/confirm';
 
 const { Text } = Typography;
 
@@ -66,6 +67,21 @@ export default function NotificationPage() {
   const preferences = useNotificationStore((s) => s.preferences);
   const updatePreferences = useNotificationStore((s) => s.updatePreferences);
 
+  /**
+   * 偏好写入（R43）。store 只在成功分支落库，所以界面不会说谎（R37 已实测）；
+   * 沉默本身才是缺陷：拨了开关没有任何反应，用户无从知道服务端拒了。
+   */
+  const savePreferences = async (
+    payload: Parameters<typeof updatePreferences>[0],
+  ): Promise<void> => {
+    const result = await updatePreferences(payload);
+    if (!result.success) {
+      // 服务端有原因就报原因，没有（或只有空串）才退回通用文案：
+      // 用 `??` 会让 message: '' 把提示渲染成空气泡。
+      notifyError(result.error?.message?.trim() || t('common.operateFailed'));
+    }
+  };
+
   const [readFilter, setReadFilter] = useState<ReadFilter>('all');
   const [typeFilter, setTypeFilter] = useState<NotificationType | 'ALL'>('ALL');
 
@@ -78,9 +94,9 @@ export default function NotificationPage() {
   }, [notifications, readFilter, typeFilter]);
 
   const handleClick = (n: Notification) => {
-    markRead(n.id);
+    void markRead(n.id);
     if (getNotificationLinkStatus(n) === 'ok' && n.inquiryId) {
-      navigate(`/inquiry/detail/${n.inquiryId}`);
+      void navigate(`/inquiry/detail/${n.inquiryId}`);
     }
   };
 
@@ -137,7 +153,7 @@ export default function NotificationPage() {
               <Switch
                 checked={preferences[key] as boolean}
                 onChange={(checked) => {
-                  updatePreferences({ ...preferences, [key]: checked });
+                  void savePreferences({ ...preferences, [key]: checked });
                 }}
               />
             </Space>
@@ -155,7 +171,7 @@ export default function NotificationPage() {
               value={preferences.deadlineReminderHours}
               onChange={(v) => {
                 if (v != null) {
-                  updatePreferences({ ...preferences, deadlineReminderHours: v });
+                  void savePreferences({ ...preferences, deadlineReminderHours: v });
                 }
               }}
             />
@@ -234,7 +250,7 @@ export default function NotificationPage() {
                           key="read"
                           onClick={(e) => {
                             e.stopPropagation();
-                            markRead(n.id);
+                            void markRead(n.id);
                           }}
                         >
                           {t('notification.markRead')}

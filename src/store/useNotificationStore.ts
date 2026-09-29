@@ -21,6 +21,14 @@ import { queryClient, QUERY_KEYS } from '@/lib/queryClient';
 import { ok, fail, type WriteResult } from './writeResult';
 
 const STORAGE_KEY = 'notifications';
+/**
+ * R62 步骤①另一半：偏好的本机缓存。
+ * 目的不是加速，而是让"服务端还没答话"时 store 的初值仍是**上次真实拿到的偏好**——
+ * 否则下一次把权威收到偏好侧后，离线/首启动会把"用户关过"读成"没关"（全 true 默认值）。
+ */
+const PREFS_CACHE_KEY = 'user_notification_prefs';
+/** R62：一次性迁移标记（成功搬完才置真；搬失败保持假，下次仍会重试） */
+const MIGRATION_FLAG = 'notify_pref_migrated_v1';
 /** 去重窗口：同 inquiryId + type 10 分钟内不重复 */
 const DEDUP_WINDOW_MS = 10 * 60 * 1000;
 /** 最多保留通知条数 */
@@ -33,6 +41,20 @@ const TYPE_TO_SETTING_KEY: Partial<Record<NotificationType, string>> = {
   [NotificationType.DEADLINE_APPROACHING]: 'timeoutAlert',
   [NotificationType.APPROVAL]: 'approval',
 };
+
+/**
+ * 通知类型 → 每用户偏好字段（R62）。
+ * 这张表存在的理由是**两侧名字不同源**：设置侧叫 `timeoutAlert`/`approval`，
+ * 偏好侧（服务端 `user_notification_preferences` 的真列）叫 `deadlineReminder`/`approvalResult`。
+ * 用名字对名字会静默错配两类，所以按语义逐条写死，并由用例分别钉住。
+ */
+const TYPE_TO_PREF_KEY: Partial<Record<NotificationType, keyof UserNotificationPreferencesSchema>> =
+  {
+    [NotificationType.INQUIRY_SENT]: 'inquirySent',
+    [NotificationType.QUOTATION_SUBMITTED]: 'quotationSubmitted',
+    [NotificationType.DEADLINE_APPROACHING]: 'deadlineReminder',
+    [NotificationType.APPROVAL]: 'approvalResult',
+  };
 
 export interface NotificationPayload {
   inquiryId?: string;
@@ -49,6 +71,15 @@ interface NotificationState {
   unreadCount: number;
   /** P1-8 Task 12：用户级通知偏好 */
   preferences: UserNotificationPreferencesSchema;
+  /** R62 前置：`preferences` 是否真从服务端取回来过。没有这层旗标，
+   *  任何"合并当前偏好再 PUT"的写路径都会拿前端默认值当基线，把服务端整份刷成默认。 */
+  preferencesLoaded: boolean;
+  /** R62：设置页通知卡的写穿入口；未加载成功时**拒绝**而不是拿默认值合并 */
+  mergePreferences: (patch: Partial<UserNotificationPreferencesSchema>) => Promise<WriteResult>;
+  /** R62 步骤一：本机旧开关的一次性迁移（只降不升；失败不打标记） */
+  migrateLocalNotificationToggles: (
+    current: UserNotificationPreferencesSchema,
+  ) => Promise<WriteResult>;
   /** W7.4：从 API 加载（失败时降级到 localStorage） */
   loadFromApi: () => Promise<void>;
   addNotification: (payload: NotificationPayload) => Promise<WriteResult>;
@@ -73,7 +104,8 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   // P1-10 Task 15：生产模式不预置本地兜底数据，仅演示模式允许（真实与 mock 隔离）
   notifications: MOCK_FALLBACK_ENABLED ? loadJSON<Notification[]>(STORAGE_KEY, []) : [],
   unreadCount: 0,
-  preferences: DEFAULT_PREFERENCES,
+  preferences: loadJSON<UserNotificationPreferencesSchema>(PREFS_CACHE_KEY, DEFAULT_PREFERENCES),
+  preferencesLoaded: false,
 
   // W7.4 + P1-10 Task 15：从 API 加载，合并本地独有通知；生产模式失败不静默回退
   loadFromApi: async () => {
@@ -114,10 +146,65 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   loadPreferences: async () => {
     try {
       const prefs = await notificationApi.getPreferences();
-      set({ preferences: prefs });
+      set({ preferences: prefs, preferencesLoaded: true });
+      const cached = saveJSON(PREFS_CACHE_KEY, prefs);
+      if (!cached.success) {
+        // R41 家族：localStorage 在隐私模式/配额满时真的会失败。缓存写不上不影响本次正确性，
+        // 但不能静默——下一次"分状态权威"的回退分支就指望这份缓存当基线，写失败要能被看见。
+        console.warn(
+          `[notify] 偏好缓存写入失败，离线回退基线未更新：${cached.error ?? '未知原因'}`,
+        );
+      }
+      // R62 步骤①（只改这一件事）：`preferencesLoaded` 的含义是"可以只认偏好侧"，
+      // 而本机已关的位还没搬成功时它并不成立 ⇒ 迁移没确认完成就把旗标收回假。
+      // 注意：这一步**不**改变抑制行为（并集仍在），所以现有用例不该因此变动。
+      // 先落这一行、单独跑测，再谈"不挪 set""加缓存"，避免一次改两件事。
+      // R62 步骤一：先搬家，再拆旧房子。
+      // 设置页那张卡在 fda48eb 之前只把开关写进 localStorage，服务端对应位仍是 true；
+      // 若此刻就收回并集（只认偏好侧），这些用户已关的抑制会无声消失——又是一次"主张与凭据脱钩"。
+      // 因此：只降不升（把本地显式 false 推到服务端），成功才打一次性标记，失败不打标记、下次再试。
+      const migrated = await get().migrateLocalNotificationToggles(prefs);
+      if (!migrated.success) set({ preferencesLoaded: false });
     } catch {
-      // 忽略：保留默认值
+      // 保留默认值，但**不再静默**：旗标留假，写穿路径据此拒绝保存（R62 前置）。
+      set({ preferencesLoaded: false });
     }
+  },
+
+  /**
+   * R62 步骤一：把"只存在于本机"的关闭动作一次性搬到每用户偏好。
+   * 三条边界：只 true→false（绝不把服务端的 false 翻回 true，那会覆盖别的设备的真实关闭）；
+   * 成功后才写标记（标记 = `notify_pref_migrated_v1`），失败不写 ⇒ 下次还会试，抑制不会提前解除；
+   * 本地没有任何显式关闭时也要打标记（否则每次都白跑一趟）。
+   */
+  migrateLocalNotificationToggles: async (current) => {
+    const done = loadJSON<boolean>(MIGRATION_FLAG, false);
+    if (done) return ok();
+    const local = useSettingsStore.getState().notifications;
+    const patch: Partial<UserNotificationPreferencesSchema> = {};
+    if (local.inquirySent === false && current.inquirySent) patch.inquirySent = false;
+    if (local.quotationSubmitted === false && current.quotationSubmitted)
+      patch.quotationSubmitted = false;
+    if (local.approval === false && current.approvalResult) patch.approvalResult = false;
+    if (local.timeoutAlert === false && current.deadlineReminder) patch.deadlineReminder = false;
+    if (Object.keys(patch).length) {
+      const r = await get().updatePreferences({ ...current, ...patch });
+      if (!r.success) return r; // 没搬成就不打标记：并集判断继续兜着，不许静默解除抑制
+    }
+    const marked = saveJSON(MIGRATION_FLAG, true);
+    if (!marked.success) {
+      // 标记写不上 ⇒ 搬完这件事不成立：宁可下次再搬一次（幂等，只 true→false），
+      // 也不能静默返回 ok 让调用方以为已迁移完成。
+      console.warn(`[notify] 迁移标记写入失败，下次启动会重试：${marked.error ?? '未知原因'}`);
+      return fail(new Error(String(marked.error ?? '迁移标记写入失败')));
+    }
+    return ok();
+  },
+
+  // R62：设置页那张卡改成写穿到每用户偏好（同一概念此前有两处入口，且服务端那侧从没被真正写过）。
+  mergePreferences: async (patch) => {
+    if (!get().preferencesLoaded) return fail(new Error('尚未取到服务端的偏好，请稍后重试'));
+    return get().updatePreferences({ ...get().preferences, ...patch });
   },
 
   // P1-8 Task 12：更新用户级偏好
@@ -133,13 +220,21 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
   // Task 4：本地持久化 + 服务端同步，失败返回 WriteResult（不静默吞掉）
   addNotification: async (payload) => {
-    // W6：检查设置开关，关闭的类型不写入（SYSTEM 始终写入）
-    const settingKey = TYPE_TO_SETTING_KEY[payload.type];
-    if (settingKey) {
-      const enabled = useSettingsStore.getState().notifications[settingKey];
-      if (enabled === false) return ok();
+    // R62 步骤②：权威按状态分。
+    // 已拿到偏好（且迁移确认完成）⇒ 只认偏好侧；此时设置侧的 false 不再参与判断，
+    //   因为它的值已经写穿/迁移到偏好侧，再读一次就是"同一概念两个权威"（R61 的病根）。
+    // 没拿到偏好（离线、首启动、迁移未完成）⇒ 回退读设置侧，宁可多抑制一层，
+    //   也不能把"用户关过"当成"没关"（步骤①的缓存正是为这条回退准备的基线）。
+    const prefKey = TYPE_TO_PREF_KEY[payload.type];
+    if (get().preferencesLoaded) {
+      if (prefKey && get().preferences[prefKey] === false) return ok();
+    } else {
+      const settingKey = TYPE_TO_SETTING_KEY[payload.type];
+      if (settingKey && useSettingsStore.getState().notifications[settingKey] === false)
+        return ok();
     }
     let created: Notification | null = null;
+    let createdId: string | undefined;
     set((state) => {
       const now = dayjs();
       // 统一事件 ID 幂等去重：同一 eventId 只保留一条（邮件与站内通知共享该 ID）
@@ -165,16 +260,32 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
         time: now.toISOString(),
         read: false,
       };
+      createdId = nid;
       const notifications = [created, ...state.notifications].slice(0, MAX_NOTIFICATIONS);
       saveJSON(STORAGE_KEY, notifications);
       return { notifications, unreadCount: state.unreadCount + 1 };
     });
-    // 同步到 API，保证服务端也有该通知；失败返回其结果（本地已持久化）
+    // 同步到 API，保证服务端也有该通知
     if (created) {
       try {
         await notificationApi.create(created);
         return ok();
       } catch (e) {
+        // R42：服务端没接受这条，就得把它占的未读位一起撤回。留在原地会造出一个
+        // "幽灵行"——loadFromApi 的合并规则（localOnly 原样保留）会把它永久养着，
+        // 而 refreshUnreadCount 又按服务端计数 ⇒ 角标与列表自相矛盾。
+        // 只撤这一条、不整体回滚数组：并发的别条写入不该被这次失败连带丢掉。
+        const id = createdId;
+        set((state) => {
+          const target = state.notifications.find((n) => n.id === id);
+          if (!target) return state;
+          const notifications = state.notifications.filter((n) => n.id !== id);
+          saveJSON(STORAGE_KEY, notifications);
+          return {
+            notifications,
+            unreadCount: target.read ? state.unreadCount : Math.max(0, state.unreadCount - 1),
+          };
+        });
         return fail(e);
       }
     }
@@ -182,6 +293,9 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   },
 
   markRead: async (id) => {
+    // 乐观置已读之前的快照：服务端拒绝时要按它回滚（R40）
+    const prevNotifications = get().notifications;
+    const prevUnread = get().unreadCount;
     set((state) => {
       const notifications = state.notifications.map((n) =>
         n.id === id ? { ...n, read: true } : n,
@@ -199,6 +313,11 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       await notificationApi.markRead(id);
       return ok();
     } catch (e) {
+      // 服务端没接受这次已读 ⇒ 界面不得继续声称"已读"。
+      // 回滚放在被调用方而不是三个调用点：调用方一律丢弃 WriteResult，
+      // 只在调用点补提示等于留两处会忘；放在这里，丢弃结果的调用点也自动不再说谎。
+      set({ notifications: prevNotifications, unreadCount: prevUnread });
+      saveJSON(STORAGE_KEY, prevNotifications);
       return fail(e);
     }
   },

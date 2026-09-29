@@ -1,5 +1,16 @@
-import { test, expect, type Page } from '@playwright/test';
-import { DEMO_PASSWORD } from './helpers';
+import { test, expect, type Locator, type Page } from '@playwright/test';
+import {
+  login,
+  DATA_ROW,
+  tap,
+  tick,
+  createAndSendInquiry,
+  submitQuoteViaPortal,
+  chooseSupplierOnCompare,
+  SUPPLIER_A,
+  expectWriteLanded,
+} from './helpers';
+import { apiActivity } from './api-activity';
 
 /**
  * E2E：异常场景（Task 11）
@@ -12,31 +23,112 @@ import { DEMO_PASSWORD } from './helpers';
  */
 
 const ADMIN = '周大海'; // u-6 管理员，具备全部权限（含 SUPPLIER_DISABLE / INQUIRY_CANCEL）
+const LEAD = '王志强'; // u-2 采购主管，具备 INQUIRY_CONFIRM（定标）
 const PURCHASER = '李明辉'; // u-1 采购人员，无 INQUIRY_APPROVE / SETTINGS_MANAGE
 const SUP1 = '上海恒远工业设备有限公司'; // sup-1，初始 COOPERATING
 
-/** 登录（选中用户 + 任意密码） */
-async function login(page: Page, name: string, password = DEMO_PASSWORD) {
-  await page.goto('/login');
-  await page.locator('.ant-select-selector').click();
-  await page.locator('.ant-select-item-option').filter({ hasText: name }).click();
-  await page.locator('input[type="password"]').fill(password);
-  await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+/**
+ * 从此刻起把页面上出现过的每一条 antd message 记进 `window.__toasts`（按 类型|文案 去重）。
+ * 为什么必须这样取样：message 3 秒自动消失，而 `expect(locator).toHaveCount(0)` 这类
+ * **会重试的负向断言**会在提示淡出之后才判 —— 变异档（不 await 就弹成功）实测就是这样被判成绿的
+ * （`toHaveCount(0)` 先看到 1、等 3 秒元素消失后看到 0）。负向断言只能在"出现的那一刻"判，
+ * 所以这里连续记录，事后对记录做断言。
+ */
+async function recordToasts(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __toasts: string[] };
+    w.__toasts = [];
+    const seen = new Set<string>();
+    const scan = (root: ParentNode | Element) => {
+      root.querySelectorAll?.('.ant-message-custom-content').forEach((el) => {
+        const cls = el.className || '';
+        const type = cls.includes('error')
+          ? 'error'
+          : cls.includes('success')
+            ? 'success'
+            : cls.includes('warning')
+              ? 'warning'
+              : 'other';
+        const key = `${type}|${(el.textContent || '').trim()}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          w.__toasts.push(key);
+        }
+      });
+    };
+    new MutationObserver((ms) =>
+      ms.forEach((m) =>
+        m.addedNodes.forEach((n) => {
+          if (n.nodeType === 1) scan(n as Element);
+        }),
+      ),
+    ).observe(document.body, { childList: true, subtree: true });
+    scan(document.body);
+  });
 }
+
+async function readToasts(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __toasts: string[] }).__toasts ?? []);
+}
+
+/** 定标按钮的可访问名（中英文都可能在 CI 语言下出现） */
+const CONFIRM_AWARD = /确认定标|Confirm Award/;
 
 /** 点击确认弹窗的确定按钮（antd Modal.confirm） */
 async function confirmOk(page: Page) {
-  await page.locator('.ant-modal-confirm-btns .ant-btn-primary').click();
+  // .first()：前一个确认弹窗退场动画未结束时同时存在两个按钮，
+  // press()/click() 的严格模式会因命中 2 个元素而报错
+  await tap(
+    page
+      .locator(
+        '.ant-modal-confirm-btns .ant-btn-primary, .ant-modal-confirm-btns .ant-btn-dangerous',
+      )
+      .first(),
+  );
 }
 
-/** 打开供应商列表并点击第一行（sup-1）的停用/启用按钮 */
+/**
+ * 打开供应商列表并对 sup-1 触发停用/启用。
+ * 桌面表格里它是行内按钮；窄屏卡片把行操作收进了「更多 ▾」下拉
+ * （antd Dropdown 默认 hover 触发），两条都是产品真实的用户路径。
+ */
+/** 对某一行触发「停用/启用」：桌面行内按钮与窄屏「更多 ▾」两条路径都覆盖 */
+async function toggleSupplierRow(page: Page, row: Locator) {
+  const inline = row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ });
+  if (await inline.count()) {
+    await tap(inline);
+    return;
+  }
+  const more = row.getByRole('button', { name: /更\s*多|More/ });
+  await expect(more).toBeVisible({ timeout: 5000 });
+  // 触屏上下文里 rc-trigger 把 hover 触发改成了点击展开（实测 hover 不出弹层、click 出）
+  await more.click();
+  const item = page
+    .locator('.ant-dropdown')
+    .getByRole('menuitem', { name: /停\s*用|禁\s*用|Disable/ });
+  await expect(item).toBeVisible({ timeout: 5000 });
+  await item.click();
+}
+
 async function openSupplierPageAndToggle(page: Page) {
-  await page.goto('/supplier');
-  await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
-  const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
+  // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染，改在这里＝六个调用点一起受益。
+  // 这些调用点的 page.route 都只对 PUT 动手（注入的正是那次写），GET 一律 route.continue()；
+  // 且列表读 /api/suppliers 不匹配 glob `**/api/suppliers/*`（要求 suppliers 后还有一段），没人拦它。
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+      { timeout: 20000 },
+    ),
+    page.goto('/supplier'),
+  ]).catch((e: Error) => {
+    // R92：runner 上这类红原文只有"等满 20 s"，判不了是"请求没发出去"还是"发出去没回"，
+    // 也判不了当时是不是已经被 401 踢回 /login。带上市面账本再抛，不改超时预算。
+    throw new Error(`${e.message}｜${apiActivity(page, /\/api\/suppliers/)}`);
+  });
+  await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
+  const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
   await expect(row).toBeVisible({ timeout: 5000 });
-  await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
+  await toggleSupplierRow(page, row);
 }
 
 test.describe('异常场景', () => {
@@ -62,13 +154,40 @@ test.describe('异常场景', () => {
     });
 
     await login(page, ADMIN);
-    await openSupplierPageAndToggle(page);
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染。
+    // 上面那条 route 挂的是 PUT（"后端挂起"是这一格的注入点），GET 走 route.continue()；
+    // 且列表读 /api/suppliers 不匹配 glob `**/api/suppliers/*`，等的是真后端那一次。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
+    const row = page.locator(DATA_ROW).filter({ hasText: SUP1 }).first();
+    await expect(row).toBeVisible({ timeout: 5000 });
+    await toggleSupplierRow(page, row);
     await confirmOk(page);
 
-    // 客户端 axios 15s 超时后提示"请求超时"
-    await expect(page.locator('.ant-message')).toContainText(/请求超时|Request timeout/, {
-      timeout: 20000,
+    // 请求被挂起 16s：Chromium 下由 axios 自身的 15s 超时给出"请求超时"（实测）；
+    // WebKit（webkit / mobile-ios 项目）在 15s 之前就先中止了停滞连接，axios 看到的是
+    // 网络错误 → 提示"网络错误，请检查连接"（实测）。两种都是"不悬挂、明确告知用户"，
+    // 因此跨引擎断言"出现错误提示"，并在 Chromium 项目上继续钉住超时这一具体文案。
+    // 两种文案都实测过（chromium 走 axios 15s 超时、webkit 先掐掉停滞连接走网络错误分支），
+    // 分支依据是 project.name 而不是运行期状态，不属于「看不见就跳过」那种弱断言。
+    /* eslint-disable playwright/no-conditional-in-test -- 分支依据是 project.name（构建期就定），不是运行期状态 */
+    const wording =
+      test.info().project.name === 'chromium'
+        ? /请求超时|Request timeout/
+        : /请求超时|网络错误|Request timeout|Network error/i;
+    /* eslint-enable playwright/no-conditional-in-test */
+    await expect(page.locator('.ant-message-error').first()).toContainText(wording, {
+      timeout: 25000,
     });
+    // 失败的停用必须回滚：合作状态标签仍是"合作中"（若乐观更新未回滚会变成"停用"）
+    await expect(row.locator('.ant-tag').filter({ hasText: /合作中|Cooperating/ })).toBeVisible();
+    await expect(row.locator('.ant-tag').filter({ hasText: /^停用$/ })).toHaveCount(0);
   });
 
   test('网络中断：abort 引发网络错误提示', async ({ page }) => {
@@ -95,7 +214,7 @@ test.describe('异常场景', () => {
         await route.fulfill({
           status: 500,
           contentType: 'application/json',
-          body: JSON.stringify({ detail: 'boom' }),
+          body: JSON.stringify({ code: 'internal_error' }),
         });
       } else {
         await route.continue();
@@ -176,6 +295,116 @@ test.describe('异常场景', () => {
     });
   });
 
+  test('报价清单加载失败（500）：不得声称「暂无已提交报价」（R33）', async ({ page }) => {
+    await login(page, LEAD);
+    const { inquiryId } = await createAndSendInquiry(page);
+    await submitQuoteViaPortal(page, inquiryId, 'sup-2', '6000');
+    await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
+
+    // 用 500 而不是 401 注入：401 会走"清会话 + 跳登录"那条既有路径（另有常驻用例钉着），
+    // 根本到不了比价页。500 才是"加载失败但会话仍在"的形状。
+    // 生产形态 MOCK_FALLBACK_ENABLED=false，store 拿不到数据只能留空。
+    // R113：注入点跟着依赖换——本页现在只读 `GET /api/inquiries/{id}`（报价随单一起到），
+    // 再拦 `**/api/quotations` 就是在一个"已不是依赖"的读上判绿，那条 R33 用例等于失效。
+    await page.route(
+      (u) => new URL(u.href).pathname === `/api/inquiries/${inquiryId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'boom' }),
+        });
+      },
+    );
+    await page.goto(`/quotation/compare/${inquiryId}`);
+
+    // 判别面必须用**只有这个修复才会产出**的文案。
+    // 第一版这里判的是 `getByRole('button', {name:/重试/})`，控制档实测照样绿 ——
+    // 因为加载失败会 markOffline，全局离线条上本来就有一个「重试」按钮；
+    // 而随后的缺席断言又是在页面还在转骨架屏时求值的，自然"没有空态"。
+    // 两个坑合起来：正向断言要唯一、缺席断言要在状态落定后判。
+    await expect(page.getByText(/还不能判断|absence of data/, { exact: false })).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(page.locator('body')).not.toContainText(/暂无已提交报价|No submitted quotation/);
+  });
+
+  test('定标接口 500：只报失败，不得伪造「已确认定标」（R32）', async ({ page }) => {
+    await login(page, LEAD);
+
+    const { inquiryId } = await createAndSendInquiry(page);
+    // 单价 100 × 数量 10 = 1000，低于审批阈值 50000 → 不必走审批即可定标
+    await submitQuoteViaPortal(page, inquiryId, 'sup-2', '100');
+    await submitQuoteViaPortal(page, inquiryId, 'sup-5', '110');
+    // R65 续三同形状：先等喂这块视图的那次读落地，再断渲染。
+    // 断言因此测"数据到了却没渲染"（真缺陷），而不是"读＋渲染没挤进 10 s"（环境竞速）。
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
+        { timeout: 20000 },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
+    await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
+    await chooseSupplierOnCompare(page, SUPPLIER_A);
+
+    await page.route('**/api/inquiries/*/confirm', async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'boom' }),
+      });
+    });
+
+    const confirmBtn = page.getByRole('button', { name: CONFIRM_AWARD });
+    await expect(confirmBtn).toBeVisible({ timeout: 10000 });
+
+    // 先装记录器再点：否则"弹过又自动消失"的那一条抓不到（见 recordToasts 说明）
+    await recordToasts(page);
+
+    const confirmRes = page.waitForResponse(
+      (res) => new URL(res.url()).pathname.endsWith('/confirm'),
+      { timeout: 15000 },
+    );
+    await confirmBtn.click();
+    await confirmOk(page);
+    // 效力断言：请求确实发出并被拦成 500（与"根本没发请求"的 R28 形态区分开）
+    expect((await confirmRes).status()).toBe(500);
+
+    // 两条提示都要给足出现时间（旧实现的成功提示是点击瞬间就弹的）
+    await page.waitForTimeout(1200);
+    const toasts = await readToasts(page);
+    // 牙齿：旧实现不 await 写操作结果就弹成功提示，接口 500 时用户看到「已确认定标」
+    expect(
+      toasts.filter((t) => t.startsWith('success|') && /已确认定标|Award confirmed/.test(t)),
+      `定标失败时不得出现成功提示，实际抓到：${JSON.stringify(toasts)}`,
+    ).toEqual([]);
+    // 注：`parseApiError` 把后端 detail 原样当 message，所以失败提示内容是 "boom" 而非通用文案
+    expect(
+      toasts.some((t) => t.startsWith('error|')),
+      `必须给出失败提示，实际抓到：${JSON.stringify(toasts)}`,
+    ).toBe(true);
+
+    // 状态没被改动：重新加载后仍可定标（服务端仍是「报价已完成」）
+    // R65 续三：reload 同形状——监听先挂上再刷新。本用例的 route 只命中 `**/api/inquiries/*/confirm`
+    // （那是被注入 500 的写），详情那次 GET 不被拦；而本页在详情读落地前一直渲染 Spin
+    // （R113 起该谓词是 detail 查询的 pending；服务端那一支不再走 useQuotationFreshness 的补拉），所以按同一判据等它。
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
+        { timeout: 20000 },
+      ),
+      page.reload(),
+    ]);
+    await expect(page.getByRole('button', { name: CONFIRM_AWARD })).toBeVisible({
+      timeout: 15000,
+    });
+  });
+
   test('重复点击：连点提交按钮不会重复提交', async ({ page }) => {
     let putCount = 0;
     await page.route('**/api/suppliers/*', async (route) => {
@@ -189,15 +418,29 @@ test.describe('异常场景', () => {
     });
 
     await login(page, ADMIN);
-    await page.goto('/supplier');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
-    const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
-    await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染。
+    // 上面那条 route 对 PUT 才动手（它才是本用例数 putCount 的对象），GET 走 route.continue()；
+    // 列表读 /api/suppliers 也不匹配 glob `**/api/suppliers/*`，所以等的是真后端那一次。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
+    const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
+    await toggleSupplierRow(page, row);
     await confirmOk(page);
 
     // 请求未完成时再次点击确定，应被 pendingOps 拦截（不发起第二次请求）
     await page
-      .locator('.ant-modal-confirm-btns .ant-btn-primary')
+      .locator(
+        '.ant-modal-confirm-btns .ant-btn-primary, .ant-modal-confirm-btns .ant-btn-dangerous',
+      )
+      // 这条用例测的就是「请求飞行中再点确定不该发出第二次」：按钮此刻被遮罩挡住，
+      // 正常点击会因不可命中而失败——force 是这个场景的构造手段，不是掩盖失败的兜底。
+      // eslint-disable-next-line playwright/no-force-option
       .click({ force: true, timeout: 500 })
       .catch(() => {});
     await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
@@ -205,7 +448,10 @@ test.describe('异常场景', () => {
     expect(putCount).toBe(1);
   });
 
-  test('部分批量操作失败：提示成功/失败条数', async ({ page }) => {
+  test('部分批量操作失败：提示成功/失败条数', async ({ page, isMobile }) => {
+    // 窄屏供应商卡片只给单条操作（无行多选框），批量停用整条工具栏按
+    // selectedRowKeys.length > 0 条件渲染，因此移动端没有可测的批量入口。
+    test.skip(isMobile, '窄屏布局不提供批量选择，本项只在桌面布局可测');
     // sup-1 成功，sup-2 失败（500）
     await page.route('**/api/suppliers/*', async (route) => {
       if (route.request().method() === 'PUT') {
@@ -222,20 +468,26 @@ test.describe('异常场景', () => {
     });
 
     await login(page, ADMIN);
-    await page.goto('/supplier');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers）落地，再断渲染。
+    // 上面那条 route 只吃 PUT（批量停用的写），else 分支是 route.continue()，
+    // 且 glob `**/api/suppliers/*` 要求 suppliers 后还有一段路径，列表读 /api/suppliers 根本不命中它。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
     // 勾选 sup-1 与 sup-2 两行
-    await page
-      .locator('.ant-table-row')
-      .filter({ hasText: SUP1 })
-      .locator('.ant-checkbox-input')
-      .click();
-    await page
-      .locator('.ant-table-row')
-      .filter({ hasText: '苏州联创自动化科技有限公司' })
-      .locator('.ant-checkbox-input')
-      .click();
+    await tick(page.locator(DATA_ROW).filter({ hasText: SUP1 }).locator('.ant-checkbox-input'));
+    await tick(
+      page
+        .locator(DATA_ROW)
+        .filter({ hasText: '苏州联创自动化科技有限公司' })
+        .locator('.ant-checkbox-input'),
+    );
 
     await page.getByRole('button', { name: /批量停用|Batch Disable/ }).click();
     await confirmOk(page);
@@ -259,7 +511,7 @@ test.describe('异常场景', () => {
     // 清空主题（必填）后点击下一步，应出现校验错误
     const subject = page.locator('#subject');
     await subject.fill('');
-    await page.getByRole('button', { name: /下一步|Next/ }).click();
+    await tap(page.getByRole('button', { name: /下一步|Next/ }));
 
     await expect(page.locator('.ant-form-item-explain-error').first()).toContainText(
       /请输入询价主题|Subject/,
@@ -271,29 +523,60 @@ test.describe('异常场景', () => {
 
   test('页面刷新：刷新后仍保持登录态且数据可加载', async ({ page }) => {
     await login(page, ADMIN);
-    await page.goto('/supplier');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    // R65 续三：先等喂这张列表的那次读（GET /api/suppliers，文档挂载时由 src/App.tsx:30 发起）落地，再断渲染。
+    // 本用例没有任何 page.route，这条 GET 不被拦；生产形态 store 首帧是空数组
+    // （src/store/useSupplierStore.ts:97 不预置 mock），所以行只可能由这次读喂出来。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/supplier'),
+    ]);
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
-    await page.reload();
+    // R65 续三：reload 同形状——监听先挂上，再在同一个 Promise.all 里刷新。
+    // 刷新是真文档重载（store 复位为空），那次 GET /api/suppliers 必然重发，不会等一个不存在的响应。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/suppliers/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.reload(),
+    ]);
     // 刷新后未跳回登录，且供应商列表仍可加载
     await expect(page).toHaveURL(/\/supplier/);
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('浏览器返回：从详情返回列表，前一页状态保留', async ({ page }) => {
     await login(page, ADMIN);
-    await page.goto('/inquiry/list');
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    // R65 续三：先等喂这张列表的那次读（GET /api/inquiries，文档挂载时由 src/App.tsx:29 发起）落地，再断渲染。
+    // 本用例没有任何 page.route，这条 GET 不被拦；列表行取的是 store（src/pages/inquiry/list/index.tsx:242
+    // 的服务端分页在无 ?page= 时不启用），所以这一格测的应是"读到了却没渲染"，而不是"读+渲染没挤进 10 s"。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        { timeout: 20000 },
+      ),
+      page.goto('/inquiry/list'),
+    ]);
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
 
     // 进入第一行详情
-    await page.locator('.ant-table-row').first().click();
+    // 详情通过行内「详情」按钮进入（列表行本身不可点击）
+    await page
+      .locator(DATA_ROW)
+      .first()
+      .getByRole('button', { name: /详\s*情|Detail/ })
+      .click();
     await expect(page).toHaveURL(/\/inquiry\/detail\//);
     await expect(page.locator('.ant-descriptions').first()).toBeVisible({ timeout: 10000 });
 
     // 浏览器返回，回到列表页
     await page.goBack();
     await expect(page).toHaveURL(/\/inquiry\/list/);
-    await expect(page.locator('.ant-table-row').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(DATA_ROW).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('保存失败后重试：首次失败提示，重试成功', async ({ page }) => {
@@ -305,7 +588,7 @@ test.describe('异常场景', () => {
           await route.fulfill({
             status: 500,
             contentType: 'application/json',
-            body: JSON.stringify({ detail: 'boom' }),
+            body: JSON.stringify({ code: 'internal_error' }),
           });
         } else {
           await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -325,10 +608,22 @@ test.describe('异常场景', () => {
     });
 
     // 重试成功：再次停用（乐观更新已回滚，按钮仍为"停用"）
-    const row = page.locator('.ant-table-row').filter({ hasText: SUP1 });
-    await row.getByRole('button', { name: /停\s*用|禁\s*用|Disable/ }).click();
-    await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 10000 });
+    const row = page.locator(DATA_ROW).filter({ hasText: SUP1 });
+    // R65 续：这一格之后没有任何持久断言，用瞬时提示当凭据会把"写其实没落地"也读成成功；
+    // 换成等那次 PUT 返回 2xx（同一用例前半格已经在数 putCount 了，两半合起来才是完整凭据）。
+    // R102 把话说准：这条 PUT 的 2xx 是上面那个桩 fulfill 出来的（本仓没有真后端可落），
+    // 所以本格断的是"客户端确实带着同一次写重试了第二次"，不是"后端把状态存下了"；
+    // expectWriteLanded 现在默认拒绝把无网络往返的 2xx 当后端回执，要这么读必须显式声明 via。
+    await expectWriteLanded(
+      page,
+      /\/api\/suppliers\/[^/]+$/,
+      async () => {
+        await toggleSupplierRow(page, row);
+        await confirmOk(page);
+      },
+      'PUT',
+      { via: 'stub' },
+    );
   });
 
   test('不同权限访问同一功能：采购人员访问审批页被拦截', async ({ page }) => {

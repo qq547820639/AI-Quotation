@@ -174,7 +174,8 @@ export default function InquiryDetailPage() {
 
   useEffect(() => {
     if (inquiry?.status === InquiryStatus.INQUIRING) {
-      loadDeliveries();
+      // 内部已自带 try/catch，这里不消费结果是有意为之（投递状态到了一定会回填）
+      void loadDeliveries();
     }
   }, [inquiry?.status, loadDeliveries]);
 
@@ -184,7 +185,7 @@ export default function InquiryDetailPage() {
       try {
         await inquiryApi.resendDelivery(id, supplierId);
         notifySuccess(t('inquiry.detail.resendSuccess'));
-        loadDeliveries();
+        void loadDeliveries();
       } catch {
         notifyError(t('inquiry.detail.resendFailed'));
       }
@@ -236,8 +237,15 @@ export default function InquiryDetailPage() {
       filename: `询价单-${inquiry.code}`,
       hideSelector: '.no-print',
     })
-      .then(() => notifySuccess(i18n.t('inquiry.detail.pdfExportSuccess')))
+      .then((how) =>
+        notifySuccess(
+          i18n.t(
+            how === 'pdf' ? 'inquiry.detail.pdfExportSuccess' : 'inquiry.detail.pdfPrintOpened',
+          ),
+        ),
+      )
       .catch(() => {
+        // 只兜 window.print() 自己抛的意外；jsPDF 失败不走这里（它回退成 print 后 resolve）
         notifyWarning(i18n.t('inquiry.detail.pdfExportFailed'));
       })
       .finally(() => setExporting(false));
@@ -252,7 +260,7 @@ export default function InquiryDetailPage() {
         const copy = copyInquiry(inquiry.id);
         if (copy) {
           notifySuccess(i18n.t('inquiry.detail.copySuccess', { code: copy.code }));
-          navigate(`/inquiry/detail/${copy.id}`);
+          void navigate(`/inquiry/detail/${copy.id}`);
         }
       },
     });
@@ -264,9 +272,15 @@ export default function InquiryDetailPage() {
       content: i18n.t('inquiry.detail.confirmCancelContent', { code: inquiry.code }),
       okText: i18n.t('inquiry.detail.confirmCancelOk'),
       danger: true,
-      onOk: () => {
-        cancelInquiry(inquiry.id);
-        notifySuccess(i18n.t('inquiry.detail.cancelSuccess'));
+      onOk: async () => {
+        // 同 R32：取消写操作可能落空（版本冲突 / 并发刷新挤出本地缓存 / 网络失败），
+        // 未 await 就弹「取消成功」会让用户以为单据已取消。
+        const result = await cancelInquiry(inquiry.id);
+        if (result.success) {
+          notifySuccess(i18n.t('inquiry.detail.cancelSuccess'));
+        } else if (result.reason !== 'pending') {
+          notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+        }
       },
     });
   };
@@ -302,9 +316,10 @@ export default function InquiryDetailPage() {
               notifySuccess(i18n.t('inquiry.detail.sendSuccess', { count: s.sent }));
             }
           } catch {
-            notifySuccess(
-              i18n.t('inquiry.detail.sendSuccess', { count: inquiry.invitedSupplierIds.length }),
-            );
+            // 送达明细这一读失败时**没有**任何按家计数的凭据，
+            // 原来却拿本地 invitedSupplierIds.length 当"已发送 N 家"报成功——
+            // 在最不该说谎的分支上说谎。发送本身确已 ack，所以只降级"明细未确认"。
+            notifyWarning(i18n.t('inquiry.detail.sendUnverified'));
           }
         }
       },
@@ -376,7 +391,7 @@ export default function InquiryDetailPage() {
     });
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (exporting) return;
     setExporting(true);
     try {
@@ -400,7 +415,7 @@ export default function InquiryDetailPage() {
         item.quantity,
         item.targetPrice ?? '',
       ]);
-      exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
+      await exportAOA(i18n.t('inquiry.export.filename', { code: inquiry.code }), header, rows);
       notifySuccess(i18n.t('inquiry.export.success'));
     } catch {
       notifyError(i18n.t('inquiry.export.failed'));
@@ -747,7 +762,7 @@ export default function InquiryDetailPage() {
                   { key: 'pdf', label: t('inquiry.detail.exportPDF'), icon: <FilePdfOutlined /> },
                 ],
                 onClick: ({ key }) => {
-                  if (key === 'excel') handleExport();
+                  if (key === 'excel') void handleExport();
                   else if (key === 'pdf') handleExportPDF();
                 },
               }}

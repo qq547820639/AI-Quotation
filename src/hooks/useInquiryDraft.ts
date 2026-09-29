@@ -28,6 +28,14 @@ export interface PersistedDraft<T = unknown> extends DraftMeta {
   payload: T;
 }
 
+/**
+ * 取失败原因：只喂给 `lastError`，不在这里补 try/catch。
+ * 兜 `String(err)` 是因为 localStorage 抛的不一定是 Error（Safari 隐私模式）。
+ */
+function failureReason(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** hook 返回值 */
 export interface UseInquiryDraftResult {
   status: DraftSaveStatus;
@@ -38,8 +46,8 @@ export interface UseInquiryDraftResult {
   saveNow: (snapshot: unknown, editingId?: string) => boolean;
   /** 冲突时重新加载本地最新草稿（清冲突标记） */
   reload: () => void;
-  /** 冲突时用本地覆盖（清冲突标记并重新保存） */
-  overwrite: (snapshot: unknown, editingId?: string) => void;
+  /** 冲突时用本地覆盖（清冲突标记并重新保存）；返回值即本次持久化是否落地 */
+  overwrite: (snapshot: unknown, editingId?: string) => boolean;
   clearConflict: () => void;
   /** 保存为询价模板 */
   saveAsTemplate: (name: string, template: InquiryTemplate) => boolean;
@@ -76,19 +84,19 @@ export function useInquiryDraft(): UseInquiryDraftResult {
     return () => window.removeEventListener('storage', handler);
   }, []);
 
-  /** 底层持久化：写 localStorage，返回是否成功（用于区分 saved / failed） */
+  /** 底层持久化：写 localStorage，以回执区分 saved / failed（R50：不再靠 try/catch 猜） */
   const persist = useCallback((snapshot: unknown, editingId?: string): boolean => {
     const draft: PersistedDraft = {
       ...buildDraftMeta(clientIdRef.current, editingId),
       payload: snapshot,
     };
-    try {
-      saveJSON(DRAFT_STORAGE_KEY, draft);
-      return true;
-    } catch (err) {
-      setLastError(err instanceof Error ? err.message : String(err));
+    const receipt = saveJSON(DRAFT_STORAGE_KEY, draft);
+    if (!receipt.success) {
+      setLastError(failureReason(receipt.error));
       return false;
     }
+    setLastError(null);
+    return true;
   }, []);
 
   /** 立即保存：内部完成 状态机 流转 */
@@ -110,9 +118,10 @@ export function useInquiryDraft(): UseInquiryDraftResult {
   }, []);
 
   const overwrite = useCallback(
-    (snapshot: unknown, editingId?: string) => {
+    (snapshot: unknown, editingId?: string): boolean => {
       setConflict(false);
-      saveNow(snapshot, editingId);
+      // 回执必须传出去：调用方（create 页的冲突弹窗）正是拿它决定报"已覆盖"还是报失败的
+      return saveNow(snapshot, editingId);
     },
     [saveNow],
   );
@@ -120,13 +129,13 @@ export function useInquiryDraft(): UseInquiryDraftResult {
   const clearConflict = useCallback(() => setConflict(false), []);
 
   const saveAsTemplate = useCallback((name: string, template: InquiryTemplate): boolean => {
-    try {
-      saveJSON(INQUIRY_TEMPLATE_KEY, template);
-      return true;
-    } catch (err) {
-      setLastError(err instanceof Error ? err.message : String(err));
+    const receipt = saveJSON(INQUIRY_TEMPLATE_KEY, template);
+    if (!receipt.success) {
+      setLastError(failureReason(receipt.error));
       return false;
     }
+    setLastError(null);
+    return true;
   }, []);
 
   const loadTemplate = useCallback((): InquiryTemplate | null => {

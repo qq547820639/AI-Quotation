@@ -9,6 +9,13 @@ COPY . .
 RUN VITE_ENABLE_MSW=false VITE_API_BASE_URL=/api npm run build
 
 FROM nginx:alpine
+# 2026-09-28 一手：`nginx:alpine` 当前解析到 alpine 3.24.2，Trivy 报 1 条 HIGH
+# （libexpat 2.8.4-r0，CVE-2026-93990，仓库里已有 2.8.5-r0）。基镜像标签要等上游重新构建
+# 才会带上修复版，构建时点无法控制；这里显式把该包升到仓库现行版，使运行态与
+# `Image scan (Trivy)` 门禁的判据一致。只列这一个包：整包 `apk upgrade` 会把 nginx 本体
+# 换成 alpine 仓库的构建（配置路径/模块不同），风险大于收益。
+# 门禁现在的摘要会点名"下一个该升的包与修复版本"，再命中时按同样一行处理。
+RUN apk upgrade --no-cache libexpat
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

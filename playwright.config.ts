@@ -1,15 +1,46 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// retries 默认 1：上面 workers 那条实测里，8 个首跑抖动正是靠这一次重试兜住的。
+// 但代价是"抖动到底修没修好"这个问题在 retries>0 的跑批里结构上无法回答——红了会再跑一次，
+// 绿了看不出是首跑就绿还是重试才绿。所以留一个环境变量口子（PLAYWRIGHT_RETRIES=0 即归因跑）。
+// 只认非负整数字符串，其余一律退回默认：CI 表达式未命中分支时会传进空串，
+// 而 Number('') === 0 —— 不挡住就等于把默认档悄悄改没了。
+const DEFAULT_RETRIES = 1;
+const rawRetries = process.env.PLAYWRIGHT_RETRIES;
+const retries = rawRetries && /^\d+$/.test(rawRetries) ? Number(rawRetries) : DEFAULT_RETRIES;
+
 export default defineConfig({
   testDir: './e2e',
+  // 起跑前先验"装树 == 锁文件"（见 e2e/global-setup.ts 的理由）：
+  // 依赖漂移会让最后起跑的那个 project 整批红、先跑完的照旧绿，读起来像产品回归。
+  globalSetup: './e2e/global-setup.ts',
   fullyParallel: false, // 串行避免数据冲突
-  retries: 1,
+  // 实测同一台机器、同一份代码、同一 60s 挂钟预算下跑满 5 个项目（180 用例）：
+  //   workers=2 → 9 个用例重试后仍红（18.7 分钟）；workers=1 → 0 红、8 个首跑抖动靠重试兜住（21.2 分钟）。
+  // 后端是单进程 uvicorn + SQLite，两个 worker 并发会把冷启动页面挤出 10s 期望预算，
+  // 换来的只是 2.5 分钟的时间节省 —— 结论是稳定性优先，固定为 1。
+  workers: 1,
+  // 整链路用例（创建→发送→两家门户报价→对比→审批→定标）在各引擎的实测耗时：
+  // chromium 11.7s / firefox 19.3s / webkit 30.3~34.8s。默认 30s 的"测试总预算"
+  // 会把 webkit 上的正常长流程判成超时，因此按实测最慢值放大到 60s。
+  // 这只放宽挂钟预算，不降低任何断言强度。
+  timeout: 60_000,
+  expect: { timeout: 10000 },
+  retries,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:80',
-    trace: 'on-first-retry',
+    // 默认仍是 compose 的 :80（CI 的 docker-e2e 走这条）。留环境变量的口子是因为本机同时挂着
+    // 两套栈：:80 背后是 11:16 的旧镜像、:18090 才是当前树的 build，
+    // 而"URL 稳定"会让人误以为测的是同一份代码（2026-09-27 三格 20 s 超时的真因，
+    // 核验与指纹见 e2e/global-setup.ts）。
+    baseURL: process.env.E2E_BASE_URL || 'http://localhost:80',
+    // 零重试档（归因跑）里 on-first-retry 等于「永不出工件」：没有第二次就不产 trace/video，
+    // 于是 runner 上那 6 格红只能靠日志尾巴判（2026-09-28 R88 实际吃亏点）。
+    // retries===0 时改成 retain-on-failure——失败即留 trace/录像；retries>0 的默认档维持原状，
+    // 避免每轮全量产 trace 把本已满档的产物存储吃光。
+    trace: retries === 0 ? 'retain-on-failure' : 'on-first-retry',
     screenshot: 'only-on-failure',
-    video: 'on-first-retry',
+    video: retries === 0 ? 'retain-on-failure' : 'on-first-retry',
     actionTimeout: 10000,
   },
   // P2-14 Task 19：多浏览器 + 移动设备 E2E 项目

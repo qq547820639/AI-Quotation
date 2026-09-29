@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 操作日志页面（Task 17）
  * - 聚合所有询价单的 logs，按时间倒序展示
@@ -5,6 +6,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import {
   Button,
   Card,
@@ -26,12 +28,10 @@ import dayjs from 'dayjs';
 import type { TagProps } from 'antd';
 
 import PageHeader from '@/components/PageHeader';
+import { IS_DEMO_MODE } from '@/config';
+import { inquiryApi } from '@/api/inquiryApi';
 import { useInquiryStore } from '@/store/useInquiryStore';
-import { useUIStore } from '@/store/useUIStore';
-import {
-  LogType,
-  type InquiryLog,
-} from '@/types';
+import { LogType, type InquiryLog, type PaginatedLogs } from '@/types';
 import { formatDateTime } from '@/utils/format';
 
 const { RangePicker } = DatePicker;
@@ -64,26 +64,14 @@ interface FilterForm {
   keyword?: string;
 }
 
-/** 聚合所有询价单日志（按时间倒序），并附加稳定 key */
+/** 聚合所有询价单日志（按时间倒序）——R112 起这条只在演示模式那一支跑 */
 function aggregateLogs(inquiries: ReturnType<typeof useInquiryStore.getState>['inquiries']) {
-  const all = inquiries
-    .flatMap((i) => i.logs)
-    .sort((a, b) => (a.time < b.time ? 1 : -1));
-  // 附加稳定 key：inquiryId+time+index
-  return all.map((log, index) => ({
-    ...log,
-    key: `${log.inquiryId}-${log.time}-${index}`,
-  }));
+  return inquiries.flatMap((i) => i.logs).sort((a, b) => (a.time < b.time ? 1 : -1));
 }
 
 export default function LogPage() {
   const { t } = useTranslation();
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
   const [form] = Form.useForm<FilterForm>();
 
   const logTypeOptions = (Object.keys(LogType) as LogType[]).map((value) => ({
@@ -94,7 +82,40 @@ export default function LogPage() {
   // 已应用的筛选条件（点击查询后生效）
   const [applied, setApplied] = useState<FilterForm>({});
 
-  const allLogs = useMemo(() => aggregateLogs(inquiries), [inquiries]);
+  // R112：这一页原来是开放项 8 里最重的消费者——它要的不是询价单而是日志行，
+  // 却把整份询价数组（每条带全部 logs）拉下来再 flatMap。服务端按日志行分页后，
+  // 一页 10 行只付 10 行的价；筛子（操作人/类型/关键字/时间区间）一并下推。
+  const serverEnabled = !IS_DEMO_MODE;
+  const [serverPage, setServerPage] = useState(1);
+  const [serverPageSize] = useState(10);
+
+  const timeFrom = applied.timeRange ? applied.timeRange[0].format('YYYY-MM-DD') : undefined;
+  const timeTo = applied.timeRange ? applied.timeRange[1].format('YYYY-MM-DD') : undefined;
+  const logParams = useMemo(
+    () => ({
+      page: serverPage,
+      pageSize: serverPageSize,
+      operator: applied.operator,
+      type: applied.type ?? undefined,
+      keyword: applied.keyword,
+      timeFrom,
+      timeTo,
+    }),
+    [serverPage, serverPageSize, applied, timeFrom, timeTo],
+  );
+
+  const { data: serverData, isFetching: serverFetching } = useQuery<PaginatedLogs>({
+    queryKey: ['logs', 'page', serverPage, serverPageSize, applied, timeFrom, timeTo],
+    queryFn: () => inquiryApi.logs(logParams),
+    enabled: serverEnabled,
+  });
+
+  // 演示模式那一支继续用整份数组聚合排序；服务端那一支不该再排一次全集（R112）。
+  // 注意这条不改变行集——它改的是"服务端分支还摸不摸无界数组"。
+  const allLogs = useMemo(
+    () => (serverEnabled ? [] : aggregateLogs(inquiries)),
+    [inquiries, serverEnabled],
+  );
 
   const filteredLogs = useMemo(() => {
     return allLogs.filter((log) => {
@@ -131,14 +152,28 @@ export default function LogPage() {
       type: values.type ?? null,
       keyword: values.keyword?.trim() || undefined,
     });
+    // 换筛子必须回第 1 页：否则"停在第 4 页 + 新筛子"会读到一页空白，看着像没数据（同 R109）
+    setServerPage(1);
   };
 
   const handleReset = () => {
     form.resetFields();
     setApplied({});
+    setServerPage(1);
   };
 
-  const columns: ColumnsType<InquiryLog & { key: string }> = [
+  const displayRows = serverEnabled ? (serverData?.items ?? []) : filteredLogs;
+  const displayTotal = serverEnabled ? (serverData?.total ?? 0) : filteredLogs.length;
+  const hasFilters = Boolean(
+    applied.operator || applied.type || applied.keyword || applied.timeRange,
+  );
+  const emptyNode = (
+    <Empty
+      description={displayTotal === 0 && !hasFilters ? t('log.empty') : t('log.noSearchResult')}
+    />
+  );
+
+  const columns: ColumnsType<InquiryLog> = [
     {
       title: t('common.time'),
       dataIndex: 'time',
@@ -239,20 +274,22 @@ export default function LogPage() {
 
       {/* 日志表格 */}
       <Card style={{ borderRadius: 8 }} styles={{ body: { padding: 0 } }}>
-        <Table<InquiryLog & { key: string }>
-          rowKey="key"
+        <Table<InquiryLog>
+          rowKey="id"
           columns={columns}
-          dataSource={filteredLogs}
+          dataSource={displayRows}
+          loading={serverEnabled && serverFetching}
           size="middle"
           scroll={{ x: 'max-content' }}
           pagination={{
-            pageSize: 10,
+            pageSize: serverPageSize,
+            current: serverEnabled ? serverPage : undefined,
+            total: displayTotal,
             showSizeChanger: false,
             showTotal: (total) => t('log.totalRecords', { count: total }),
+            onChange: (p) => setServerPage(p),
           }}
-          locale={{
-            emptyText: <Empty description={allLogs.length ? t('log.noSearchResult') : t('log.empty')} />,
-          }}
+          locale={{ emptyText: emptyNode }}
         />
       </Card>
     </div>

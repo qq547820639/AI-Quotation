@@ -102,7 +102,7 @@ describe('useInquiryStore', () => {
       const existing = makeInquiry({ id: 'inq-old' });
       resetStore([existing]);
       const fresh = makeInquiry({ id: 'inq-new' });
-      useInquiryStore.getState().addInquiry(fresh);
+      void useInquiryStore.getState().addInquiry(fresh);
       const list = useInquiryStore.getState().inquiries;
       expect(list).toHaveLength(2);
       expect(list[0].id).toBe('inq-new');
@@ -114,7 +114,7 @@ describe('useInquiryStore', () => {
     it('更新指定 id 的字段并刷新 updatedAt', () => {
       const inq = makeInquiry();
       resetStore([inq]);
-      useInquiryStore.getState().updateInquiry('inq-test-1', { subject: '新主题' });
+      void useInquiryStore.getState().updateInquiry('inq-test-1', { subject: '新主题' });
       const updated = useInquiryStore.getState().getInquiryById('inq-test-1');
       expect(updated?.subject).toBe('新主题');
       expect(updated?.updatedAt).not.toBe('2026-08-01 10:00:00');
@@ -124,7 +124,7 @@ describe('useInquiryStore', () => {
   describe('deleteInquiry', () => {
     it('从列表移除', () => {
       resetStore([makeInquiry({ id: 'a' }), makeInquiry({ id: 'b' })]);
-      useInquiryStore.getState().deleteInquiry('a');
+      void useInquiryStore.getState().deleteInquiry('a');
       const list = useInquiryStore.getState().inquiries;
       expect(list).toHaveLength(1);
       expect(list[0].id).toBe('b');
@@ -155,11 +155,11 @@ describe('useInquiryStore', () => {
   });
 
   describe('cancelInquiry', () => {
-    it('状态转 CANCELLED + 追加 CANCEL 日志 + 发送 SYSTEM 通知', () => {
+    it('状态转 CANCELLED + 追加 CANCEL 日志 + 发送 SYSTEM 通知', async () => {
       const inq = makeInquiry({ id: 'inq-cancel', status: InquiryStatus.INQUIRING });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().cancelInquiry('inq-cancel');
+      await useInquiryStore.getState().cancelInquiry('inq-cancel');
       const updated = useInquiryStore.getState().getInquiryById('inq-cancel');
       expect(updated?.status).toBe(InquiryStatus.CANCELLED);
       expect(updated?.logs.some((l) => l.type === LogType.CANCEL)).toBe(true);
@@ -167,10 +167,25 @@ describe('useInquiryStore', () => {
         expect.objectContaining({ type: NotificationType.SYSTEM }),
       );
     });
+
+    it('取消被后端拒绝时不得留下"已取消"通知（R53：可重试的失败不写终态旁证）', async () => {
+      // 改前这条必红：通知是在乐观 set() 体内铸的，catch 只回滚 inquiries，
+      // 于是 409/网络失败之后通知中心与本机存储都留着一条"已取消"，且仓里没有删除通知的 API 可撤。
+      const inq = makeInquiry({ id: 'inq-cancel-fail', status: InquiryStatus.INQUIRING });
+      resetStore([inq]);
+      const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
+      vi.mocked(inquiryApi.cancel).mockRejectedValueOnce(new Error('boom'));
+      const r = await useInquiryStore.getState().cancelInquiry('inq-cancel-fail');
+      expect(r.success).toBe(false);
+      expect(useInquiryStore.getState().getInquiryById('inq-cancel-fail')?.status).toBe(
+        InquiryStatus.INQUIRING,
+      );
+      expect(addNotification).not.toHaveBeenCalled();
+    });
   });
 
   describe('sendInquiry', () => {
-    it('状态转 INQUIRING + 追加 SEND_INQUIRY 日志 + 发送 INQUIRY_SENT 通知', () => {
+    it('状态转 INQUIRING + 追加 SEND_INQUIRY 日志 + 发送 INQUIRY_SENT 通知', async () => {
       const inq = makeInquiry({
         id: 'inq-send',
         status: InquiryStatus.PENDING_SEND,
@@ -178,7 +193,7 @@ describe('useInquiryStore', () => {
       });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().sendInquiry('inq-send');
+      await useInquiryStore.getState().sendInquiry('inq-send');
       const updated = useInquiryStore.getState().getInquiryById('inq-send');
       expect(updated?.status).toBe(InquiryStatus.INQUIRING);
       expect(updated?.logs.some((l) => l.type === LogType.SEND_INQUIRY)).toBe(true);
@@ -198,7 +213,7 @@ describe('useInquiryStore', () => {
         status: InquiryStatus.ALL_QUOTED,
       });
       resetStore([inq]);
-      useInquiryStore.getState().selectSupplier('inq-sel', 'item-1', 'sup-1');
+      void useInquiryStore.getState().selectSupplier('inq-sel', 'item-1', 'sup-1');
       const updated = useInquiryStore.getState().getInquiryById('inq-sel');
       expect(updated?.selectedSupplierMap['item-1']).toBe('sup-1');
       expect(updated?.status).toBe(InquiryStatus.PENDING_CONFIRM);
@@ -210,18 +225,18 @@ describe('useInquiryStore', () => {
         status: InquiryStatus.PARTIAL_QUOTED,
       });
       resetStore([inq]);
-      useInquiryStore.getState().selectSupplier('inq-sel2', 'item-1', 'sup-2');
+      void useInquiryStore.getState().selectSupplier('inq-sel2', 'item-1', 'sup-2');
       const updated = useInquiryStore.getState().getInquiryById('inq-sel2');
       expect(updated?.status).toBe(InquiryStatus.PARTIAL_QUOTED);
     });
   });
 
   describe('confirmInquiry', () => {
-    it('状态转 COMPLETED + 追加 CONFIRM_RESULT 日志 + 通知', () => {
+    it('状态转 COMPLETED + 追加 CONFIRM_RESULT 日志 + 通知', async () => {
       const inq = makeInquiry({ id: 'inq-conf', status: InquiryStatus.PENDING_CONFIRM });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().confirmInquiry('inq-conf');
+      await useInquiryStore.getState().confirmInquiry('inq-conf');
       const updated = useInquiryStore.getState().getInquiryById('inq-conf');
       expect(updated?.status).toBe(InquiryStatus.COMPLETED);
       expect(updated?.logs.some((l) => l.type === LogType.CONFIRM_RESULT)).toBe(true);
@@ -230,11 +245,11 @@ describe('useInquiryStore', () => {
   });
 
   describe('submitForApproval', () => {
-    it('状态转 PENDING_APPROVAL + 新增 PENDING 审批节点 + APPROVAL 通知', () => {
+    it('状态转 PENDING_APPROVAL + 新增 PENDING 审批节点 + APPROVAL 通知', async () => {
       const inq = makeInquiry({ id: 'inq-apv', status: InquiryStatus.PENDING_CONFIRM });
       resetStore([inq]);
       const addNotification = vi.spyOn(useNotificationStore.getState(), 'addNotification');
-      useInquiryStore.getState().submitForApproval('inq-apv');
+      await useInquiryStore.getState().submitForApproval('inq-apv');
       const updated = useInquiryStore.getState().getInquiryById('inq-apv');
       expect(updated?.status).toBe(InquiryStatus.PENDING_APPROVAL);
       expect(updated?.approvalNodes).toHaveLength(1);
@@ -251,8 +266,8 @@ describe('useInquiryStore', () => {
       const inq = makeInquiry({ id: 'inq-ok', status: InquiryStatus.PENDING_APPROVAL });
       resetStore([inq]);
       // 先提交审批生成节点
-      useInquiryStore.getState().submitForApproval('inq-ok');
-      useInquiryStore.getState().approveInquiry('inq-ok', '同意');
+      void useInquiryStore.getState().submitForApproval('inq-ok');
+      void useInquiryStore.getState().approveInquiry('inq-ok', '同意');
       const updated = useInquiryStore.getState().getInquiryById('inq-ok');
       expect(updated?.status).toBe(InquiryStatus.PENDING_CONFIRM);
       expect(updated?.approvalNodes.some((n) => n.status === ApprovalNodeStatus.APPROVED)).toBe(
@@ -266,8 +281,8 @@ describe('useInquiryStore', () => {
     it('状态转 RETURNED + 节点转 REJECTED + 追加 REJECT 日志', () => {
       const inq = makeInquiry({ id: 'inq-no', status: InquiryStatus.PENDING_APPROVAL });
       resetStore([inq]);
-      useInquiryStore.getState().submitForApproval('inq-no');
-      useInquiryStore.getState().rejectInquiry('inq-no', '价格过高');
+      void useInquiryStore.getState().submitForApproval('inq-no');
+      void useInquiryStore.getState().rejectInquiry('inq-no', '价格过高');
       const updated = useInquiryStore.getState().getInquiryById('inq-no');
       expect(updated?.status).toBe(InquiryStatus.RETURNED);
       expect(updated?.approvalNodes.some((n) => n.status === ApprovalNodeStatus.REJECTED)).toBe(
@@ -464,5 +479,218 @@ describe('useInquiryStore', () => {
         }),
       );
     });
+  });
+});
+
+/**
+ * 乐观锁版本回同步（回归：写操作丢弃服务端返回体、本地按 +1 猜测 version）
+ * 服务端对每次写都 version += 1；若本地不采纳服务端返回值，
+ * 下一次 updateInquiry 带着过期 version 提交 → 后端 409 → 界面「保存失败重试」。
+ */
+describe('写操作后回同步服务端 version', () => {
+  it('选定供应商后的下一次写入携带服务端最新 version', async () => {
+    let serverVersion = 5;
+    const inq = makeInquiry({ id: 'inq-ver-1', version: 5 });
+    useInquiryStore.setState({ inquiries: [inq], loaded: true });
+    vi.mocked(inquiryApi.update).mockImplementation(async (id, data) => {
+      serverVersion += 1;
+      return { id, ...data, version: serverVersion } as unknown as Inquiry;
+    });
+
+    await useInquiryStore.getState().selectSupplier('inq-ver-1', 'item-1', 'sup-1');
+    expect(useInquiryStore.getState().getInquiryById('inq-ver-1')?.version).toBe(6);
+
+    await useInquiryStore
+      .getState()
+      .updateInquiry('inq-ver-1', { purchaserComments: { 'sup-1': '价格合理' } });
+    expect(inquiryApi.update).toHaveBeenLastCalledWith(
+      'inq-ver-1',
+      expect.objectContaining({ version: 6, purchaserComments: { 'sup-1': '价格合理' } }),
+    );
+    expect(useInquiryStore.getState().getInquiryById('inq-ver-1')?.version).toBe(7);
+  });
+
+  it('状态动作（发送）同样采纳服务端返回的 version', async () => {
+    const inq = makeInquiry({ id: 'inq-ver-2', version: 2, status: InquiryStatus.DRAFT });
+    useInquiryStore.setState({ inquiries: [inq], loaded: true });
+    vi.mocked(inquiryApi.send).mockResolvedValue({
+      id: 'inq-ver-2',
+      status: InquiryStatus.INQUIRING,
+      version: 9,
+    } as unknown as Inquiry);
+
+    await useInquiryStore.getState().sendInquiry('inq-ver-2');
+    const after = useInquiryStore.getState().getInquiryById('inq-ver-2');
+    expect(after?.version).toBe(9);
+  });
+});
+
+/**
+ * R28：向导「创建 → 立即发送」两步之间落地的并发刷新，会把刚建的单从缓存里挤掉。
+ * 现场证据：E2E 一次全量跑里 core-flow「审批驳回后不可定标」的首跑，后端日志有
+ * POST /api/inquiries(200) 却没有随后的 /send，页面停在第 4 步、无报错提示、
+ * 直到 60s 测试预算耗尽 —— 与 sendInquiry 的 `if (!getInquiryById) return notFound()`
+ * 静默短路完全一致（onOk 里 `if (!sent.success) return;` 连提示都没有）。
+ */
+describe('并发刷新与刚创建实体之间的竞态（R28）', () => {
+  it('loadFromApi 覆盖缓存后，sendInquiry 仍要发出请求，并让该单带着服务端状态回到列表', async () => {
+    const draft = makeInquiry({ id: 'inq-race-1', status: InquiryStatus.DRAFT, version: 1 });
+    resetStore([]);
+    vi.mocked(inquiryApi.create).mockResolvedValue(draft);
+    // 读写不原子：list 在 create 之后发出，但返回的是不含这一单的快照
+    vi.mocked(inquiryApi.list).mockResolvedValue([makeInquiry({ id: 'inq-other' })]);
+    vi.mocked(inquiryApi.send).mockResolvedValue({
+      ...draft,
+      status: InquiryStatus.INQUIRING,
+      version: 2,
+    });
+
+    await useInquiryStore.getState().addInquiry(draft);
+    await useInquiryStore.getState().loadFromApi();
+    // 前提：缓存里确实已经没有这一单（否则下面断言的是恒真）
+    expect(useInquiryStore.getState().getInquiryById('inq-race-1')).toBeUndefined();
+
+    const sent = await useInquiryStore.getState().sendInquiry('inq-race-1');
+    expect(sent.success).toBe(true);
+    expect(inquiryApi.send).toHaveBeenCalledWith('inq-race-1');
+    // 服务端返回的实体要能把被挤掉的单放回列表
+    const after = useInquiryStore.getState().getInquiryById('inq-race-1');
+    expect(after?.status).toBe(InquiryStatus.INQUIRING);
+    expect(after?.version).toBe(2);
+  });
+});
+
+/**
+ * R30 残留：`loaded` 此前初值就是 true 且全仓零读者，等于一个没人核对过的假承诺。
+ * 现在它有了读者（报价对比页用它区分「还没拿到列表」和「确实没有这张单」），
+ * 语义必须和 useQuotationStore 的同名标记一致，否则直达/刷新比价页会闪一句
+ * 「未找到该询价单」。
+ */
+describe('询价单列表加载状态（R30 残留）', () => {
+  it('初值是「还没加载过」，不是「已加载且为空」', () => {
+    const initial = useInquiryStore.getInitialState();
+    expect(initial.loaded).toBe(false);
+    expect(initial.loading).toBe(false);
+  });
+
+  it('请求在飞时 loading=true 且 loaded=false；落地后 loading=false、loaded=true', async () => {
+    useInquiryStore.setState({ inquiries: [], loading: false, loaded: false });
+    let release: (v: Inquiry[]) => void = () => {};
+    const gate = new Promise<Inquiry[]>((r) => {
+      release = r;
+    });
+    vi.mocked(inquiryApi.list).mockReturnValueOnce(gate);
+
+    const done = useInquiryStore.getState().loadFromApi();
+    const mid = useInquiryStore.getState();
+    expect(mid.loading).toBe(true);
+    expect(mid.loaded).toBe(false);
+
+    release([makeInquiry({ id: 'inq-load-1' })]);
+    await done;
+    const after = useInquiryStore.getState();
+    expect(after.loading).toBe(false);
+    expect(after.loaded).toBe(true);
+    expect(after.getInquiryById('inq-load-1')).toBeDefined();
+  });
+
+  it('加载失败也要把 loaded 置真，否则页面会被永久钉在骨架屏上', async () => {
+    useInquiryStore.setState({ inquiries: [], loading: false, loaded: false });
+    vi.mocked(inquiryApi.list).mockRejectedValueOnce(new Error('network down'));
+    await useInquiryStore.getState().loadFromApi();
+    const s = useInquiryStore.getState();
+    expect(s.loading).toBe(false);
+    expect(s.loaded).toBe(true);
+  });
+});
+
+/** R33：与报价 store 同判据——加载结束 ≠ 数据可信 */
+describe('询价单清单 loadError（R33）', () => {
+  it('初值为 false；加载成功后清掉上一次的失败', () => {
+    expect(useInquiryStore.getInitialState().loadError).toBe(false);
+  });
+
+  it('加载成功 → loadError=false；加载失败 → loaded=true 且 loadError=true', async () => {
+    useInquiryStore.setState({ inquiries: [], loading: false, loaded: false, loadError: true });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([]);
+    await useInquiryStore.getState().loadFromApi();
+    expect(useInquiryStore.getState().loadError).toBe(false);
+
+    useInquiryStore.setState({ loaded: false, loadError: false });
+    vi.mocked(inquiryApi.list).mockRejectedValueOnce(new Error('boom'));
+    await useInquiryStore.getState().loadFromApi();
+    const s = useInquiryStore.getState();
+    expect(s.loaded).toBe(true);
+    expect(s.loadError).toBe(true);
+  });
+});
+
+/**
+ * R113：整份清单落回本地时的版本合并。
+ * 改前是 `set({ inquiries: data })` 直接替换。各页换成有界读之后，
+ * "本页已经能写"与"启动期那发 list() 还在飞"第一次并存：清单发出→应答之间完成的那次写
+ * 已经把 version 进位，回来的一份更早的快照把本地覆盖回旧版本号，下一次写带着旧版本发出，
+ * 服务端按乐观锁判 409（金链路 e2e 的评语保存格实测红在这里）。
+ */
+describe('询价单清单落回本地的版本合并（R113）', () => {
+  it('本地版本比快照新 ⇒ 保留本地，不被旧快照盖回去', async () => {
+    useInquiryStore.setState({
+      inquiries: [makeInquiry({ id: 'm-1', version: 3, subject: '写回执带回来的主题' })],
+    });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([
+      makeInquiry({ id: 'm-1', version: 2, subject: '快照里的旧主题' }),
+    ]);
+    await useInquiryStore.getState().loadFromApi();
+    const kept = useInquiryStore.getState().getInquiryById('m-1');
+    expect(kept?.version).toBe(3);
+    expect(kept?.subject).toBe('写回执带回来的主题');
+  });
+
+  it('本地版本更旧 ⇒ 服务端说了算（这条钉住"合并"没被写成"永远保本地"）', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'm-1', version: 1 })] });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([makeInquiry({ id: 'm-1', version: 5 })]);
+    await useInquiryStore.getState().loadFromApi();
+    expect(useInquiryStore.getState().getInquiryById('m-1')?.version).toBe(5);
+  });
+
+  it('两边都没有 version ⇒ 服务端赢（与改前的整体替换同形，不是新增语义）', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'm-1', subject: '本地' })] });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([
+      makeInquiry({ id: 'm-1', subject: '服务端' }),
+    ]);
+    await useInquiryStore.getState().loadFromApi();
+    expect(useInquiryStore.getState().getInquiryById('m-1')?.subject).toBe('服务端');
+  });
+
+  it('快照里没有的本地独有行 ⇒ 照样被丢掉（不为了并发给幽灵行开门）', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'ghost', version: 9 })] });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([makeInquiry({ id: 'm-2' })]);
+    await useInquiryStore.getState().loadFromApi();
+    const ids = useInquiryStore.getState().inquiries.map((i) => i.id);
+    expect(ids).toEqual(['m-2']);
+  });
+
+  it('端到端：整份读在飞时完成一次写 ⇒ 下一次写带新版本号，不带快照里的旧版本', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'm-9', version: 1 })] });
+    let release: (v: Inquiry[]) => void = () => {};
+    const gate = new Promise<Inquiry[]>((r) => {
+      release = r;
+    });
+    vi.mocked(inquiryApi.list).mockReturnValueOnce(gate);
+    vi.mocked(inquiryApi.update).mockResolvedValueOnce(makeInquiry({ id: 'm-9', version: 2 }));
+
+    const loading = useInquiryStore.getState().loadFromApi();
+    const wrote = await useInquiryStore.getState().updateInquiry('m-9', { subject: 'S2' });
+    expect(wrote.success).toBe(true);
+    // 快照是写之前发出的那份，版本号还停在 1
+    release([makeInquiry({ id: 'm-9', version: 1, subject: '旧快照' })]);
+    await loading;
+    expect(useInquiryStore.getState().getInquiryById('m-9')?.version).toBe(2);
+
+    // 下一次写带的必须是 2；带 1 出去服务端就是 409
+    vi.mocked(inquiryApi.update).mockResolvedValueOnce(makeInquiry({ id: 'm-9', version: 3 }));
+    await useInquiryStore.getState().updateInquiry('m-9', { subject: 'S3' });
+    const second = vi.mocked(inquiryApi.update).mock.calls.slice(-1)[0];
+    expect((second[1] as { version?: number }).version).toBe(2);
   });
 });

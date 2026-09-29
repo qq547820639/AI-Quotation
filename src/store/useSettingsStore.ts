@@ -34,6 +34,15 @@ function toAppSettings(s: Settings): AppSettings {
       approvalResult: s.notifications.approval ?? true,
     },
     ai: s.ai,
+    // R49→R57 续：这三项都有生产读者（标题 / 新建单据默认币种与默认截止日），
+    // 过去只落 localStorage ⇒ 换设备回到默认，而设置页那句"设置已保存"与真入库的两张卡一模一样。
+    // 零读者的字段（organization / validDays / notifications.todoReminder）**故意不在此列**：
+    // 把它们做进库里，等于把假承诺做实——判据见 scripts/check-settings-inert.mjs。
+    basic: {
+      systemName: s.systemName,
+      currency: s.currency,
+      deadlineLeadDays: s.deadlineLeadDays,
+    },
   };
 }
 
@@ -110,9 +119,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loadFromApi: async () => {
     try {
       const remote = await settingsApi.get();
-      // 仅覆盖 approval / ai 部分，notifications/基本配置保留本地
-      set({ approval: remote.approval, ai: remote.ai });
-      persist({ ...get(), approval: remote.approval, ai: remote.ai });
+      // 服务端是这三项的权威（本机 localStorage 只是镜像），所以整体覆盖本地；
+      // 币种要过一遍枚举：网络那侧进来的是 string，未经白名单就渲染会显示成裸串。
+      const currency = (Object.values(Currency) as string[]).includes(remote.basic.currency)
+        ? (remote.basic.currency as Currency)
+        : DEFAULTS.currency;
+      const next = {
+        approval: remote.approval,
+        ai: remote.ai,
+        systemName: remote.basic.systemName,
+        currency,
+        deadlineLeadDays: remote.basic.deadlineLeadDays,
+      };
+      set(next);
+      persist({ ...get(), ...next });
     } catch {
       /* API 不可用时使用本地设置 */
     }

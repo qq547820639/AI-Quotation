@@ -1,3 +1,4 @@
+import { useVisibleInquiries } from '@/hooks/useVisibleInquiries';
 /**
  * 报价对比页面（Task 12）
  * 路由：/quotation/compare（无 id 展示可对比询价单列表）、/quotation/compare/:inquiryId
@@ -6,11 +7,15 @@
  * 工程治理（Task 18）：本文件聚焦状态与编排，展示逻辑已下沉到同目录子组件：
  * CompareInquiryPicker / CompareInfoCard / CompareScoreRule / CompareBestThree /
  * CompareRiskAlert / CompareControls / CompareAiResult，导出逻辑见 exportCompare.ts。
+ *
+ * R113：服务端形态下这一页不再读两份无界数组（整份询价 + 整份报价），
+ * 改成"可对比清单走服务端分页筛子 hasSubmittedQuotation=1、详情走 GET /inquiries/{id}（其 quotations 已随行）"。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useBlocker, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Button, Card, Empty, Select, Space, Spin, Tag, Typography } from 'antd';
+import { Button, Card, Empty, Result, Select, Space, Spin, Tag, Typography } from 'antd';
 import {
   CheckCircleOutlined,
   DownloadOutlined,
@@ -19,11 +24,20 @@ import {
   SafetyCertificateOutlined,
   TrophyOutlined,
 } from '@ant-design/icons';
-import { ApprovalNodeStatus, InquiryStatus, QuotationStatus } from '@/types';
+import {
+  ApprovalNodeStatus,
+  InquiryStatus,
+  QuotationStatus,
+  type Inquiry,
+  type PaginatedInquiries,
+  type Quotation,
+} from '@/types';
+import { IS_DEMO_MODE } from '@/config';
+import { ERROR_CODES } from '@/api/errors';
+import { inquiryApi } from '@/api/inquiryApi';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useSupplierStore } from '@/store/useSupplierStore';
 import { useQuotationStore } from '@/store/useQuotationStore';
-import { useUIStore } from '@/store/useUIStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import PageHeader from '@/components/PageHeader';
@@ -52,20 +66,31 @@ import CompareRiskAlert from './CompareRiskAlert';
 import CompareControls from './CompareControls';
 import CompareAiResult from './CompareAiResult';
 import { exportCompareWorkbook } from './exportCompare';
+import { useQuotationFreshness } from './useQuotationFreshness';
 
 const { Text } = Typography;
+
+/**
+ * 本页两份服务端查询的公共前缀，写动作成功后整族失效（同 R110 的 APPROVAL_QUERY 手法）。
+ * 拼键时必须展开（`[...COMPARE_QUERY, ...]`）：query-core 的前缀匹配逐元素比，
+ * 第 0 位是数组 vs 字符串会直接判负 ⇒ 整族失效打不中任何东西（R113 实测踩过一次）。
+ */
+const COMPARE_QUERY = ['quotation-compare'] as const;
+/** "可对比清单"的取数上限：这是下拉与卡片列表，不是业务全集 */
+const COMPARE_LIST_SIZE = 50;
 
 export default function QuotationComparePage() {
   const { t } = useTranslation();
   const { inquiryId } = useParams<{ inquiryId?: string }>();
+  // R113：服务端那一支不再走"进页补拉 store 全量报价"（R64/R67 那条不变量由
+  // 下面两个查询的 staleTime:0 承担——每次挂载必取一次新数据，不会因为全局
+  // 30 秒 staleTime 而把"刚提交的报价"读成"暂无已提交报价"）。
+  const serverEnabled = !IS_DEMO_MODE;
+  useQuotationFreshness(inquiryId, !serverEnabled);
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  const currentOrganization = useUIStore((s) => s.currentOrganization);
-  const getVisibleInquiries = useInquiryStore((s) => s.getVisibleInquiries);
-  const inquiries = useMemo(
-    () => getVisibleInquiries(currentOrganization),
-    [getVisibleInquiries, currentOrganization],
-  );
+  const inquiries = useVisibleInquiries();
   const getInquiryById = useInquiryStore((s) => s.getInquiryById);
   const selectSupplier = useInquiryStore((s) => s.selectSupplier);
   const confirmInquiry = useInquiryStore((s) => s.confirmInquiry);
@@ -73,6 +98,13 @@ export default function QuotationComparePage() {
   const submitForApproval = useInquiryStore((s) => s.submitForApproval);
   const suppliers = useSupplierStore((s) => s.suppliers);
   const getQuotationsByInquiry = useQuotationStore((s) => s.getQuotationsByInquiry);
+  // 订阅加载状态本身：`getQuotationsByInquiry` 是稳定引用，只订阅它的话，
+  // 报价列表到货后这个组件不会重渲染，空态会一直挂在屏幕上。
+  const quotationsLoaded = useQuotationStore((s) => s.loaded);
+  const quotationsLoading = useQuotationStore((s) => s.loading);
+  const inquiriesLoaded = useInquiryStore((s) => s.loaded);
+  const inquiriesLoadError = useInquiryStore((s) => s.loadError);
+  const quotationsLoadError = useQuotationStore((s) => s.loadError);
   const approvalConfig = useSettingsStore((s) => s.approval);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canConfirmPerm = hasPermission('INQUIRY_CONFIRM');
@@ -91,16 +123,66 @@ export default function QuotationComparePage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // 可对比询价单（至少有一份已提交报价）
-  const comparableInquiries = useMemo(
-    () =>
-      inquiries.filter((i) =>
-        getQuotationsByInquiry(i.id).some((q) => q.status === QuotationStatus.SUBMITTED),
-      ),
-    [inquiries, getQuotationsByInquiry],
-  );
+  /**
+   * 可对比询价单（至少有一份已提交报价）。
+   * 服务端那一支：`hasSubmittedQuotation=1` 的筛子在库里做 EXISTS，
+   * 只取前 COMPARE_LIST_SIZE 条——这份清单是下拉/卡片列表，不是业务全集，
+   * 超出部分要到询价列表页按筛子找（限度记在登记册 R113 六）。
+   */
+  const {
+    data: pickerData,
+    isPending: pickerPending,
+    isError: pickerError,
+    refetch: refetchPicker,
+  } = useQuery<PaginatedInquiries>({
+    queryKey: [...COMPARE_QUERY, 'picker'],
+    queryFn: () =>
+      inquiryApi.listPage({
+        page: 1,
+        pageSize: COMPARE_LIST_SIZE,
+        hasSubmittedQuotation: '1',
+      }),
+    enabled: serverEnabled,
+    staleTime: 0,
+  });
 
-  const inquiry = inquiryId ? getInquiryById(inquiryId) : undefined;
+  const comparableInquiries = useMemo<Inquiry[]>(() => {
+    if (serverEnabled) return pickerData?.items ?? [];
+    return inquiries.filter((i) =>
+      getQuotationsByInquiry(i.id).some((q) => q.status === QuotationStatus.SUBMITTED),
+    );
+  }, [serverEnabled, pickerData, inquiries, getQuotationsByInquiry]);
+
+  /**
+   * 详情：一条询价单自带的 quotations/items/approvalNodes 就够本页用，
+   * 所以服务端那一支只要一发 `GET /inquiries/{id}`，不再从整份数组里挑。
+   */
+  const {
+    data: serverInquiry,
+    isPending: detailPending,
+    isError: detailError,
+    error: detailErr,
+    refetch: refetchDetail,
+  } = useQuery<Inquiry>({
+    queryKey: [...COMPARE_QUERY, 'inquiry', inquiryId],
+    queryFn: () => inquiryApi.get(inquiryId as string),
+    enabled: serverEnabled && !!inquiryId,
+    retry: false, // 404 就是"这条单子不存在"，重试只会把"未找到"延迟 两次往返才呈现
+    staleTime: 0,
+  });
+
+  // 404 与"这次同步失败"必须分开（R33 那条不变量在换数据源之后还得成立）。
+  // 认的是 `ApiError`：响应拦截器把 axios 错误统一换成了它（src/api/errors.ts:147-154），
+  // 上面已经不再有 `.response`——按 `error.response.status` 判会永远判不出 404，
+  // 于是"这条单子不存在"被报成"加载失败"。
+  const detailNotFound =
+    serverEnabled &&
+    !!inquiryId &&
+    detailError &&
+    ((detailErr as { status?: number } | null)?.status === 404 ||
+      (detailErr as { code?: string } | null)?.code === ERROR_CODES.NOT_FOUND);
+
+  const inquiry = serverEnabled ? serverInquiry : inquiryId ? getInquiryById(inquiryId) : undefined;
 
   // 切换询价单时重置评语草稿、保存状态与抽屉。
   // 用 ref 记录已处理的询价单 id，仅在真正切换时重置，避免每次评语保存触发的
@@ -121,10 +203,22 @@ export default function QuotationComparePage() {
     }
   }, [inquiry]);
 
+  // 行内报价：服务端那一支用这条单自带的 quotations（`inquiry_to_schema` 已带），
+  // 演示那一支继续查 store（与 R109 的 rowQuotations 同形）
+  const rowQuotations = (inq: Inquiry): Quotation[] =>
+    serverEnabled ? inq.quotations : getQuotationsByInquiry(inq.id);
+
   const data = useMemo(() => {
     if (!inquiry) return null;
-    return prepareCompareData(inquiry, suppliers, getQuotationsByInquiry(inquiry.id));
-  }, [inquiry, suppliers, getQuotationsByInquiry]);
+    return prepareCompareData(inquiry, suppliers, rowQuotations(inquiry));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inquiry, suppliers, serverEnabled, getQuotationsByInquiry]);
+
+  /** 写动作落地后重取本页两份查询：服务端那一支不再读 store 的乐观结果 */
+  const refreshCompare = useCallback(() => {
+    if (!serverEnabled) return;
+    void queryClient.invalidateQueries({ queryKey: COMPARE_QUERY });
+  }, [serverEnabled, queryClient]);
 
   const visibleRows = useMemo(() => {
     if (!data) return [];
@@ -152,9 +246,10 @@ export default function QuotationComparePage() {
       const result = await updateInquiry(inquiry.id, {
         purchaserComments: { ...inquiry.purchaserComments, [supplierId]: val },
       });
+      if (result.success) refreshCompare();
       return result.success;
     },
-    [inquiry, updateInquiry],
+    [inquiry, updateInquiry, refreshCompare],
   );
 
   const handleStatusChange = useCallback((supplierId: string, status: SaveStatus) => {
@@ -203,12 +298,13 @@ export default function QuotationComparePage() {
       if (!inquiry) return;
       const result = await selectSupplier(inquiry.id, itemId, supplierId);
       if (result.success) {
+        refreshCompare();
         notifySuccess(i18n.t('quotation.compare.selectedSupplierSuccess'));
       } else if (result.reason !== 'pending') {
         notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
       }
     },
-    [inquiry, selectSupplier],
+    [inquiry, selectSupplier, refreshCompare],
   );
 
   const handleOpenDrawer = useCallback((supplierId: string) => {
@@ -228,9 +324,16 @@ export default function QuotationComparePage() {
       content: i18n.t('quotation.compare.confirmResultContent'),
       okText: i18n.t('quotation.compare.confirmResult'),
       cancelText: i18n.t('common.cancel'),
-      onOk: () => {
-        confirmInquiry(inquiry.id);
-        notifySuccess(i18n.t('quotation.compare.confirmResultSuccess'));
+      onOk: async () => {
+        // 必须等结果再报成功：定标写操作会因版本冲突（409）、并发刷新把这条挤出本地缓存
+        // （not_found）或网络失败而落空，未 await 就弹「定标成功」是在替用户伪造结果（R32）。
+        const result = await confirmInquiry(inquiry.id);
+        if (result.success) {
+          refreshCompare();
+          notifySuccess(i18n.t('quotation.compare.confirmResultSuccess'));
+        } else if (result.reason !== 'pending') {
+          notifyError(result.error?.message ?? i18n.t('common.operateFailed'));
+        }
       },
     });
   };
@@ -249,6 +352,7 @@ export default function QuotationComparePage() {
       onOk: async () => {
         const result = await submitForApproval(inquiry.id);
         if (result.success) {
+          refreshCompare();
           notifySuccess(i18n.t('quotation.compare.submitApprovalSuccess'));
         } else if (result.reason === 'pending') {
           return;
@@ -272,11 +376,11 @@ export default function QuotationComparePage() {
   };
 
   // ===== 导出 Excel =====
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!inquiry || !data || exporting) return;
     setExporting(true);
     try {
-      exportCompareWorkbook(t, inquiry, data, visibleRows);
+      await exportCompareWorkbook(t, inquiry, data, visibleRows);
       notifySuccess(i18n.t('quotation.compare.exportSuccess'));
     } catch {
       notifyError(i18n.t('quotation.compare.exportFailed'));
@@ -284,6 +388,61 @@ export default function QuotationComparePage() {
       setExporting(false);
     }
   };
+
+  // ===== 两份列表尚未落地 =====
+  // 本页三种"没有"的呈现（可对比卡片列表为空 / 未找到该询价单 / 暂无已提交报价）全部
+  // 派生自 inquiries 与 quotations。直达或刷新比价页时这两个列表还在飞，此刻的"空"
+  // 只说明"还没拿到"，不说明"没有"（R30 及其残留）。
+  const listPending = serverEnabled ? pickerPending : !inquiriesLoaded || !quotationsLoaded;
+  const waiting = serverEnabled
+    ? listPending || (!!inquiryId && detailPending)
+    : listPending || quotationsLoading;
+  if (waiting) {
+    return (
+      <div style={{ textAlign: 'center', padding: 80 }}>
+        <Spin />
+      </div>
+    );
+  }
+
+  // ===== 加载结束了，但这一次是失败的 =====
+  // loaded 只说明"请求回来了"，不说明"数据可信"。生产形态下失败时列表就是空的，
+  // 若继续往下走会渲染成「暂无已提交报价」/「未找到该询价单」——把一次同步失败
+  // 说成了业务事实（R33）。这里给可恢复的失败态与重试入口。
+  const loadFailed = serverEnabled
+    ? pickerError || (detailError && !detailNotFound)
+    : !!inquiriesLoadError || !!quotationsLoadError;
+  if (loadFailed) {
+    return (
+      <div>
+        <PageHeader title={t('quotation.compare.title')} />
+        <Card>
+          <Result
+            status="warning"
+            title={t('common.loadFailed')}
+            subTitle={t('common.loadFailedHint')}
+            extra={
+              <Button
+                type="primary"
+                onClick={() => {
+                  if (serverEnabled) {
+                    // 服务端那一支：重试只重取本页那两发，不去碰启动期的无界拉取
+                    void refetchPicker();
+                    void refetchDetail();
+                    return;
+                  }
+                  void useInquiryStore.getState().loadFromApi();
+                  void useQuotationStore.getState().loadFromApi();
+                }}
+              >
+                {t('common.retry')}
+              </Button>
+            }
+          />
+        </Card>
+      </div>
+    );
+  }
 
   // ===== 无 inquiryId：可对比询价单卡片列表 =====
   if (!inquiryId) {
@@ -295,7 +454,9 @@ export default function QuotationComparePage() {
         />
         <CompareInquiryPicker
           inquiries={comparableInquiries}
-          getQuotationsByInquiry={getQuotationsByInquiry}
+          getQuotationsByInquiry={(id) =>
+            comparableInquiries.find((i) => i.id === id)?.quotations ?? []
+          }
           onOpen={handleOpenCompare}
         />
       </div>
@@ -327,6 +488,7 @@ export default function QuotationComparePage() {
   }
 
   // ===== 无已提交报价 =====
+  // 「报价列表还没落地」已在上方统一挡过（R30），这里的空态因此是真的没有提交。
   if (data.submittedRows.length === 0) {
     return (
       <div>
@@ -403,7 +565,7 @@ export default function QuotationComparePage() {
         showSearch
         optionFilterProp="label"
       />
-      <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
+      <Button icon={<DownloadOutlined />} onClick={() => void handleExport()} loading={exporting}>
         {t('quotation.compare.exportExcel')}
       </Button>
       <Button icon={<FileSearchOutlined />} onClick={() => setSummaryOpen(true)}>

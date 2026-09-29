@@ -48,7 +48,7 @@ from .redis_client import get_store
 from .seed import ensure_app_settings, init_db, demo_seeding_allowed
 from .scanner import check_scanner_available
 from .storage import get_storage, S3Storage
-from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics, portal, ai, users, events, tasks
+from .routers import auth, inquiries, suppliers, materials, quotations, notifications, settings, metrics, portal, ai, users, events, tasks, dashboard
 
 # 慢请求阈值（毫秒）：超时记录结构化 slow_request 日志（Task 22 慢查询观测）
 SLOW_REQUEST_THRESHOLD_MS = float(os.environ.get("SLOW_REQUEST_THRESHOLD_MS", "1000"))
@@ -326,6 +326,7 @@ app.include_router(ai.router, prefix=API_PREFIX)  # AI 服务（P1-9 Task 14）
 app.include_router(users.router, prefix=API_PREFIX)  # 用户级表格偏好（P2-12 Task 17）
 app.include_router(events.router, prefix=API_PREFIX)  # SSE 实时事件（P2-12 Task 17）
 app.include_router(tasks.router, prefix=API_PREFIX)  # 持久化任务队列管理（P1 可靠性）
+app.include_router(dashboard.router, prefix=API_PREFIX)  # 行动工作台聚合计数（R107）
 
 
 @app.get("/")

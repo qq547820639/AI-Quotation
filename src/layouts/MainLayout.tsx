@@ -228,7 +228,7 @@ export default function MainLayout() {
 
   const onMenuClick: MenuProps['onClick'] = ({ key }) => {
     if (key.startsWith('/')) {
-      navigate(key);
+      void navigate(key);
       if (isMobile) setDrawerOpen(false);
     }
   };
@@ -270,7 +270,7 @@ export default function MainLayout() {
           label: `${u.name}（${t(`enum.role.${u.role}`)}）`,
           onClick: () => {
             switchUser(u.id);
-            navigate('/dashboard');
+            void navigate('/dashboard');
           },
         }));
       items.push({
@@ -287,8 +287,8 @@ export default function MainLayout() {
       label: t('common.logout'),
       danger: true,
       onClick: () => {
-        logout();
-        navigate('/login', { replace: true });
+        void logout();
+        void navigate('/login', { replace: true });
       },
     });
     return items;
@@ -338,8 +338,8 @@ export default function MainLayout() {
               borderRadius: 4,
             }}
             onClick={() => {
-              markRead(n.id);
-              if (n.inquiryId) navigate(`/inquiry/detail/${n.inquiryId}`);
+              void markRead(n.id);
+              if (n.inquiryId) void navigate(`/inquiry/detail/${n.inquiryId}`);
             }}
           >
             <List.Item.Meta
@@ -433,13 +433,20 @@ export default function MainLayout() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            // 窄屏下"组织选择 + 全局搜索 + 用户操作"三组控件放不下：flex 项默认不收缩到
+            // 内容宽度以下，于是左侧组会压住语言/主题按钮（实测点不到）。允许换行，
+            // 不隐藏任何入口；桌面仍是一行，行为不变。
+            flexWrap: 'wrap',
+            rowGap: isMobile ? 8 : 0,
+            height: 'auto',
+            minHeight: 64,
             borderBottom: '1px solid var(--color-border)',
             position: 'sticky',
             top: 0,
             zIndex: 10,
           }}
         >
-          <Space size="middle">
+          <Space size="middle" style={{ minWidth: 0 }}>
             <Button
               type="text"
               icon={
@@ -487,7 +494,22 @@ export default function MainLayout() {
           />
 
           <Space size="large">
-            <Dropdown menu={{ items: langMenuItems }} placement="bottomRight">
+            {/*
+              trigger 必须显式给出：antd 的默认值是 hover，也就是"只能靠鼠标悬停打开"。
+              语言菜单那两项是 onClick 的 menu item，键盘路径其实打不开菜单（聚焦后按 Enter
+              只产生一次 click，hover 型 Dropdown 不因此展开）；专用 runner 上 firefox/webkit
+              报"中文那项找不到"就是这条依赖被暴露出来：测试用 click 打开、用 Enter
+              选择，第二次展开只剩 hover 与动效时序可凭。保留 hover 给鼠标用户，补 click
+              让键盘与触摸也能开——与同文件 Popover 的 trigger="click" 一致。
+
+              这段以前写成裸的 // 行，落在 JSX 子节点位置上就是**渲染出来的文字**（不是注释），
+              于是每页顶栏都挂着一行开发说明——R113 记为缺陷，判据见 scripts/check-jsx-comment-text.mjs。
+            */}
+            <Dropdown
+              menu={{ items: langMenuItems }}
+              placement="bottomRight"
+              trigger={['hover', 'click']}
+            >
               <Button type="text" icon={<GlobalOutlined style={{ fontSize: 16 }} />}>
                 <span className="mobile-hide">{i18n.language === 'en-US' ? 'EN' : '中'}</span>
               </Button>

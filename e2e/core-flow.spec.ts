@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
 import {
+  expectWriteLanded,
   login,
   confirmOk,
   createAndSendInquiry,
   submitQuoteViaPortal,
+  chooseSupplierOnCompare,
   SUPPLIER_A,
 } from './helpers';
 
@@ -39,16 +41,36 @@ test.describe('核心业务链路', () => {
     await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
 
     // 3. 采购查看报价对比
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：先等"喂这块视图的那次读"（R113 起为详情那一发，不再是两份全量）落地，再断渲染。
+    // 这样断言测的是"数据到了却没渲染"（真缺陷），而不是"读+渲染没挤进 10 s"（环境竞速）；
+    // 渲染断言本身保留——去掉它就等于不再检查渲染，那是放宽而不是修准。
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     await expect(page.locator('.ant-statistic').first()).toBeVisible({ timeout: 10000 });
     // 对比表出现（含供应商列）
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
 
     // 4. 为物料选择推荐供应商（触发 selectedSupplierMap）
-    const materialRow = page.locator('.ant-table-row').first();
-    await materialRow.locator('.ant-select-selector').first().click();
-    await page.locator('.ant-select-item-option').filter({ hasText: SUPPLIER_A }).click();
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    // R65：这一格换成等 PUT /api/inquiries/:id（inquiryApi.update 带 selectedSupplierMap）返回 <300。
+    // 两处同形（本用例与"审批驳回后不可定标"）一起换：各自下一步都只在选择真落地后才存在
+    // （下一步是"提交审批"按钮的可见性），所以撤掉瞬时提示不撤覆盖。
+    await expectWriteLanded(
+      page,
+      /\/api\/inquiries\/[^/]+$/,
+      async () => {
+        await chooseSupplierOnCompare(page, SUPPLIER_A);
+      },
+      'PUT',
+    );
 
     // 5. 填写评审意见（CommentEditor 自动保存）
     const comment = page.locator('textarea').first();
@@ -58,35 +80,85 @@ test.describe('核心业务链路', () => {
     // 6. 发起审批（金额≥阈值，出现"提交审批"按钮）
     const submitApprovalBtn = page.getByRole('button', { name: /提交审批|Submit Approval/ });
     await expect(submitApprovalBtn).toBeVisible({ timeout: 5000 });
-    await submitApprovalBtn.click();
-    await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    // R65 续：写落地凭据用 /submit-approval 的响应；下一步 goto('/approval') 的行断言继续负责"状态真的变了"
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/submit-approval$/, async () => {
+      await submitApprovalBtn.click();
+      await confirmOk(page);
+    });
 
     // 7. 审批通过
-    await page.goto('/approval');
+    // R65 续三：同上，先等 /api/inquiries 的读落地，再断表格渲染（今天 4/12 与 1/16 的红都在这一格）
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/approval'),
+    ]);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 5000 });
-    await approvalRow.getByRole('button', { name: /^通\s*过|Approve/ }).click();
-    await page
-      .locator('.ant-modal')
-      .getByRole('button', { name: /确\s*定|OK/ })
-      .click();
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    // 按钮带前导图标，可访问名是「check-circle 通 过」→ 不能用 ^ 锚定行首
+    // R65：凭据换成"审批写请求 2xx"。原来这里只等一条会自动消失的绿色提示，
+    // n=30 的 webkit 复跑里 3/60 红都红在它身上（写其实成功了），属"把瞬时 UI 当权威"的假红。
+    // 审批是否真的生效仍有人管：第 8 步要看到「确认定标」按钮，而那按钮只在审批通过后出现。
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/approve$/, async () => {
+      await approvalRow.getByRole('button', { name: /通\s*过|Approve/ }).click();
+      await page
+        .locator('.ant-modal')
+        .getByRole('button', { name: /确\s*定|OK/ })
+        .click();
+    });
 
     // 8. 完成定标
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：同第 3 步——「确认定标」要过 compare/index.tsx:302 那道 loaded 闸才渲染，
+    // 先等喂它的那次读落地——R113 起是 `GET /api/inquiries/{id}`（每次挂载恰好一发，
+    // staleTime:0 顶下原来 useQuotationFreshness 的位置），再断按钮在场。
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     const confirmBtn = page.getByRole('button', { name: /确认定标|Confirm Result/ });
     await expect(confirmBtn).toBeVisible({ timeout: 10000 });
-    await confirmBtn.click();
-    await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    // R65 续：同上，等 /confirm 的响应；后面详情页的终态断言负责"真的定标了"
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/confirm$/, async () => {
+      await confirmBtn.click();
+      await confirmOk(page);
+    });
 
     // 9. 校验最终状态与持久化（刷新后仍在详情页看到已完成状态）
-    await page.goto(`/inquiry/detail/${inquiryId}`);
+    // R65 续三：详情页的 subject 与终态直取询价清单 store（inquiry/detail/index.tsx:114，本页不自己拉），
+    // 喂它的是整份文档载入时那次 GET /api/inquiries（App.tsx:61 → 31 → useInquiryStore.ts:175）——先等它落地再断。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/inquiry/detail/${inquiryId}`),
+    ]);
     await expect(page.locator('body')).toContainText(subject, { timeout: 10000 });
     await expect(page.locator('body')).toContainText(/已完成|Completed/, { timeout: 5000 });
-    await page.reload();
+    // R65 续三：reload 同形——刷新会重开一份文档、重发那次 GET /api/inquiries，把它一起包进 Promise.all。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.reload(),
+    ]);
     await expect(page.locator('body')).toContainText(subject, { timeout: 10000 });
   });
 
@@ -98,31 +170,83 @@ test.describe('核心业务链路', () => {
     await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
 
     // 进入对比页，选择供应商并提交审批
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：同全链路用例第 3 步——先等喂这块视图的那次读（R113 起是详情那一发）落地，再断表格渲染。
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
-    await page.locator('.ant-table-row').first().locator('.ant-select-selector').first().click();
-    await page.locator('.ant-select-item-option').filter({ hasText: SUPPLIER_A }).click();
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    // R65：这一格换成等 PUT /api/inquiries/:id（inquiryApi.update 带 selectedSupplierMap）返回 <300。
+    // 两处同形（本用例与"审批驳回后不可定标"）一起换：各自下一步都只在选择真落地后才存在
+    // （下一步是"提交审批"按钮的可见性），所以撤掉瞬时提示不撤覆盖。
+    await expectWriteLanded(
+      page,
+      /\/api\/inquiries\/[^/]+$/,
+      async () => {
+        await chooseSupplierOnCompare(page, SUPPLIER_A);
+      },
+      'PUT',
+    );
 
     const submitApprovalBtn = page.getByRole('button', { name: /提交审批|Submit Approval/ });
     await expect(submitApprovalBtn).toBeVisible({ timeout: 5000 });
-    await submitApprovalBtn.click();
-    await confirmOk(page);
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    // R65 续：写落地凭据用 /submit-approval 的响应；下一步 goto('/approval') 的行断言继续负责"状态真的变了"
+    await expectWriteLanded(page, /\/api\/inquiries\/[^/]+\/submit-approval$/, async () => {
+      await submitApprovalBtn.click();
+      await confirmOk(page);
+    });
 
     // 审批驳回
-    await page.goto('/approval');
+    // R65 续三：同全链路用例第 7 步——审批页 dataSource 直取 store，靠 approval/index.tsx:78
+    // 每次挂载补拉的那次 GET /api/inquiries 喂；先等它落地，再断这一行在表里。
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto('/approval'),
+    ]);
     const approvalRow = page.locator('.ant-table-row').filter({ hasText: subject });
     await expect(approvalRow).toBeVisible({ timeout: 10000 });
-    await approvalRow.getByRole('button', { name: /^驳\s*回|Reject/ }).click();
-    await page
-      .locator('.ant-modal')
-      .getByRole('button', { name: /确\s*定|OK/ })
-      .click();
-    await expect(page.locator('.ant-message-success').first()).toBeVisible({ timeout: 5000 });
+    // R68：这一处是 R65 批量换凭据时漏下的位点（文案与结构与其他几处不同，正则没匹配到它）。
+    // A/B 两臂各出 1 次 flaky 的都是它 —— 与序号保护无关，纯粹是"拿瞬时提示当唯一凭据"。
+    // 换成等 POST /api/inquiries/:id/reject 返回 <300；驳回是否真生效仍由本用例后半的"不可定标"断言管。
+    await expectWriteLanded(
+      page,
+      /\/api\/inquiries\/[^/]+\/reject$/,
+      async () => {
+        await approvalRow.getByRole('button', { name: /驳\s*回|Reject/ }).click();
+        await page
+          .locator('.ant-modal')
+          .getByRole('button', { name: /确\s*定|OK/ })
+          .click();
+      },
+      'POST',
+    );
 
     // 驳回后审批节点为 REJECTED，不应出现"确认定标"按钮（无法定标）
-    await page.goto(`/quotation/compare/${inquiryId}`);
+    // R65 续三：同上，先等喂对比视图的那次读（R113 起为 GET /api/inquiries/{id}）落地。下面那条 `.ant-table` 在场断言
+    // 要过 compare/index.tsx:302 的 loaded 闸，负向断言因此排在"数据已到"之后，不再吃空壳页的假绿。
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
+        {
+          timeout: 20000,
+        },
+      ),
+      page.goto(`/quotation/compare/${inquiryId}`),
+    ]);
     await expect(page.locator('.ant-table').first()).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: /确认定标|Confirm Result/ })).not.toBeVisible({
       timeout: 5000,

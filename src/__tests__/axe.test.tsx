@@ -10,6 +10,7 @@ import { I18nextProvider } from 'react-i18next';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { axe } from 'vitest-axe';
 import i18n from '@/i18n';
+import { inDays } from '@/test/temporalFixtures';
 
 // jsdom 无 canvas，mock echarts 以支持工作台图表渲染而不抛错
 vi.mock('@/utils/echarts', () => {
@@ -145,8 +146,8 @@ describe('核心页面 axe 无障碍（serious/critical）', () => {
       inquiryCode: 'INQ20260801003',
       supplierId: 'sup-2',
       supplierName: '华为技术有限公司',
-      deadline: '2026-08-11 18:00:00',
-      expiresAt: '2026-08-18 18:00:00',
+      deadline: inDays(7),
+      expiresAt: inDays(14),
     });
     mockedPortal.getPortalInquiry.mockResolvedValue({
       id: 'inq-3',
@@ -154,7 +155,7 @@ describe('核心页面 axe 无障碍（serious/critical）', () => {
       subject: '服务器设备采购询价',
       organization: '总部数据中心',
       currency: 'CNY',
-      deadline: '2026-08-11 18:00:00',
+      deadline: inDays(7),
       expectedDeliveryDate: '2026-09-01',
       deliveryAddress: '上海市浦东新区',
       contact: '张经理',

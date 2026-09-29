@@ -7,10 +7,16 @@
 import { http, HttpResponse } from 'msw';
 import dayjs from 'dayjs';
 import { paginate } from '@/api/searchApi';
+import type { AppSettings } from '@/api/settingsApi';
 import { inquiries as mockInquiries } from '@/mock/inquiries';
 import { suppliers as mockSuppliers } from '@/mock/suppliers';
 import { materials as mockMaterials } from '@/mock/materials';
 import { quotations as mockQuotations } from '@/mock/quotations';
+import {
+  applyWorkbenchFilter,
+  computeDashboardActions,
+  getOwnerOptions,
+} from '@/pages/dashboard/workbenchActions';
 import { users, currentUser, supervisorUser } from '@/mock/users';
 import {
   ApprovalNodeStatus,
@@ -20,6 +26,8 @@ import {
   QuotationStatus,
   type ApprovalNode,
   type Inquiry,
+  type InquiryCountsRequest,
+  type InquiryFilterSet,
   type Material,
   type Notification,
   type Quotation,
@@ -39,7 +47,10 @@ const tablePreferences: Record<string, Record<string, unknown>> = {};
 const quotationSnapshots: Record<string, Array<Record<string, unknown>>> = {};
 
 // 设置：内存持久化（与真实后端 AppSettings 单行表对齐）
-let settingsState = {
+// 显式标注成 AppSettings：过去这里少一个 ai，而 loadFromApi 会把 remote.ai 原样 set 进 store
+// ⇒ 演示模式下 AI 配置被 undefined 覆盖，且 tsc 不会响（mock 是无类型字面量）。
+// 类型在这里就是契约检查：真实 schema 加一组，这里不加就编译失败，不再靠人记。
+let settingsState: AppSettings = {
   approval: {
     enabled: true,
     amountThreshold: 50000,
@@ -50,6 +61,19 @@ let settingsState = {
     deadlineReminderHours: 24,
     quotationSubmitted: true,
     approvalResult: true,
+  },
+  ai: {
+    provider: 'demo',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    model: 'doubao-seed-2-1-pro-260628',
+    apiKey: '',
+    hasApiKey: false,
+    structuredOutput: true,
+  },
+  basic: {
+    systemName: '采购询价系统',
+    currency: 'CNY',
+    deadlineLeadDays: 3,
   },
 };
 
@@ -169,6 +193,123 @@ interface PortalDraftBody {
 
 const portalDrafts: Record<string, PortalDraft> = {};
 
+/**
+ * R111：询价筛子只留一份实现——`GET /inquiries` 与 `POST /inquiries/counts` 共用，
+ * 镜像真后端 `backend/app/routers/inquiries.py` 的 `_apply_inquiry_filters`（唯一 WHERE 来源）。
+ * 若两处各写一遍，聚合计数就会和分页 total 悄悄分叉，而这是本次改动唯一的收益前提。
+ */
+function applyInquiryFilters(list: Inquiry[], f: InquiryFilterSet): Inquiry[] {
+  let out = [...list];
+  if (f.keyword) {
+    const kw = f.keyword.toLowerCase();
+    out = out.filter(
+      (i) =>
+        i.code.toLowerCase().includes(kw) ||
+        i.subject.toLowerCase().includes(kw) ||
+        (i.ownerName ?? '').toLowerCase().includes(kw),
+    );
+  }
+  if (f.status) {
+    const statuses = f.status
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (statuses.length) out = out.filter((i) => statuses.includes(i.status));
+  }
+  if (f.dateFrom) out = out.filter((i) => (i.createdAt ?? '').slice(0, 10) >= f.dateFrom!);
+  if (f.dateTo) out = out.filter((i) => (i.createdAt ?? '').slice(0, 10) <= f.dateTo!);
+  // R108：四个独立筛子（AND 语义），与 keyword 的 OR 语义不同
+  if (f.code) {
+    const kw = f.code.toLowerCase();
+    out = out.filter((i) => i.code.toLowerCase().includes(kw));
+  }
+  if (f.subject) {
+    const kw = f.subject.toLowerCase();
+    out = out.filter((i) => i.subject.toLowerCase().includes(kw));
+  }
+  if (f.creator) out = out.filter((i) => (i.createdByName ?? '').includes(f.creator!));
+  if (f.category)
+    out = out.filter((i) => i.items.some((item) => item.category.includes(f.category!)));
+  // R109：截止日区间（日粒度闭区间）
+  if (f.deadlineFrom) out = out.filter((i) => (i.deadline ?? '').slice(0, 10) >= f.deadlineFrom!);
+  if (f.deadlineTo) out = out.filter((i) => (i.deadline ?? '').slice(0, 10) <= f.deadlineTo!);
+  // R110：审批节点状态（存在一个这样的节点即算）
+  if (f.nodeStatus) {
+    const nodes = f.nodeStatus
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    out = out.filter((i) => i.approvalNodes.some((n) => nodes.includes(n.status)));
+  }
+  // R113：至少有一份已提交报价（真值串 EXISTS / 伪值串 NOT EXISTS / 空值不筛），
+  // 与真后端 _apply_inquiry_filters 里那段同形——比价页的"可对比"卡片列表靠它。
+  // 乱值不在这里判：它由 submittedFlagError() 在进入任何分支之前统一判 400（与真后端一致，
+  // 包括"不带分页参数的那条兼容分支也要判"这一点）。
+  if (f.hasSubmittedQuotation) {
+    const flag = f.hasSubmittedQuotation.trim().toLowerCase();
+    const has = (i: Inquiry) => i.quotations.some((q) => q.status === QuotationStatus.SUBMITTED);
+    if (SUBMITTED_FLAG_TRUE.includes(flag)) out = out.filter(has);
+    else if (SUBMITTED_FLAG_FALSE.includes(flag)) out = out.filter((i) => !has(i));
+  }
+  return out;
+}
+
+/** 与后端 `inquiries.py` 的 `_FLAG_TRUE` / `_FLAG_FALSE` 同值（两表不同形即两支判据分叉） */
+const SUBMITTED_FLAG_TRUE = ['1', 'true', 'yes'];
+const SUBMITTED_FLAG_FALSE = ['0', 'false', 'no'];
+
+/**
+ * 布尔形状筛子的乱值 ⇒ 返回该原值，否则 null（R113）。
+ * 后端把乱值判 400 而不是当 no-op：本模型的规矩是"错的东西不许静默变成没筛"，
+ * 否则调用方会把全集读成这一档——比价页那种情况下会退回整份无界清单。
+ */
+function submittedFlagError(f: { hasSubmittedQuotation?: string }): string | null {
+  const raw = f.hasSubmittedQuotation;
+  if (raw === undefined) return null;
+  const flag = raw.trim().toLowerCase();
+  if (!flag || SUBMITTED_FLAG_TRUE.includes(flag) || SUBMITTED_FLAG_FALSE.includes(flag)) {
+    return null;
+  }
+  return raw;
+}
+
+/** 与真后端同一句文案的形状，便于两支的失败读数可比 */
+function submittedFlagDetail(raw: string): string {
+  return `hasSubmittedQuotation 只认真值串 1/true/yes 或伪值串 0/false/no，收到 ${JSON.stringify(raw)}`;
+}
+
+/** 与后端 `backend/app/routers/inquiries.py` 的 `_MAX_COUNT_ITEMS` 同值 */
+const MAX_COUNT_ITEMS = 32;
+
+const FILTER_KEYS: (keyof InquiryFilterSet)[] = [
+  'keyword',
+  'status',
+  'dateFrom',
+  'dateTo',
+  'code',
+  'subject',
+  'creator',
+  'category',
+  'deadlineFrom',
+  'deadlineTo',
+  'nodeStatus',
+  'hasSubmittedQuotation',
+];
+
+function inquiryFilterSetFromParams(sp: URLSearchParams): InquiryFilterSet {
+  const f: InquiryFilterSet = {};
+  for (const k of FILTER_KEYS) {
+    const v = sp.get(k);
+    if (v !== null) f[k] = v;
+  }
+  return f;
+}
+
+/** 真后端用 pydantic `extra="forbid"` 挡下拼错的筛子名；桩侧同样拒，否则演示模式会静默忽略 */
+function unknownFilterKeys(f: Record<string, unknown>): string[] {
+  return Object.keys(f).filter((k) => !FILTER_KEYS.includes(k as keyof InquiryFilterSet));
+}
+
 export const handlers = [
   // ===== 认证 =====
   http.post(`${baseUrl}/auth/login`, async ({ request }) => {
@@ -186,38 +327,22 @@ export const handlers = [
     const url = new URL(request.url);
     const page = Number(url.searchParams.get('page') ?? '');
     const pageSize = Number(url.searchParams.get('pageSize') ?? '');
-    const keyword = url.searchParams.get('keyword');
-    const statusStr = url.searchParams.get('status');
-    const dateFrom = url.searchParams.get('dateFrom');
-    const dateTo = url.searchParams.get('dateTo');
     const sort = url.searchParams.get('sort');
+
+    // R113：乱值判 400 必须排在"无分页参数返回全量"那条兼容分支之前——
+    // 真后端的判点在 `_apply_inquiry_filters`（两条分支都过它），漏判就两支不同形。
+    const flagErr = submittedFlagError(inquiryFilterSetFromParams(url.searchParams));
+    if (flagErr !== null) {
+      return HttpResponse.json({ detail: submittedFlagDetail(flagErr) }, { status: 400 });
+    }
 
     // P2-12 Task 17：无分页参数时向后兼容返回全量列表
     if (!page || !pageSize) {
       return HttpResponse.json(inquiries);
     }
 
-    // 筛选
-    let list = [...inquiries];
-    if (keyword) {
-      const kw = keyword.toLowerCase();
-      list = list.filter(
-        (i) =>
-          i.code.toLowerCase().includes(kw) ||
-          i.subject.toLowerCase().includes(kw) ||
-          (i.ownerName ?? '').toLowerCase().includes(kw),
-      );
-    }
-    if (statusStr) {
-      const statuses = statusStr.split(',');
-      list = list.filter((i) => statuses.includes(i.status));
-    }
-    if (dateFrom) {
-      list = list.filter((i) => (i.createdAt ?? '').slice(0, 10) >= dateFrom);
-    }
-    if (dateTo) {
-      list = list.filter((i) => (i.createdAt ?? '').slice(0, 10) <= dateTo);
-    }
+    // 筛选（R111：实现抽到 applyInquiryFilters，与 POST /inquiries/counts 共用一份）
+    const list = applyInquiryFilters(inquiries, inquiryFilterSetFromParams(url.searchParams));
 
     // 排序（仅支持 createdAt/updatedAt 的 asc/desc）
     if (sort) {
@@ -236,6 +361,91 @@ export const handlers = [
     const total = list.length;
     const items = list.slice((page - 1) * pageSize, page * pageSize);
     return HttpResponse.json({ items, total, page, pageSize });
+  }),
+
+  /**
+   * R111：一次请求拿多档计数，镜像真后端 `POST /api/inquiries/counts`
+   * （含 `_MAX_COUNT_ITEMS = 32` 上限与 label 的两条 400）。
+   */
+  http.post(`${baseUrl}/inquiries/counts`, async ({ request }) => {
+    const body = (await request.json()) as InquiryCountsRequest;
+    const items = body?.items ?? [];
+    const labels = items.map((it) => it?.label ?? '');
+    if (labels.some((l) => !String(l).trim())) {
+      return HttpResponse.json({ detail: 'label 不能为空' }, { status: 400 });
+    }
+    if (new Set(labels).size !== labels.length) {
+      return HttpResponse.json({ detail: 'label 不得重复' }, { status: 400 });
+    }
+    if (labels.length > MAX_COUNT_ITEMS) {
+      return HttpResponse.json({ detail: `items 最多 ${MAX_COUNT_ITEMS} 档` }, { status: 400 });
+    }
+    for (const it of items) {
+      const f = (it?.filters ?? {}) as Record<string, unknown>;
+      const unknown = unknownFilterKeys(f);
+      if (unknown.length) {
+        return HttpResponse.json(
+          { detail: `filters 含未知筛子：${unknown.join(', ')}` },
+          { status: 422 },
+        );
+      }
+      // R113：乱值判 400（真后端在同一处谓词构造里 raise HTTPException，整包拒），
+      // 档位序里第一档先撞上就先返回哪一档——两支都不把"筛子没生效的全集数"交出去
+      const flagErr = submittedFlagError(it?.filters ?? {});
+      if (flagErr !== null) {
+        return HttpResponse.json({ detail: submittedFlagDetail(flagErr) }, { status: 400 });
+      }
+    }
+    const counts: Record<string, number> = {};
+    for (const it of items) {
+      counts[it.label] = applyInquiryFilters(inquiries, it.filters ?? {}).length;
+    }
+    return HttpResponse.json({ counts });
+  }),
+
+  /**
+   * R112：操作日志按日志行分页，镜像真后端 `GET /api/inquiries/logs`。
+   * 必须注册在 `/inquiries/:id` **之前**——MSW 按注册顺序匹配，`:id` 会把
+   * `logs` 当成一个询价单 id 吃掉（桩与实现的这条顺序差一处，演示模式就会读成 404）。
+   */
+  http.get(`${baseUrl}/inquiries/logs`, ({ request }) => {
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get('page') ?? '1') || 1;
+    const pageSize = Number(url.searchParams.get('pageSize') ?? '10') || 10;
+    const operator = url.searchParams.get('operator');
+    const type = url.searchParams.get('type');
+    const keyword = url.searchParams.get('keyword');
+    const timeFrom = url.searchParams.get('timeFrom');
+    const timeTo = url.searchParams.get('timeTo');
+    const sort = url.searchParams.get('sort');
+
+    let rows = inquiries.flatMap((i) => i.logs);
+    if (operator) {
+      const kw = operator.trim().toLowerCase();
+      rows = rows.filter((l) => l.operator.toLowerCase().includes(kw));
+    }
+    if (keyword) {
+      const kw = keyword.trim().toLowerCase();
+      rows = rows.filter((l) => l.content.toLowerCase().includes(kw));
+    }
+    if (type) rows = rows.filter((l) => l.type === type.trim());
+    if (timeFrom) rows = rows.filter((l) => (l.time ?? '').slice(0, 10) >= timeFrom);
+    if (timeTo) rows = rows.filter((l) => (l.time ?? '').slice(0, 10) <= timeTo);
+
+    // 排序：白名单只有 time，默认 desc；次排序固定 id asc，与实现的 order_by(time, id) 同形
+    const asc = sort === 'time:asc';
+    rows = [...rows].sort((a, b) => {
+      if (a.time !== b.time) return (a.time < b.time ? -1 : 1) * (asc ? 1 : -1);
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+    const total = rows.length;
+    return HttpResponse.json({
+      items: rows.slice((page - 1) * pageSize, page * pageSize),
+      total,
+      page,
+      pageSize,
+    });
   }),
 
   http.get(`${baseUrl}/inquiries/:id`, ({ params }) => {
@@ -448,6 +658,28 @@ export const handlers = [
   }),
 
   // ===== 供应商 =====
+  // ===== 仪表盘聚合（R107）=====
+  // 演示模式没有真后端：这里用与真端点同一份语义参考实现（workbenchActions）算数，
+  // 让"前端不再为算计数拉全量"这条改动在开发模式下也走得通。
+  http.get(`${baseUrl}/dashboard/workbench`, ({ request }) => {
+    const url = new URL(request.url);
+    const owner = url.searchParams.get('owner') ?? undefined;
+    const dateFrom = url.searchParams.get('dateFrom');
+    const dateTo = url.searchParams.get('dateTo');
+    const organization = url.searchParams.get('organization');
+    const visible =
+      !organization || organization === '__ALL__'
+        ? inquiries
+        : inquiries.filter((i) => i.organization === organization);
+    const filtered = applyWorkbenchFilter(visible, { owner, dateFrom, dateTo });
+    return HttpResponse.json({
+      ...computeDashboardActions(filtered, quotations),
+      // 负责人选项与真端点一致：按可见范围给，不随 owner/日期参数收窄
+      owners: getOwnerOptions(visible),
+      total: filtered.length,
+    });
+  }),
+
   http.get(`${baseUrl}/suppliers`, () => HttpResponse.json(suppliers)),
 
   http.get(`${baseUrl}/suppliers/:id`, ({ params }) => {
@@ -604,6 +836,24 @@ export const handlers = [
 
   // ===== 设置 =====
   http.get(`${baseUrl}/settings`, () => HttpResponse.json(settingsState)),
+
+  // PUT 是这个端点的真实方法（settingsApi.update 用 client.put）。过去只挂了 POST，
+  // 于是演示模式下每一次"保存设置"都穿透到 dev server 拿 404，页面弹的是失败——
+  // 而这条路径从来没有常驻用例走过，所以它一直没人知道。
+  http.put(`${baseUrl}/settings`, async ({ request }) => {
+    const body = (await request.json()) as Partial<AppSettings> | null;
+    // 与后端同形：PUT 是整体替换，少任何一组都是 422，不是"那组保持不变"
+    if (!body?.approval || !body?.notification || !body?.ai || !body?.basic) {
+      return HttpResponse.json({ detail: '设置分组不完整' }, { status: 422 });
+    }
+    settingsState = {
+      approval: body.approval,
+      notification: body.notification,
+      ai: body.ai,
+      basic: body.basic,
+    };
+    return HttpResponse.json(settingsState);
+  }),
 
   http.post(`${baseUrl}/settings`, async ({ request }) => {
     const body = (await request.json()) as typeof settingsState;

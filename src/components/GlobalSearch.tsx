@@ -76,7 +76,7 @@ export default function GlobalSearch({ open, onClose }: Props) {
     onClose();
   };
   const go = (path: string) => {
-    navigate(path);
+    void navigate(path);
     handleClose();
   };
 

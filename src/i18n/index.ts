@@ -20,7 +20,7 @@ function detectInitialLanguage(): AppLanguage {
 }
 
 export function changeLanguage(lang: AppLanguage): void {
-  i18n.changeLanguage(lang);
+  void i18n.changeLanguage(lang);
   localStorage.setItem(LANG_STORAGE_KEY, lang);
 }
 
@@ -28,7 +28,7 @@ export function getCurrentLanguage(): AppLanguage {
   return (i18n.language as AppLanguage) || 'zh-CN';
 }
 
-i18n.use(initReactI18next).init({
+void i18n.use(initReactI18next).init({
   resources: {
     'zh-CN': { translation: zhCN },
     'en-US': { translation: enUS },

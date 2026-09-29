@@ -1,0 +1,37 @@
+# CI/dev 兜底的 MinIO 镜像。为什么要有这个文件（三条都是一手读数，2026-09-27）：
+#   1) runner 上 `docker pull alpine:3.20` 与 `postgres:16` 都 rc=0，而同机
+#      `minio/minio:latest` 与 `minio/minio:RELEASE.2025-04-22T22-12-26Z` 全部
+#      `pull access denied … repository does not exist or may require 'docker login'`
+#      —— 不是限流，是整个仓库在 Docker Hub 上不再公开（PR #5 评论 21:50:22 的探活读数）；
+#   2) 官方二进制下载站已下线：`https://dl.min.io/server/minio/release/linux-amd64/minio`
+#      与 `.../client/mc/release/linux-amd64/mc` 均返回 HTTP 410 Gone（本机实测）；
+#   3) GitHub release 上仍公开、且带 `.sha256sum`：minio server RELEASE.2025-09-07T16-13-09Z
+#      （assets 数 48；更新的 RELEASE.2025-10-15T17-29-55Z 的 assets 数为 0，故不取）
+#      与 mc RELEASE.2025-08-13T08-35-41Z。两者都是 static ELF x86-64，alpine(musl) 可直接跑。
+# 两个 sha256 由本机下载后算出，并与官方 `.sha256sum` 资产逐字对账一致。
+FROM alpine:3.20
+
+ARG MINIO_URL=https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z
+ARG MINIO_SHA256=7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f
+ARG MC_URL=https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z
+ARG MC_SHA256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
+
+RUN wget -q -O /usr/local/bin/minio "$MINIO_URL" \
+ && echo "$MINIO_SHA256  /usr/local/bin/minio" | sha256sum -c - \
+ && chmod +x /usr/local/bin/minio \
+ && wget -q -O /usr/local/bin/mc "$MC_URL" \
+ && echo "$MC_SHA256  /usr/local/bin/mc" | sha256sum -c - \
+ && chmod +x /usr/local/bin/mc \
+ && minio --version \
+ && mc --version
+
+# docker-compose.yml 的 minio 健康检查是 `mc ready local`（:160），minio-init 用的是
+# `mc alias set local …`（:175-177）。官方镜像预置了 `local` 这个 alias；这里用 mc 支持的
+# MC_HOST_<alias> 环境变量合成同名 alias，让 compose 那两行一个字都不用改。
+# 凭据取 compose 里 MINIO_ROOT_USER/PASSWORD 的默认值（:156-157 走 ${S3_ACCESS_KEY:-minioadmin}）；
+# 若哪天把这对默认值改成非默认，这里的 ENV 必须同步——不同步的症状是健康检查一直不绿。
+ENV MC_HOST_LOCAL=http://minioadmin:minioadmin@localhost:9000/
+
+EXPOSE 9000 9001
+ENTRYPOINT ["/usr/local/bin/minio"]
+CMD ["server", "/data"]

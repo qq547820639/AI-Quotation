@@ -5,6 +5,10 @@ import { client } from './client';
 import type {
   Inquiry,
   InquiryListParams,
+  InquiryCountSpec,
+  InquiryCountsResponse,
+  LogListParams,
+  PaginatedLogs,
   PaginatedInquiries,
   QuotationSnapshot,
   ExportRequest,
@@ -16,6 +20,19 @@ export const inquiryApi = {
   /** P2-12 Task 17：服务端分页/筛选/搜索/排序列表 */
   listPage: (params: InquiryListParams) =>
     client.get<PaginatedInquiries>('/inquiries', { params }).then((r) => r.data),
+  /**
+   * R111：一次请求拿多档计数（审批页原来用 4 次 pageSize=1 的分页请求拼）。
+   * 每档的筛子与 listPage 同名同语义（都走后端的 `_apply_inquiry_filters`），
+   * 所以一档的 counts[label] 必须等于同筛子下 listPage 的 total——常驻用例钉的就是这条。
+   */
+  counts: (items: InquiryCountSpec[]) =>
+    client.post<InquiryCountsResponse>('/inquiries/counts', { items }).then((r) => r.data.counts),
+  /**
+   * R112：操作日志按日志行分页（`GET /api/inquiries/logs`）。
+   * 日志页原来拉整份询价数组再 flatMap，一页 10 行付全集的价。
+   */
+  logs: (params: LogListParams) =>
+    client.get<PaginatedLogs>('/inquiries/logs', { params }).then((r) => r.data),
   /** P2-12 Task 17：服务端生成 PDF/Excel 导出，返回文件流并触发下载 */
   export: async (id: string, body: ExportRequest): Promise<void> => {
     const resp = await client.post(`/inquiries/${id}/export`, body, { responseType: 'blob' });

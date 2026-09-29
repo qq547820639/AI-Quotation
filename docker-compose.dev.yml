@@ -16,7 +16,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8080:8080"
+      - '8080:8080'
     environment:
       - APP_ENV=dev
       # dev 下仍由 Alembic 迁移建表，与生产保持一致
@@ -24,17 +24,31 @@ services:
       - SEED_DEMO_DATA=true
       # 统一演示密码：低于后端最小长度校验？不 —— APP_ENV=dev 不触发生产强密码守卫，
       # 但为体验一致仍给一个足够强的值，避免误导。
-      - DEMO_USER_PASSWORD=dev-demo-pass-12345678
+      # 用 ${VAR:-default} 而不是写死，宿主侧 `DEMO_USER_PASSWORD=x docker compose ...` 才真能覆盖，
+      # 与 README「可在 docker-compose.dev.yml 中通过 DEMO_USER_PASSWORD 覆盖」一致；
+      # 默认值必须等于 e2e/helpers.ts 的 DEMO_PASSWORD 兜底值（否则干净签出跑 E2E 会
+      # 先 401×5 再全线 429），由 `npm run e2e:config:check` 机械核对。
+      - DEMO_USER_PASSWORD=${DEMO_USER_PASSWORD:-dev-demo-pass-12345678}
       - SCANNER_PROVIDER=noop
       - NOTIFY_CHANNEL=log
       - CELERY_TASK_ALWAYS_EAGER=true
-      - CORS_ORIGINS=http://localhost:5173,http://localhost:80
+      # R63：Origin 白名单要可注入，否则换宿主端口起第二套栈时后端会**静默拒绝**续期与写操作
+      # （实测：非默认端口下 POST .../invitations/.../regenerate 直接 403，
+      #   而失败形状与产品缺陷同形，排查者会去查权限而不是查自己的端口）。
+      # 默认值保持与历史逐字相同，只有显式注入才改变行为；与 DEMO_USER_PASSWORD 同一个 `${VAR:-default}` 形状。
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:80}
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8080"
     healthcheck:
       # dev 形态只依赖 DB，用 /api/health（进程存活 + DB 连通）即可判定健康
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health', timeout=5)"]
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health', timeout=5)",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -45,12 +59,15 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "80:80"
+      - '80:80'
     depends_on:
       backend:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost"]
+      # R31：必须写 127.0.0.1。容器内 localhost 先解析到 ::1，而 nginx 只 `listen 80;`（IPv4），
+      # busybox wget 不做 v6→v4 回退（Python urllib 会，所以后端那条健康检查一直是绿的），
+      # 于是服务明明 200、容器却永久 unhealthy。
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1']
       interval: 30s
       timeout: 5s
       retries: 3

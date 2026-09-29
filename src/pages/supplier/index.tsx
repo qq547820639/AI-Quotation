@@ -70,6 +70,7 @@ export default function SupplierPage() {
   const canDisable = hasPermission('SUPPLIER_DISABLE');
   const isMobile = useIsMobile();
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [exportingCurrent, setExportingCurrent] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
 
   // ===== 筛选状态（输入态，点击查询后写入 applied） =====
@@ -278,8 +279,10 @@ export default function SupplierPage() {
     return tags;
   }, [applied, t]);
 
-  /** 导出当前筛选结果 */
-  const handleExportCurrent = () => {
+  /** 导出当前筛选结果：生成期给按钮 loading 并挡住重入（R41 改成 await 之后才需要的） */
+  const handleExportCurrent = async () => {
+    if (exportingCurrent) return;
+    setExportingCurrent(true);
     const header = [
       t('supplier.list.supplierNumber'),
       t('supplier.list.name'),
@@ -306,8 +309,14 @@ export default function SupplierPage() {
       `${s.avgDeliveryDays} ${t('common.days')}`,
       formatDate(s.lastCooperateTime),
     ]);
-    exportAOA(t('supplier.title'), header, rows);
-    notifySuccess(t('table.exportCurrentSuccess'));
+    try {
+      await exportAOA(t('supplier.title'), header, rows);
+      notifySuccess(t('table.exportCurrentSuccess'));
+    } catch {
+      notifyError(t('common.operateFailed'));
+    } finally {
+      setExportingCurrent(false);
+    }
   };
 
   /** 空状态引导：无数据或筛选无结果时提供「清空筛选」入口 */
@@ -659,7 +668,11 @@ export default function SupplierPage() {
             onSetDensity={setDensity}
             onReset={resetTablePrefs}
           />
-          <Button icon={<ExportOutlined />} onClick={handleExportCurrent}>
+          <Button
+            icon={<ExportOutlined />}
+            loading={exportingCurrent}
+            onClick={() => void handleExportCurrent()}
+          >
             {t('table.exportCurrent')}
           </Button>
         </Space>

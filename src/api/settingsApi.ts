@@ -14,6 +14,15 @@ export interface AISettings {
   structuredOutput: boolean;
 }
 
+export interface BasicSettings {
+  /** 系统名称：驱动浏览器标签标题（src/App.tsx） */
+  systemName: string;
+  /** 默认币种：新建询价单的默认值（create/shared.ts 的 defaultBasicInfo） */
+  currency: string;
+  /** 报价截止提前天数：同上，决定默认 deadline */
+  deadlineLeadDays: number;
+}
+
 export interface AppSettings {
   approval: {
     enabled: boolean;
@@ -27,6 +36,7 @@ export interface AppSettings {
     approvalResult: boolean;
   };
   ai: AISettings;
+  basic: BasicSettings;
 }
 
 export const settingsApi = {

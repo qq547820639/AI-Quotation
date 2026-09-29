@@ -59,16 +59,32 @@ const BUSINESS_CODE_I18N: Record<string, string> = {
   not_found: 'errors.notFound',
 };
 
-/** 从后端响应 data 中提取字符串文案（兼容 detail / message / detail.msg） */
-function extractBackendMessage(data: Record<string, unknown>): string | undefined {
-  const detail = data.detail;
+/**
+ * 409 的 `detail.error_type` → i18n key。
+ * 后端冲突响应把类型放在 `detail.error_type`（不是顶层 `code`），例如门户重复报价
+ * （见 backend/tests/test_invitation_security.py 对 `r.json()["detail"]["error_type"]` 的断言）。
+ * 走这张表而不是把后端中文直接透出，才能跟着界面语言走。
+ */
+const CONFLICT_ERROR_TYPE_I18N: Record<string, string> = {
+  duplicate_quotation: 'errors.duplicateQuotation',
+};
+
+/** 取 FastAPI `detail` 信封里的可读文案（字符串 / `detail.msg` / `detail.message`） */
+function readDetailMessage(detail: unknown): string | undefined {
   if (typeof detail === 'string') return detail;
   if (typeof detail === 'object' && detail !== null) {
-    const msg = (detail as { msg?: unknown }).msg;
-    if (typeof msg === 'string') return msg;
+    const d = detail as { msg?: unknown; message?: unknown };
+    if (typeof d.msg === 'string') return d.msg;
+    if (typeof d.message === 'string') return d.message;
   }
-  if (typeof data.message === 'string') return data.message;
   return undefined;
+}
+
+/** 从后端响应 data 中提取字符串文案（兼容 detail / message / detail.msg） */
+function extractBackendMessage(data: Record<string, unknown>): string | undefined {
+  return (
+    readDetailMessage(data.detail) ?? (typeof data.message === 'string' ? data.message : undefined)
+  );
 }
 
 /** 解析任意异常为统一 ApiError */
@@ -136,15 +152,30 @@ export function parseApiError(error: unknown): ApiError {
           retryable: false,
           requestId,
         });
-      case 409:
+      case 409: {
+        // 冲突提示是"可恢复"的那一类错误：后端会给出用户下一步该做什么（如"请勿重复创建"），
+        // 所以优先 error_type 的 i18n 文案，其次 detail 里的可读文本，最后才是通用冲突提示。
+        // 401/403 不做同样的透出是有意为之：那两类文案由前端固定，避免把服务端内部措辞透出
+        // （常驻用例 client.test.ts「403 响应：提示权限不足」钉的就是这个行为）。
+        const errorType =
+          typeof data.detail === 'object' && data.detail !== null
+            ? (data.detail as { error_type?: unknown }).error_type
+            : undefined;
+        const conflictKey =
+          typeof errorType === 'string' ? CONFLICT_ERROR_TYPE_I18N[errorType] : undefined;
         return new ApiError({
           code: ERROR_CODES.CONFLICT,
-          message: backendMessage ?? i18n.t('errors.conflict'),
+          message:
+            (conflictKey ? i18n.t(conflictKey) : undefined) ??
+            backendMessage ??
+            extractBackendMessage(data) ??
+            i18n.t('errors.conflict'),
           status,
           retryable: false,
           requestId,
           conflict,
         });
+      }
       case 422:
         return new ApiError({
           code: ERROR_CODES.VALIDATION,

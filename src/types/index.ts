@@ -616,9 +616,12 @@ export interface ApprovalConfig {
 /* ==================== P2-12 Task 17：服务端分页 / 表偏好 / 快照 / 导出 ==================== */
 
 /** 询价列表服务端分页查询参数（P2-12 Task 17） */
-export interface InquiryListParams {
-  page?: number;
-  pageSize?: number;
+/**
+ * R111：询价筛子集合（与后端 `InquiryFilterSet` 一一对应）。
+ * 单独提到契约层，是为了让"列表分页的筛子"和"聚合计数的一档筛子"共用同一份字段名——
+ * 后端 `_apply_inquiry_filters` 也只有这一个 WHERE 来源。
+ */
+export interface InquiryFilterSet {
   /** 关键词：匹配 code / subject / ownerName */
   keyword?: string;
   /** 逗号分隔的状态列表，如 "INQUIRING,ALL_QUOTED" */
@@ -627,13 +630,80 @@ export interface InquiryListParams {
   dateFrom?: string;
   /** 创建时间范围终点 YYYY-MM-DD */
   dateTo?: string;
-  /** 排序，如 "updatedAt:desc" */
+  /** R108：列表页筛选表单的独立筛子（AND 语义），与 keyword 的 OR 语义不同 */
+  code?: string;
+  subject?: string;
+  /** 创建人姓名（createdByName）子串 */
+  creator?: string;
+  /** 商品品类子串：命中该询价任一明细行即算 */
+  category?: string;
+  /** R109：截止时间的日粒度闭区间（含首末两日） */
+  deadlineFrom?: string;
+  deadlineTo?: string;
+  /** R110：逗号分隔的审批节点状态，命中"该询价存在这样一个审批节点" */
+  nodeStatus?: string;
+  /**
+   * R113：只要"至少有一份已提交报价"的询价单（比价页的可对比卡片列表）。
+   * 真值串 1/true/yes ⇒ EXISTS；伪值串 0/false/no ⇒ NOT EXISTS；其余值不加筛子。
+   */
+  hasSubmittedQuotation?: string;
+}
+
+export interface InquiryListParams extends InquiryFilterSet {
+  page?: number;
+  pageSize?: number;
+  /** 排序，如 "updatedAt:desc"；R108 起还支持 "itemsCount:asc|desc"（按商品数排全集） */
   sort?: string;
+}
+
+/** R111：一次请求里的一档计数（label 由调用方命名，filters 省略即全集） */
+export interface InquiryCountSpec {
+  label: string;
+  filters?: InquiryFilterSet;
+}
+
+/** R111：`POST /api/inquiries/counts` 的请求体 */
+export interface InquiryCountsRequest {
+  items: InquiryCountSpec[];
+}
+
+/** R111：响应体，counts 的键即请求里的 label */
+export interface InquiryCountsResponse {
+  counts: Record<string, number>;
 }
 
 /** 询价列表服务端分页响应（P2-12 Task 17） */
 export interface PaginatedInquiries {
   items: Inquiry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * R112：操作日志的服务端分页入参。
+ * 与 `InquiryFilterSet` 不是一套键：那一份筛的是**询价单**，这一份筛的是**日志行**
+ * （operator/type/keyword/timeFrom/timeTo），两者语义不同层，共用会互相污染。
+ */
+export interface LogListParams {
+  page?: number;
+  pageSize?: number;
+  /** 操作人子串（大小写不敏感） */
+  operator?: string;
+  /** 日志类型精确等值 */
+  type?: string;
+  /** 操作内容子串（大小写不敏感） */
+  keyword?: string;
+  /** 操作时间的日粒度闭区间 YYYY-MM-DD（含首末两日） */
+  timeFrom?: string;
+  timeTo?: string;
+  /** 排序，如 "time:desc" */
+  sort?: string;
+}
+
+/** R112：日志分页响应（items 是日志行，不是询价单） */
+export interface PaginatedLogs {
+  items: InquiryLog[];
   total: number;
   page: number;
   pageSize: number;

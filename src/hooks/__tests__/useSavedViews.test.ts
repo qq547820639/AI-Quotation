@@ -5,6 +5,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSavedViews, generateViewId, normalizeViewName } from '../useSavedViews';
+import type { WriteReceipt } from '@/utils/storage';
+import {
+  makeLocalStorageWritesThrow,
+  assertWriteInjectionLanded,
+  type WriteFailureInjection,
+} from '@/test/writeFailures';
 
 interface F {
   keyword: string;
@@ -30,7 +36,9 @@ describe('useSavedViews', () => {
 
   it('保存视图，第一个自动设为默认', () => {
     const { result } = renderHook(() => useSavedViews<F>());
-    act(() => result.current.saveView(' 我的草稿 ', { keyword: '服务器', status: ['DRAFT'] }));
+    act(() => {
+      result.current.saveView(' 我的草稿 ', { keyword: '服务器', status: ['DRAFT'] });
+    });
     expect(result.current.views).toHaveLength(1);
     expect(result.current.views[0].name).toBe('我的草稿'); // trim 后
     expect(result.current.views[0].isDefault).toBe(true);
@@ -39,38 +47,60 @@ describe('useSavedViews', () => {
 
   it('同名保存覆盖而不新增', () => {
     const { result } = renderHook(() => useSavedViews<F>());
-    act(() => result.current.saveView('A', { keyword: 'x', status: [] }));
-    act(() => result.current.saveView('A', { keyword: 'y', status: ['INQUIRING'] }));
+    act(() => {
+      result.current.saveView('A', { keyword: 'x', status: [] });
+    });
+    act(() => {
+      result.current.saveView('A', { keyword: 'y', status: ['INQUIRING'] });
+    });
     expect(result.current.views).toHaveLength(1);
     expect(result.current.views[0].filter.keyword).toBe('y');
   });
 
   it('设置默认视图会取消其它默认', () => {
     const { result } = renderHook(() => useSavedViews<F>());
-    act(() => result.current.saveView('A', { keyword: 'a', status: [] }));
-    act(() => result.current.saveView('B', { keyword: 'b', status: [] }));
+    act(() => {
+      result.current.saveView('A', { keyword: 'a', status: [] });
+    });
+    act(() => {
+      result.current.saveView('B', { keyword: 'b', status: [] });
+    });
     const idA = result.current.views[0].id;
     const idB = result.current.views[1].id;
-    act(() => result.current.setDefaultView(idB));
+    act(() => {
+      result.current.setDefaultView(idB);
+    });
     expect(result.current.views.map((v) => v.isDefault)).toEqual([false, true]);
-    act(() => result.current.setDefaultView(idA));
+    act(() => {
+      result.current.setDefaultView(idA);
+    });
     expect(result.current.views.map((v) => v.isDefault)).toEqual([true, false]);
   });
 
   it('删除视图', () => {
     const { result } = renderHook(() => useSavedViews<F>());
-    act(() => result.current.saveView('A', { keyword: 'a', status: [] }));
-    act(() => result.current.saveView('B', { keyword: 'b', status: [] }));
+    act(() => {
+      result.current.saveView('A', { keyword: 'a', status: [] });
+    });
+    act(() => {
+      result.current.saveView('B', { keyword: 'b', status: [] });
+    });
     const id = result.current.views[0].id;
-    act(() => result.current.removeView(id));
+    act(() => {
+      result.current.removeView(id);
+    });
     expect(result.current.views).toHaveLength(1);
     expect(result.current.getView(id)).toBeUndefined();
   });
 
   it('持久化到 localStorage 并可在重挂载后恢复', () => {
     const { result, unmount } = renderHook(() => useSavedViews<F>());
-    act(() => result.current.saveView('P', { keyword: '持久', status: ['DRAFT'] }));
-    act(() => result.current.setDefaultView(result.current.views[0].id));
+    act(() => {
+      result.current.saveView('P', { keyword: '持久', status: ['DRAFT'] });
+    });
+    act(() => {
+      result.current.setDefaultView(result.current.views[0].id);
+    });
     expect(localStorage.getItem(STORAGE_KEY)).toBeTruthy();
     unmount();
     const { result: r2 } = renderHook(() => useSavedViews<F>());
@@ -81,10 +111,99 @@ describe('useSavedViews', () => {
 
   it('resetViews 清空所有视图', () => {
     const { result } = renderHook(() => useSavedViews<F>());
-    act(() => result.current.saveView('A', { keyword: 'a', status: [] }));
-    act(() => result.current.resetViews());
+    act(() => {
+      result.current.saveView('A', { keyword: 'a', status: [] });
+    });
+    act(() => {
+      result.current.resetViews();
+    });
     expect(result.current.views).toEqual([]);
     expect(result.current.getDefaultView()).toBeUndefined();
+  });
+
+  // ===== R51-A：本机写就是唯一权威 ⇒ 三个变更方法必须把写回执传出去 =====
+  // 改前持久化只在 useEffect 里（写发生在 toast 之后的一帧），且三个方法一律返回 void，
+  // 于是 list 页的"视图已保存／已设为默认／已删除"三条宣称没有任何凭据。
+  describe('写回执（本机存储是唯一副本）', () => {
+    /**
+     * 让本机写真的抛出去，并先证明抛得出去——否则"回执 false"可能是别的原因
+     *
+     * 旧写法是对 localStorage 的写方法做 `vi.spyOn` + `mockImplementation`：它靠给实例**赋值**装钩子，
+     * 而 Node 24 的 localStorage 实例上没有自有 setItem，赋值被 `[Storage]` 命名属性 setter 吃掉，
+     * 注入在 CI 上静默空转（本机 Node 26 却"恰好"生效）。现在统一走 src/test/writeFailures.ts
+     * 的按形状选层注入（方法在实例上就注实例、在原型上就注原型），两档形状都抛得出去；
+     * 而"往实例上 defineProperty 就能盖住原型"这句在本机成立、在 CI 的 [Storage] 上不成立，
+     * 原因与实测数据写在那份文件顶部。
+     */
+    function makeWritesFail(boom: Error): WriteFailureInjection {
+      const inj = makeLocalStorageWritesThrow(boom, { methods: ['setItem'] });
+      assertWriteInjectionLanded(inj, boom); // 探测那一次由它自己从配额里扣掉
+      return inj;
+    }
+
+    it('saveView 成功时给出 success=true 的回执，key 就是它写的那个', () => {
+      const { result } = renderHook(() => useSavedViews<F>());
+      let receipt!: WriteReceipt;
+      act(() => {
+        receipt = result.current.saveView('A', { keyword: 'a', status: [] });
+      });
+      expect(receipt).toEqual({ success: true, key: 'savedViews' });
+    });
+
+    it('本机写失败：saveView 报 false，而视图仍留在当前页面（失败只关于持久化）', () => {
+      const inj = makeWritesFail(new Error('QuotaExceededError'));
+      try {
+        const { result } = renderHook(() => useSavedViews<F>());
+        let receipt!: WriteReceipt;
+        act(() => {
+          receipt = result.current.saveView('A', { keyword: 'a', status: [] });
+        });
+        expect(receipt.success).toBe(false);
+        expect(receipt.error).toBeInstanceOf(Error);
+        expect(result.current.views).toHaveLength(1);
+        expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+      } finally {
+        inj.restore();
+      }
+    });
+
+    it('setDefaultView 与 removeView 同样给出回执（成功、失败两极各一次）', () => {
+      const { result } = renderHook(() => useSavedViews<F>());
+      act(() => {
+        result.current.saveView('A', { keyword: 'a', status: [] });
+      });
+      let ok!: WriteReceipt;
+      act(() => {
+        ok = result.current.setDefaultView(result.current.views[0].id);
+      });
+      expect(ok.success).toBe(true);
+      const inj = makeWritesFail(new Error('SecurityError'));
+      try {
+        let bad!: WriteReceipt;
+        act(() => {
+          bad = result.current.removeView(result.current.views[0].id);
+        });
+        expect(bad.success).toBe(false);
+        expect(result.current.views).toHaveLength(0);
+      } finally {
+        inj.restore();
+      }
+    });
+
+    it('同一 tick 连点两次保存：状态与本机镜像最终仍一致（effect 是兜底镜像）', () => {
+      // commit 用"最近一次已知的完整值"算下一份，所以正常情况下同步写与 React 提交值同源；
+      // 这条守的是设计里最弱的一环——万一两者分叉，effect 必须把镜像纠正回来。
+      const { result } = renderHook(() => useSavedViews<F>());
+      act(() => {
+        result.current.saveView('X', { keyword: 'x', status: [] });
+        result.current.saveView('Y', { keyword: 'y', status: [] });
+      });
+      expect(result.current.views.map((v) => v.name)).toEqual(['X', 'Y']);
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as {
+        data: { name: string }[];
+      } | null;
+      expect(raw?.data.map((v) => v.name)).toEqual(['X', 'Y']);
+    });
   });
 });
 

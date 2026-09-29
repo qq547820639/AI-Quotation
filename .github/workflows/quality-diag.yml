@@ -1,0 +1,170 @@
+name: Quality Diagnosis (branch only)
+
+# 为什么要有这个 workflow：
+# PR #5 上 `Lint + TypeCheck + Unit Test` 判了 failure，但本机把 ci.yml 的每一步都跑过一遍全是绿的
+# （lint / tsc --noEmit / tsc:cov:check + 自测 / vitest 503 / i18n:check + 自测 / gates 18 项）。
+# ⇒ 差异在平台上（CI 是区分大小写的 ext4 干净检出，本机是大小写不敏感的 APFS），
+#   而 Actions 的日志要登录才能读（浏览器未登录取到 404，gh 也未认证，MCP 没有日志接口）。
+# 所以让 runner 自己把"每一步的 rc + 首个失败步骤的结尾读数"贴回 PR —— PR 评论我用 API 读得到。
+# 只在取证分支上跑，不进 main，也不与 ci.yml 的判定混在一起。
+
+on:
+  push:
+    branches:
+      - qoder/ci-evidence-0928
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  diag:
+    name: 逐步复算 ci.yml 的 quality 步骤并把读数贴回 PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0 (node24)
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0 (node24)
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 环境自报身份（不认身份就不配当凭据）
+        id: env
+        run: |
+          # 上一版这一行栽在 `| tee -a "$GITHUB_ENV"`：写进去的那条不是 KEY=VALUE 形状，
+          # Actions 解析 $GITHUB_ENV 失败 ⇒ 整个 step 判失败 ⇒ 后面所有 step 被跳过 ⇒
+          # job 十秒红、一条评论都没发出去，把本档唯一的目的（把话带回来）一起带走了。
+          # 本档不需要往 GITHUB_ENV 写身份，要留的留在日志与评论里就够了。
+          echo "os=$ImageOS kernel=$(uname -r) arch=$(uname -m)"
+          : > /tmp/__cs_probe_a; if [ -e /tmp/__cs_probe_A ]; then CS=不区分; else CS=区分; fi
+          rm -f /tmp/__cs_probe_a; echo "文件系统：$CS 大小写"
+          node -v; npm -v; git --version
+          echo "core.ignorecase=$(git config --get core.ignorecase 2>/dev/null || echo unset)"
+
+      - name: npm ci（失败也继续，但要把结尾留给评论）
+        id: npmci
+        continue-on-error: true
+        run: |
+          npm ci --no-audit --no-fund 2>&1 | tee /tmp/npmci.log
+          rc=${PIPESTATUS[0]}
+          echo "npm ci rc=$rc  node_modules=$(ls node_modules 2>/dev/null | wc -l | tr -d ' ') 个包"
+          if [ "$rc" -ne 0 ]; then printf 'NPMCI_FAILED=1\n' >> "$GITHUB_ENV"; else printf 'NPMCI_FAILED=0\n' >> "$GITHUB_ENV"; fi
+          exit 0
+
+      - name: 逐步跑，逐步记 rc（退出码不经过管道）
+        id: steps
+        if: env.NPMCI_FAILED != '1'
+        run: |
+          set +e
+          : > /tmp/steps.txt
+          run1() {
+            name="$1"; shift
+            out="/tmp/step-$(echo "$name" | tr ' /:' '___').log"
+            "$@" > "$out" 2>&1
+            rc=$?
+            printf '%s\t%s\n' "$rc" "$name" >> /tmp/steps.txt
+            echo "::group::$name → rc=$rc"
+            tail -25 "$out"
+            echo "::endgroup::"
+            if [ $rc -ne 0 ]; then
+              # 每一根红都留结尾。上一版只留"第一个失败步骤"，于是 vitest 那根红把
+              # `npm run gates` 那根完全遮住了——两根红是两件事，只带回来一件等于没带。
+              mkdir -p /tmp/fails
+              tail -60 "$out" > "/tmp/fails/$(echo "$name" | tr ' /:' '___').log"
+              echo "$name" >> /tmp/fails/_order
+            fi
+          }
+          run1 "npm run lint" npm run lint
+          run1 "npx tsc --noEmit" npx tsc --noEmit
+          run1 "npm run tsc:cov:check" npm run tsc:cov:check
+          run1 "check-tsc-coverage --self-test" node scripts/check-tsc-coverage.mjs --self-test
+          run1 "npx vitest run --coverage" npx vitest run --coverage
+          run1 "npm run i18n:check" npm run i18n:check
+          run1 "check-i18n --self-test" node scripts/check-i18n.mjs --self-test
+          run1 "npm run gates" npm run gates
+          run1 "npm run storage:check" npm run storage:check
+          run1 "npm run settings:inert:check" npm run settings:inert:check
+          run1 "npm run notify-mint:check" npm run notify-mint:check
+          # ---- 顺带镜像 ci.yml 的 build 作业 ----
+          # 2026-09-27 19:09：quality 转绿后 build 第一次真跑就红（57 s），而本机
+          # `npx tsc -b --force && npx vite build` 两步全 rc=0 ⇒ 差值在 Linux 侧，
+          # 光看退码定不了因。build 作业本身不回话（日志要鉴权才读得到），
+          # 所以把它那条 `npm run build` 也放进这个"逐步记 rc + 带回结尾"的循环里。
+          run1 "npm run build（镜像 build 作业）" npm run build
+          # ---- 逐把尺子单独跑一遍本体与自测 ----
+          # 为什么不能只看 `npm run gates`：聚合闸给每根失败只留子进程输出的一行摘录，
+          # 于是"自测档里到底是第几条判据开的火"在聚合面上永远看不见——2026-09-27 CI 的
+          # `npm run gates` rc=1 就是这么哑的，带回来的那行还是 "✔ 一致 → 必须静默且退 0"，
+          # 红的是后面某条臂，光看聚合读不出来。
+          n_rulers=0
+          for f in scripts/check-*.mjs; do
+            n_rulers=$((n_rulers + 1))
+            b=$(basename "$f" .mjs)
+            run1 "尺子本体 $b" node "$f"
+            run1 "尺子自测 $b" node "$f" --self-test
+          done
+          echo "逐把跑了 $n_rulers 把（聚合闸用同一正则枚举；数目与聚合自报的不符＝枚举面漂移）"
+          # ---- 对照臂：同一台机器上只换"调度方式"，用来分"跨文件污染"与"平台差异" ----
+          # 主跑（默认并行）里 storage.test.ts:59 的
+          #   expect(() => localStorage.setItem('probe','1')).toThrow(boom)
+          # 判"没抛"，而本机同一份代码 503 全绿。两臂差的是 worker/池，不是代码。
+          run1 "对照A 只跑 storage 单文件" npx vitest run src/utils/__tests__/storage.test.ts
+          run1 "对照B 全量但关文件并行" npx vitest run --coverage --no-file-parallelism
+          run1 "对照C 全量单 worker" npx vitest run --coverage --maxWorkers=1 --minWorkers=1
+          node -e "console.log('jsdom='+require('jsdom/package.json').version,'vitest='+require('vitest/package.json').version,'node='+process.version)" > /tmp/vers.log 2>&1
+          echo "----- 版本自报 -----"; cat /tmp/vers.log
+          echo "----- rc 一览 -----"
+          cat /tmp/steps.txt
+          echo "----- 首个非零 rc -----"
+          awk -F'\t' '$1!=0 {print; exit}' /tmp/steps.txt
+          first=$(awk -F'\t' '$1!=0 {print $2; exit}' /tmp/steps.txt)
+          echo "first_failed=${first}" >> "$GITHUB_OUTPUT"
+          # 诊断档本身不许把流水线判红：它只负责把读数带回来，判定仍归 ci.yml
+          exit 0
+
+      - name: 把 rc 一览与首条失败的结尾贴成 PR 评论
+        if: always() # 少了这行，前面任一 step 非零就会把"带话"这一步整条跳过（上一版就是这么哑的）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIRST_FAILED: ${{ steps.steps.outputs.first_failed }}
+        run: |
+          # 这一档的唯一职责是"把话带回来"。所以：不用 set -e（任何一处取不到东西都要继续发评论），
+          # 每个读取都带兜底；上一版就是 set -e + cat 一个不存在的 /tmp/steps.txt，评论没发出去。
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head qoder/ci-evidence-0928 --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          case "$PR" in
+            ''|*[!0-9]*) echo "PR 编号取不到（=$PR），无处可贴；把读数打进日志"; PR=""; ;;
+          esac
+          {
+            echo "### quality 步骤逐步复算（runner 侧一手读数）"
+            echo
+            echo "- 首个失败步骤：\`${FIRST_FAILED:-（无：所跑步骤全绿）}\`"
+            echo "- NPMCI_FAILED=\`${NPMCI_FAILED:-unset}\`"
+            echo
+            echo '```'
+            echo "rc<TAB>步骤名（没有这份清单＝装树就没成，下面贴 npm ci 结尾）"
+            cat /tmp/steps.txt 2>/dev/null || echo "(无)"
+            echo '```'
+            # 步骤名里有空格：早先用 `for n in $(cat ...)` 会把一个名字拆成四个词，
+            # 于是拼出来的文件名全是碎的、每根红的结尾都读成"(取不到)"——等于又哑了一次。
+            # 改成逐行读、整行当名字。
+            if [ -f /tmp/fails/_order ]; then
+              while IFS= read -r n; do
+                [ -n "$n" ] || continue
+                echo; echo "#### 失败步骤结尾：$n"
+                echo '```'
+                cat "/tmp/fails/$(printf '%s' "$n" | tr ' /:' '___').log" 2>/dev/null || echo "(结尾取不到)"
+                echo '```'
+              done < /tmp/fails/_order
+            fi
+            echo; echo '#### 版本自报（要判「平台差异」先得有版本）'
+            echo '```'
+            cat /tmp/vers.log 2>/dev/null || echo "(取不到)"
+            echo '```'
+            if [ ! -f /tmp/steps.txt ] || [ -s /tmp/npmci.log ]; then
+              echo; echo "#### npm ci 结尾"; echo '```'; tail -30 /tmp/npmci.log 2>/dev/null; echo '```'
+            fi
+          } > /tmp/report.md
+          if [ -n "$PR" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md || echo "贴评论失败"
+          fi
+          cat /tmp/report.md

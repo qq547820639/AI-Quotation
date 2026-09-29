@@ -6,10 +6,11 @@
  * - 类型偏好开关关闭时不写入
  * - 未读数维护
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useNotificationStore } from '../useNotificationStore';
 import { useSettingsStore } from '../useSettingsStore';
 import { NotificationType } from '@/types';
+import { notificationApi } from '@/api';
 
 vi.mock('@/api', () => ({
   notificationApi: {
@@ -106,6 +107,105 @@ describe('addNotification 旧流程时间窗去重', () => {
   });
 });
 
+/**
+ * R62：服务端入库的那份每用户偏好此前**零消费者**（列写全了没人读）。
+ * 这里量的就是它开始起作用，且两侧名字不同源的那两对必须各自钉住——
+ * 靠名字对齐的写法会静默错配 DEADLINE_APPROACHING 与 APPROVAL 两类。
+ */
+const DEFAULT_PREFS_FOR_TEST = {
+  deadlineReminder: true,
+  deadlineReminderHours: 24,
+  quotationSubmitted: true,
+  approvalResult: true,
+  inquirySent: true,
+};
+
+describe('通知抑制的权威按状态分（R62 步骤②：拿到偏好认偏好，没拿到回退设置侧）', () => {
+  const payload = (type: NotificationType, eventId: string) => ({
+    eventId,
+    type,
+    title: 't',
+    content: '',
+  });
+  const allOnSettings = {
+    inquirySent: true,
+    quotationSubmitted: true,
+    timeoutAlert: true,
+    todoReminder: false,
+    approval: true,
+  };
+
+  afterEach(() => {
+    useNotificationStore.setState({
+      preferences: { ...DEFAULT_PREFS_FOR_TEST },
+      preferencesLoaded: false,
+    });
+    useSettingsStore.setState({ notifications: { ...allOnSettings } });
+  });
+
+  it('偏好侧 inquirySent=false ⇒ INQUIRY_SENT 不写入（改前这一格必红：偏好从来没被读）', async () => {
+    useNotificationStore.setState({
+      preferencesLoaded: true,
+      preferences: { ...DEFAULT_PREFS_FOR_TEST, inquirySent: false },
+    });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.INQUIRY_SENT, 'e-pref-1'));
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('别名映射：偏好侧关的是 deadlineReminder，抑制的必须是 DEADLINE_APPROACHING', async () => {
+    useNotificationStore.setState({
+      preferencesLoaded: true,
+      preferences: { ...DEFAULT_PREFS_FOR_TEST, deadlineReminder: false },
+    });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.DEADLINE_APPROACHING, 'e-pref-2'));
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('别名映射第二对：偏好侧 approvalResult=false 抑制 APPROVAL', async () => {
+    useNotificationStore.setState({
+      preferencesLoaded: true,
+      preferences: { ...DEFAULT_PREFS_FOR_TEST, approvalResult: false },
+    });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.APPROVAL, 'e-pref-3'));
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('两侧都开 ⇒ 照写（对照组，防"永远抑制"也能让上面三格绿）', async () => {
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.INQUIRY_SENT, 'e-pref-4'));
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toContain('e-pref-4');
+  });
+
+  it('回退分支：没拿到偏好时（离线/首启动/迁移未完成）本机设置侧仍然兜住抑制', async () => {
+    useNotificationStore.setState({ preferencesLoaded: false });
+    useSettingsStore.setState({ notifications: { ...allOnSettings, quotationSubmitted: false } });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.QUOTATION_SUBMITTED, 'e-pref-5'));
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('步骤②：已拿到偏好时权威只在偏好侧——设置侧的 false 不再参与判断', async () => {
+    useNotificationStore.setState({
+      preferencesLoaded: true,
+      preferences: { ...DEFAULT_PREFS_FOR_TEST },
+    });
+    useSettingsStore.setState({ notifications: { ...allOnSettings, quotationSubmitted: false } });
+    await useNotificationStore
+      .getState()
+      .addNotification(payload(NotificationType.QUOTATION_SUBMITTED, 'e-auth-move'));
+    // 不再抑制：这条不是"放宽"，而是"同一概念只剩一个权威"——值已由写穿/迁移搬到偏好侧
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toContain('e-auth-move');
+  });
+});
+
 describe('已读操作', () => {
   it('markRead 将指定通知置为已读并减少未读数', async () => {
     await useNotificationStore.getState().addNotification({
@@ -119,6 +219,107 @@ describe('已读操作', () => {
     const n = useNotificationStore.getState().notifications[0];
     expect(n.read).toBe(true);
     expect(useNotificationStore.getState().unreadCount).toBe(0);
+  });
+
+  it('markRead 被服务端拒绝时回滚乐观状态（R40：调用方丢弃结果也不得让界面说谎）', async () => {
+    await useNotificationStore.getState().addNotification({
+      eventId: 'evt-rb',
+      type: NotificationType.SYSTEM,
+      title: 'R',
+      content: '',
+    });
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+
+    const api = vi.mocked(notificationApi.markRead);
+    api.mockRejectedValueOnce(new Error('500 boom'));
+    const r = await useNotificationStore.getState().markRead('evt-rb');
+
+    expect(r.success).toBe(false);
+    // 关键面：界面不得保留"已读"。这条单独存在时可能是假的——若乐观写从没生效，
+    // 它也会"通过"，所以下面同一份代码再验一次成功路径确实会置已读。
+    expect(useNotificationStore.getState().notifications[0].read).toBe(false);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+
+    // 正向对照：成功路径必须仍然落地
+    api.mockResolvedValueOnce({} as never);
+    const r2 = await useNotificationStore.getState().markRead('evt-rb');
+    expect(r2.success).toBe(true);
+    expect(useNotificationStore.getState().notifications[0].read).toBe(true);
+    expect(useNotificationStore.getState().unreadCount).toBe(0);
+  });
+
+  it('addNotification 被服务端拒绝时撤回该条与其未读位（R42：幽灵行会被合并规则永久养着）', async () => {
+    const api = vi.mocked(notificationApi.create);
+    const ids = () => useNotificationStore.getState().notifications.map((n) => n.id);
+
+    // 极性 A（不开火则下面全是空转）：成功路径必须真的写入
+    api.mockResolvedValueOnce({} as never);
+    const okRes = await useNotificationStore.getState().addNotification({
+      eventId: 'evt-keep',
+      type: NotificationType.SYSTEM,
+      title: 'K',
+      content: '',
+    });
+    expect(okRes.success).toBe(true);
+    expect(ids()).toEqual(['evt-keep']);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+
+    // 极性 B：服务端 500 ⇒ 该条连同它占的未读位一起撤回，localStorage 也要跟着撤
+    api.mockRejectedValueOnce(new Error('500 boom'));
+    const badRes = await useNotificationStore.getState().addNotification({
+      eventId: 'evt-ghost',
+      type: NotificationType.SYSTEM,
+      title: 'G',
+      content: '',
+    });
+    expect(badRes.success).toBe(false);
+    expect(ids()).toEqual(['evt-keep']);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
+    // localStorage 侧：saveJSON 的键带 procurement_ 前缀、值带 {v:2,data} 信封
+    // （`src/utils/storage.ts:4,36-39`）。按裸键名读会得到 null，断言就退化成"两个空数组相等"。
+    const stored = JSON.parse(localStorage.getItem('procurement_notifications') ?? 'null') as {
+      v: number;
+      data: { id: string }[];
+    } | null;
+    expect(stored).not.toBeNull();
+    expect(stored!.v).toBe(2);
+    expect(stored!.data.map((n) => n.id)).toEqual(['evt-keep']);
+  });
+
+  it('R42 撤回只撤失败的那一条，不得连带丢掉等待期间的并发写入', async () => {
+    const api = vi.mocked(notificationApi.create);
+    let rejectSlow: (e: unknown) => void = () => {};
+    api.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSlow = reject;
+        }),
+    );
+
+    const inflight = useNotificationStore.getState().addNotification({
+      eventId: 'evt-slow',
+      type: NotificationType.SYSTEM,
+      title: 'S',
+      content: '',
+    });
+    api.mockResolvedValueOnce({} as never);
+    await useNotificationStore.getState().addNotification({
+      eventId: 'evt-fast',
+      type: NotificationType.SYSTEM,
+      title: 'F',
+      content: '',
+    });
+    // 慢的那条此刻仍在飞，快的已经落地：两条都在列表里、未读位为 2
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toEqual([
+      'evt-fast',
+      'evt-slow',
+    ]);
+    expect(useNotificationStore.getState().unreadCount).toBe(2);
+
+    rejectSlow(new Error('500 boom'));
+    expect((await inflight).success).toBe(false);
+    expect(useNotificationStore.getState().notifications.map((n) => n.id)).toEqual(['evt-fast']);
+    expect(useNotificationStore.getState().unreadCount).toBe(1);
   });
 
   it('markAllRead 将全部置为已读', async () => {

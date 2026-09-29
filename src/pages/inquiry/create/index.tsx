@@ -26,15 +26,7 @@ import dayjs from 'dayjs';
 import PageHeader from '@/components/PageHeader';
 import { useInquiryStore } from '@/store/useInquiryStore';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useSettingsStore } from '@/store/useSettingsStore';
-import {
-  Currency,
-  InquiryStatus,
-  LogType,
-  type Inquiry,
-  type InquiryItem,
-  type InquiryLog,
-} from '@/types';
+import { InquiryStatus, LogType, type Inquiry, type InquiryItem, type InquiryLog } from '@/types';
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '@/utils/confirm';
 import { loadJSON, removeKey } from '@/utils/storage';
 import { useInquiryDraft } from '@/hooks/useInquiryDraft';
@@ -46,6 +38,7 @@ import PreviewStep from './PreviewStep';
 import {
   buildInquiryCode,
   buildLog,
+  defaultBasicInfo,
   deserializeBasicInfo,
   inquiryToBasicInfo,
   serializeBasicInfo,
@@ -56,26 +49,6 @@ import {
 const { Text } = Typography;
 
 const DRAFT_KEY = 'inquiry_draft';
-
-/** 默认基本信息（报价截止时间取自系统设置 deadlineLeadDays） */
-function defaultBasicInfo(): BasicInfoForm {
-  const { deadlineLeadDays } = useSettingsStore.getState();
-  const user = useAuthStore.getState().currentUser;
-  return {
-    subject: '',
-    organization: user.organization,
-    ownerName: user.name,
-    currency: Currency.CNY,
-    deadline: dayjs().add(deadlineLeadDays, 'day'),
-    expectedDeliveryDate: null,
-    deliveryAddress: '',
-    contact: user.name,
-    paymentTerms: '款到发货',
-    invoiceRequirement: '增值税专用发票13%',
-    description: '',
-    attachments: [],
-  };
-}
 
 export default function InquiryCreatePage() {
   const { t } = useTranslation();
@@ -267,7 +240,11 @@ export default function InquiryCreatePage() {
       cancelText: t('inquiry.create.conflictReload'),
       okType: 'danger',
       onOk: () => {
-        draft.overwrite(buildSnapshot(), editingId);
+        // R51-A：草稿只存本机，"已用本地内容覆盖"必须以写落地为前提
+        if (!draft.overwrite(buildSnapshot(), editingId)) {
+          notifyError(t('storage.writeFailed'));
+          return;
+        }
         notifySuccess(t('inquiry.create.conflictOverwritten'));
       },
       onCancel: () => {
@@ -435,18 +412,18 @@ export default function InquiryCreatePage() {
   );
 
   /** 保存草稿 */
-  const handleSaveDraft = useCallback(() => {
+  const handleSaveDraft = useCallback(async () => {
     if (readOnly) return;
     if (!basicInfo.subject?.trim()) {
       notifyWarning(t('inquiry.create.subjectRequiredForDraft'));
       return;
     }
     const inquiry = buildInquiry(InquiryStatus.DRAFT);
-    if (editingInquiry) {
-      updateInquiry(editingInquiry.id, inquiry);
-    } else {
-      addInquiry(inquiry);
-    }
+    const result = editingInquiry
+      ? await updateInquiry(editingInquiry.id, inquiry)
+      : await addInquiry(inquiry);
+    // 写失败时 store 已回滚，且 axios 响应拦截器已弹出错误提示，这里只负责不再谎报成功
+    if (!result.success) return;
     removeKey(DRAFT_KEY);
     markDirty(false);
     notifySuccess(t('inquiry.create.draftSaved'));
@@ -478,19 +455,29 @@ export default function InquiryCreatePage() {
       }),
       okText: t('inquiry.create.confirmSendOk'),
       cancelText: t('common.cancel'),
-      onOk: () => {
-        // 两步：先以 DRAFT 保存（拿到稳定 id），再调 sendInquiry 触发状态转换 + INQUIRY_SENT 通知
+      onOk: async () => {
+        // 两步且必须串行：先以 DRAFT 创建（服务端落库并返回同一 id），成功后再 send
+        // 触发状态转换 + 生成邀请。此前 addInquiry 未被 await，send 打在还不存在的 id 上，
+        // 真实后端下返回 404：询价停在 DRAFT、邀请不生成，而界面仍提示"已发送"。
         const draft = buildInquiry(InquiryStatus.DRAFT);
-        if (editingInquiry) {
-          updateInquiry(editingInquiry.id, draft);
-        } else {
-          addInquiry(draft);
+        const saved = editingInquiry
+          ? await updateInquiry(editingInquiry.id, draft)
+          : await addInquiry(draft);
+        // 网络/服务端类失败由 axios 响应拦截器弹提示；但 `reason: 'not_found' | 'pending'`
+        // 这类"请求根本没发出去"的本地短路不经过拦截器，过去这里是彻底静默的（R28）。
+        if (!saved.success) {
+          if (!saved.error) notifyError(t('common.operateFailed'));
+          return;
         }
-        sendInquiry(draft.id);
+        const sent = await sendInquiry(draft.id);
+        if (!sent.success) {
+          if (!sent.error) notifyError(t('common.operateFailed'));
+          return;
+        }
         removeKey(DRAFT_KEY);
         markDirty(false);
         notifySuccess(t('inquiry.create.sent'));
-        navigate(`/inquiry/detail/${draft.id}`);
+        void navigate(`/inquiry/detail/${draft.id}`);
       },
     });
   }, [
@@ -513,7 +500,7 @@ export default function InquiryCreatePage() {
     const perform = () => {
       removeKey(DRAFT_KEY);
       markDirty(false);
-      navigate('/inquiry/list');
+      void navigate('/inquiry/list');
     };
     if (dirtyRef.current && !readOnly) {
       confirmAction({
@@ -684,7 +671,11 @@ export default function InquiryCreatePage() {
               {t('inquiry.create.saveAsTemplate')}
             </Button>
           )}
-          <Button icon={<SaveOutlined />} onClick={handleSaveDraft} disabled={readOnly}>
+          <Button
+            icon={<SaveOutlined />}
+            onClick={() => void handleSaveDraft()}
+            disabled={readOnly}
+          >
             {t('common.saveDraft')}
           </Button>
           {current > 0 && <Button onClick={handlePrev}>{t('common.prev')}</Button>}

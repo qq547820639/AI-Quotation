@@ -64,6 +64,8 @@ def test_settings_update_requires_admin(client, buyer_headers, admin_headers):
         },
         "ai": {"provider": "local", "baseUrl": "", "model": "",
                "apiKey": "", "hasApiKey": False, "structuredOutput": True},
+        # basic 是必填组（PUT 是整体替换）：缺它应当是 422 而不是"这一组没改"
+        "basic": {"systemName": "采购询价系统", "currency": "CNY", "deadlineLeadDays": 3},
     }
     # 采购人员 u-1：无 SETTINGS_MANAGE → 403
     resp = client.put("/api/settings", json=payload, headers=buyer_headers)

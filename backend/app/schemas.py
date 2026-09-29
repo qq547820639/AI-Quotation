@@ -233,6 +233,20 @@ class UnreadCountSchema(BaseModel):
     count: int
 
 
+class DashboardWorkbenchSchema(BaseModel):
+    """行动工作台聚合计数（R107）：8 个卡片数字 + 负责人选项 + 范围内询价单总数"""
+    pendingSend: int
+    deadlineApproaching: int
+    unquotedSuppliers: int
+    failedDeliveries: int
+    abnormalQuotations: int
+    pendingApproval: int
+    approvalTimeout: int
+    pendingConfirm: int
+    owners: List[str]
+    total: int
+
+
 class DeliveryRecordSchema(BaseModel):
     """逐供应商交付状态（采购端查看）"""
     supplierId: str
@@ -336,10 +350,45 @@ class AISettings(BaseModel):
     structuredOutput: bool = True
 
 
+SUPPORTED_CURRENCIES: tuple[str, ...] = ("CNY", "USD", "EUR")
+MAX_DEADLINE_LEAD_DAYS = 365
+
+
+class BasicSettings(BaseModel):
+    """基本信息 / 询价规则里**有生产读者**的那三项（R49→R57 续）。
+
+    币种取值域与前端 `src/types/index.ts` 的 `enum Currency` 必须一致，
+    这条对账不靠注释自觉，由 `tests/test_settings_basic.py` 逐字重开那个文件比集合。
+    写边界必须拒绝坏值而不是静默退回默认（R35 的家规）：坏币种会被渲染成裸串，
+    负数/超期的 lead days 会让新建单据的默认截止日落到过去而没人报错。
+    取值域以服务端为准（前端设置页的 InputNumber 今天没有上界，见 settings/index.tsx:217-221），
+    越界返回 422，前端 `handleSaveRules` 已按 result.success 分叉弹错，不会被静默吞掉。
+    """
+
+    systemName: str = "采购询价系统"
+    currency: str = "CNY"
+    deadlineLeadDays: int = 3
+
+    @field_validator("currency")
+    @classmethod
+    def _currency_supported(cls, v: str) -> str:
+        if v not in SUPPORTED_CURRENCIES:
+            raise ValueError(f"currency 必须是 {list(SUPPORTED_CURRENCIES)} 之一，收到 {v!r}")
+        return v
+
+    @field_validator("deadlineLeadDays")
+    @classmethod
+    def _lead_days_in_range(cls, v: int) -> int:
+        if not 0 <= v <= MAX_DEADLINE_LEAD_DAYS:
+            raise ValueError(f"deadlineLeadDays 必须在 0..{MAX_DEADLINE_LEAD_DAYS}，收到 {v}")
+        return v
+
+
 class AppSettingsSchema(BaseModel):
     approval: ApprovalSettings
     notification: NotificationSettings
     ai: AISettings
+    basic: BasicSettings
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -388,6 +437,72 @@ class SessionInfo(BaseModel):
 class PaginatedInquiriesSchema(BaseModel):
     """询价列表服务端分页响应（P2-12 Task 17）"""
     items: List[InquirySchema]
+    total: int
+    page: int
+    pageSize: int
+
+
+class InquiryFilterSet(BaseModel):
+    """一组筛选条件，键与 `GET /api/inquiries` 的查询参数逐一对应（R111）。
+
+    extra="forbid"：写错键名一律 422，不静默忽略——静默忽略会让调用方把
+    "筛子没生效的全集数"读成"这一格的数"。
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    keyword: Optional[str] = None
+    status: Optional[str] = None
+    code: Optional[str] = None
+    subject: Optional[str] = None
+    creator: Optional[str] = None
+    category: Optional[str] = None
+    dateFrom: Optional[str] = None
+    dateTo: Optional[str] = None
+    deadlineFrom: Optional[str] = None
+    deadlineTo: Optional[str] = None
+    nodeStatus: Optional[str] = None
+    # R113：只要"至少有一份已提交报价"的询价单（比价页的可对比卡片列表）。
+    # 真值串 1/true/yes 走 EXISTS，伪值串 0/false/no 走 NOT EXISTS，空值不加筛子，
+    # 乱值由谓词构造处统一判 400（不在这个模型里 raise：GET 分支是在 handler 内部自建本模型的，
+    # 这里抛 ValidationError 会冒成 500，而不是 422/400）。
+    # 下面的 validator 只做**类型归一**：名字是布尔形状的筛子，POST 体里写 JSON 布尔 true
+    # 与 GET 查询里写 "true" 必须落到同一个值，否则同一把筛子在两支上一个 422、一个 200。
+    hasSubmittedQuotation: Optional[str] = None
+
+    @field_validator("hasSubmittedQuotation", mode="before")
+    @classmethod
+    def _normalize_submitted_flag(cls, v: Any) -> Any:
+        # bool 必须排在 int 前面判：Python 里 isinstance(True, int) 也是真
+        if isinstance(v, bool):
+            return "1" if v else "0"
+        if isinstance(v, int):
+            return str(v)
+        return v
+
+
+class InquiryCountSpec(BaseModel):
+    """一个计数档位：label 是回显键，filters 是该档的筛子（R111）"""
+    label: str
+    filters: InquiryFilterSet = InquiryFilterSet()
+
+
+class InquiryCountsRequest(BaseModel):
+    """批量计数请求体（R111）：审批页的四个总数一次问完，不再发四次 pageSize=1"""
+    items: List[InquiryCountSpec]
+
+
+class InquiryCountsSchema(BaseModel):
+    counts: Dict[str, int]
+
+
+class PaginatedLogsSchema(BaseModel):
+    """操作日志的服务端分页响应（R112）
+
+    与 `PaginatedInquiriesSchema` 的区别是这份按**日志行**分页，不是按询价单分页：
+    日志页原来把整份询价数组（每条带全部 logs）拉下来再 flatMap，
+    一页 10 行要付全集的价。
+    """
+    items: List[InquiryLogSchema]
     total: int
     page: int
     pageSize: int

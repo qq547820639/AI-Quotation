@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DEMO_PASSWORD } from './helpers';
+import { login } from './helpers';
 
 /**
  * E2E：RBAC 权限控制（G4 重写：消除恒真式，新增未登录用例）
@@ -16,41 +16,40 @@ test.describe('RBAC 权限', () => {
   });
 
   test('采购人员访问设置页受限', async ({ page }) => {
-    // 登录采购人员 u-1（李明辉，无 SETTINGS_MANAGE 权限）
-    await page.goto('/login');
-    await page.locator('.ant-select-selector').click();
-    await page.locator('.ant-select-item-option').filter({ hasText: '李明辉' }).click();
-    await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-    await expect(page).toHaveURL(/\/dashboard/);
+    // 登录采购人员 u-1（李明辉，无 SETTINGS_MANAGE 权限）。
+    // 走共享 login() 而不是自己抄一遍：它额外断言"选项真的落地 + 接口返回 2xx"，
+    // 自己抄的那份点了没落地也会一路静默到跳转断言。
+    await login(page, '李明辉');
 
     // 尝试访问设置页
     await page.goto('/settings');
 
-    // 具体断言：要么跳转到 403 页面，要么设置页的保存按钮不可见（权限拦截）
+    // 断言不能重述自己的守卫：原来写成
+    //   if (A || B) { expect(A || B).toBeTruthy() } else { …保存按钮不可见… }
+    // 那条 expect 在 if 分支里恒真、永不失败，于是"被踢到 /login"也算通过——
+    // 用例宣称的是"权限被拦"，实际测的是"页面确实跳了个地方"。
+    // 收紧成：只接受两种产品语义上成立的结果（跳 403 / 留在设置页并被组件拦住），
+    // 第三类落点（尤其 /login）必须判红。
     const url = page.url();
-    const redirectedToForbidden = url.includes('/forbidden') || url.includes('/403');
-    const redirectedAway = !url.includes('/settings');
-
-    if (redirectedToForbidden || redirectedAway) {
-      // 跳转了，验证确实离开了 settings
-      expect(redirectedToForbidden || redirectedAway).toBeTruthy();
-    } else {
-      // 仍在 /settings，验证保存按钮不可见（权限组件拦截）
-      await expect(page.getByRole('button', { name: /保\s*存|Save/ })).not.toBeVisible({
-        timeout: 5000,
-      });
-    }
+    const onForbidden = url.includes('/forbidden') || url.includes('/403');
+    const stillOnSettings = url.includes('/settings');
+    expect(
+      onForbidden || stillOnSettings,
+      `采购人员访问 /settings 只应「跳 403」或「留在设置页且无保存权」，实际停在 ${url}`,
+    ).toBe(true);
+    // 两种允许的落点都不该给出"保存"权：跳 403 时页面上没有保存按钮，
+    // 留在设置页时权限组件不渲染它。原来这条包在 `if (stillOnSettings)` 里 ⇒
+    // 一旦落到 403 分支它整条不执行，等于"跳 403"那一半没有牙（R38 的同一形状）。
+    // `not.toBeVisible()` 对"元素不存在"和"元素被隐藏"都成立，所以这里可以无条件断。
+    await expect(
+      page.getByRole('button', { name: /保\s*存|Save/ }),
+      '采购人员在 /settings 的两种允许落点下都不该看到保存按钮',
+    ).not.toBeVisible({ timeout: 5000 });
   });
 
   test('管理员可正常访问设置页', async ({ page }) => {
-    // 登录管理员 u-6（周大海）
-    await page.goto('/login');
-    await page.locator('.ant-select-selector').click();
-    await page.locator('.ant-select-item-option').filter({ hasText: '周大海' }).click();
-    await page.locator('input[type="password"]').fill(DEMO_PASSWORD);
-    await page.getByRole('button', { name: /登\s*录|Login/ }).click();
-    await expect(page).toHaveURL(/\/dashboard/);
+    // 登录管理员 u-6（周大海），同样走共享 login()
+    await login(page, '周大海');
 
     // 访问设置页
     await page.goto('/settings');

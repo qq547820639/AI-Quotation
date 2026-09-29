@@ -12,7 +12,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -25,20 +25,30 @@ from ..delivery import (
 )
 from ..models import (
     User, Inquiry, InquiryItem, InquiryLog, ApprovalNode, Quotation,
-    Supplier, AppSettings, SupplierInvitation, QuotationSnapshot,
+    Supplier, AppSettings, SupplierInvitation, QuotationSnapshot, inquiry_supplier,
 )
+from pydantic import ValidationError
+
 from ..schemas import (
     InquirySchema, InquiryCreate, InquiryUpdate, ApprovalAction,
     QuotationSchema, SuccessResult, VersionBody,
     DeliveryRecordSchema, DeliverySummarySchema,
     PaginatedInquiriesSchema, ExportRequest, QuotationSnapshotSchema,
+    InquiryItemSchema, InquiryFilterSet, InquiryCountsRequest, InquiryCountsSchema,
+    PaginatedLogsSchema,
 )
 from ..auth import get_current_user, require_permission, resolve_permissions
-from ..serializers import inquiry_to_schema, quotation_to_schema, gen_id, now_str
+from ..serializers import (
+    inquiry_to_schema,
+    inquiry_log_to_schema,
+    quotation_to_schema,
+    gen_id,
+    now_str,
+)
 from ..policy import require_inquiry_access, require_inquiry_edit, filter_visible_inquiries, set_create_ownership
 from ..state_machine import (
     assert_inquiry_transition, S_PENDING_SEND, S_INQUIRING, S_CANCELLED, S_COMPLETED,
-    S_PENDING_APPROVAL, S_PENDING_CONFIRM,
+    S_PENDING_APPROVAL, S_PENDING_CONFIRM, Q_SUBMITTED,
 )
 from ..templates import preview_template
 from ..events import publish
@@ -115,25 +125,63 @@ def _merge_map(db: Session, inquiry: Inquiry, key: str, incoming: dict | None) -
 
 
 def _build_inquiry_items(inquiry_id: str, items_data: list) -> list[InquiryItem]:
-    """从前端 items 构造 ORM InquiryItem 列表（items 含 material 内联对象 + 扁平字段）"""
+    """从前端 items 构造 ORM InquiryItem 列表（items 含 material 内联对象 + 扁平字段）
+
+    写之前先过一遍**读侧**的 InquiryItemSchema（R35）：列是动态类型，写进来的
+    `quantity="NOT-A-NUMBER"` 会原样落库，而 `inquiry_to_schema` 要求 `quantity: int` ——
+    于是这一行让 `GET /api/inquiries` 对所有人抛 ValidationError 500，一次坏写毒掉整个列表页。
+    过读侧 schema 同时带来两个性质：能转换的（"10" → 10）照样接受并按转换后的值落库，
+    不能表示的在**任何写入发生之前**就以 422 拒绝。
+    """
     result = []
-    for it in items_data or []:
+    for idx, it in enumerate(items_data or []):
         material = it.get("material") or {}
+        payload = {
+            "id": it.get("id") or gen_id(f"item-{inquiry_id}"),
+            "inquiryId": inquiry_id,
+            "materialId": material.get("id") or it.get("materialId"),
+            "name": it.get("name", material.get("name", "")),
+            "code": it.get("code", material.get("code", "")),
+            "category": it.get("category", material.get("category", "")),
+            "brand": it.get("brand", material.get("brand", "")),
+            "spec": it.get("spec", material.get("spec", "")),
+            "techParams": it.get("techParams", material.get("techParams", "")),
+            "unit": it.get("unit", material.get("unit", "")),
+            "quantity": it.get("quantity", 0),
+            "targetPrice": it.get("targetPrice"),
+            "expectedDeliveryDate": it.get("expectedDeliveryDate"),
+            "remark": it.get("remark"),
+            "attachments": it.get("attachments", []),
+        }
+        try:
+            v = InquiryItemSchema.model_validate(payload)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error_type": "invalid_inquiry_item",
+                    "index": idx,
+                    "fields": sorted({
+                        ".".join(str(p) for p in err["loc"]) for err in e.errors()
+                    }),
+                    "message": f"第 {idx + 1} 个物料字段不合法，未创建任何数据",
+                },
+            )
         result.append(InquiryItem(
-            id=it.get("id") or gen_id(f"item-{inquiry_id}"),
+            id=v.id,
             inquiry_id=inquiry_id,
-            material_id=material.get("id") or it.get("materialId"),
-            name=it.get("name", material.get("name", "")),
-            code=it.get("code", material.get("code", "")),
-            category=it.get("category", material.get("category", "")),
-            brand=it.get("brand", material.get("brand", "")),
-            spec=it.get("spec", material.get("spec", "")),
-            tech_params=it.get("techParams", material.get("techParams", "")),
-            unit=it.get("unit", material.get("unit", "")),
-            quantity=it.get("quantity", 0),
-            target_price=it.get("targetPrice"),
-            expected_delivery_date=it.get("expectedDeliveryDate"),
-            remark=it.get("remark"),
+            material_id=v.materialId,
+            name=v.name,
+            code=v.code,
+            category=v.category,
+            brand=v.brand,
+            spec=v.spec,
+            tech_params=v.techParams,
+            unit=v.unit,
+            quantity=v.quantity,
+            target_price=v.targetPrice,
+            expected_delivery_date=v.expectedDeliveryDate,
+            remark=v.remark,
         ))
     return result
 
@@ -181,7 +229,166 @@ _SORT_FIELDS = {
     "deadline": Inquiry.deadline,
     "code": Inquiry.code,
     "subject": Inquiry.subject,
+    "status": Inquiry.status,
 }
+
+# R108：列表页默认走服务端分页后，"按这一列排"必须排的是筛选后的全集，
+# 而不是当页 10 行——所以三个"数出来的列"（商品数／邀请数／已提交数）也要能在服务端排。
+# 用相关子查询而不是先拉行再数：不新增往返，也不改变行数。
+_ITEMS_COUNT_EXPR = (
+    select(func.count(InquiryItem.id))
+    .where(InquiryItem.inquiry_id == Inquiry.id)
+    .correlate(Inquiry)
+    .scalar_subquery()
+)
+_INVITED_COUNT_EXPR = (
+    select(func.count(inquiry_supplier.c.supplier_id))
+    .where(inquiry_supplier.c.inquiry_id == Inquiry.id)
+    .correlate(Inquiry)
+    .scalar_subquery()
+)
+_SUBMITTED_COUNT_EXPR = (
+    select(func.count(Quotation.id))
+    # R113：这里原来是硬编码字面量 "SUBMITTED"，与 `hasSubmittedQuotation` 用的
+    # `Q_SUBMITTED` 成了同一个值的两个来源（子代理复算时点出）。本文件内现在只剩常量这一处
+    # （导出路径 :1160 那处同轮改掉，常驻断言 test_inquiries_list_filters.py 的
+    # test_inquiries_router_binds_no_bare_submitted_literal 钉住"文件内零字面量"）；
+    # 但 `routers/quotations.py`、`routers/portal.py`、`routers/dashboard.py` 各自还重抄一份，
+    # 全仓单一来源没做到，已记为开放项（登记册 R113 六）。
+    .where(and_(Quotation.inquiry_id == Inquiry.id, Quotation.status == Q_SUBMITTED))
+    .correlate(Inquiry)
+    .scalar_subquery()
+)
+_SORT_EXPRS = {
+    "itemsCount": _ITEMS_COUNT_EXPR,
+    "invitedCount": _INVITED_COUNT_EXPR,
+    "submittedCount": _SUBMITTED_COUNT_EXPR,
+}
+
+# 批量计数的档位上限：审批页现在用 4 档，仪表盘统计卡将来约 6 档；
+# 设上限是为了让"一格一档"不会被误用成几百次全表扫描。
+_MAX_COUNT_ITEMS = 32
+
+# 布尔形状筛子的取值表（R113）。MSW 桩 src/mocks/handlers.ts 里有一份同值的镜像，
+# 两表不同形时演示支会把乱值当 no-op、真后端判 400。
+_FLAG_TRUE = ("1", "true", "yes")
+_FLAG_FALSE = ("0", "false", "no")
+
+# 日志分页的排序白名单（R112）：页面只有"操作时间"一列可排，
+# 不认识的键退回默认列而不是 500（同 R108 修过的那条潜伏 500）。
+_LOG_SORT_FIELDS = {"time": InquiryLog.time}
+
+
+def _contains(col, needle: str):
+    """子串匹配，但把用户输入里的 LIKE 通配符当**字面量**。
+
+    R112 记账：此前六处筛子直接 `col.like(f"%{x}%")`，`%`/`_` 会被当通配符——
+    实测 `keyword=%` 命中全集（子代理复算读数：35/35），而前端与 MSW 桩都是
+    `.toLowerCase().includes(x)` 的字面语义，三条路径在这里并不同形。
+    """
+    esc = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return col.like(f"%{esc}%", escape="\\")
+
+
+def _apply_inquiry_filters(query, f: InquiryFilterSet):
+    """把一组筛子加到询价查询上——列表与批量计数**共用这一个函数**（R111）。
+
+    分开写两份 WHERE 迟早会漂移：计数端点会把"筛子没生效的全集数"当成某一格的数报出去。
+    所以谓词只在这里定义一次，`GET /api/inquiries` 与 `POST /api/inquiries/counts` 都走它。
+    """
+    # 关键词搜索（code / subject / owner_name）
+    if f.keyword:
+        kw = f.keyword.strip()
+        query = query.filter(or_(
+            _contains(Inquiry.code, kw),
+            _contains(Inquiry.subject, kw),
+            _contains(Inquiry.owner_name, kw),
+        ))
+    # 状态筛选
+    if f.status:
+        statuses = [s.strip() for s in f.status.split(",") if s.strip()]
+        if statuses:
+            query = query.filter(Inquiry.status.in_(statuses))
+    # 创建时间范围（R108：改成日粒度闭区间，与 MSW 的 dateFrom/dateTo 分支
+    # src/mocks/handlers.ts:233 和仪表盘的 applyWorkbenchFilter 同口径。
+    # 旧写法 `created_at <= '2026-09-28'` 会把当天整天排除掉——两条取数路径此前都不是这个意思）
+    if f.dateFrom:
+        query = query.filter(func.substr(Inquiry.created_at, 1, 10) >= f.dateFrom)
+    if f.dateTo:
+        query = query.filter(func.substr(Inquiry.created_at, 1, 10) <= f.dateTo)
+    # R108：列表页筛选表单的四个独立筛子（AND 语义），全量与分页两条分支都生效
+    if f.code:
+        query = query.filter(_contains(Inquiry.code, f.code.strip()))
+    if f.subject:
+        query = query.filter(_contains(Inquiry.subject, f.subject.strip()))
+    if f.creator:
+        query = query.filter(_contains(Inquiry.created_by_name, f.creator.strip()))
+    if f.category:
+        query = query.filter(
+            exists().where(
+                and_(
+                    InquiryItem.inquiry_id == Inquiry.id,
+                    _contains(InquiryItem.category, f.category.strip()),
+                )
+            )
+        )
+    # R109：截止时间范围（同样是日粒度闭区间）。待报价页原来在整份数组上按
+    # `startOf('day') … endOf('day')` 过滤 deadline，搬上服务端必须给同口径的界，
+    # 否则那个页面上的"截止日区间"筛子会在分页路径上静默失效。
+    if f.deadlineFrom:
+        query = query.filter(func.substr(Inquiry.deadline, 1, 10) >= f.deadlineFrom)
+    if f.deadlineTo:
+        query = query.filter(func.substr(Inquiry.deadline, 1, 10) <= f.deadlineTo)
+    # R110：审批节点状态（逗号分隔，EXISTS approval_nodes）。审批页的"历史"页签
+    # 与"已通过/已驳回"两张统计卡原来靠整份数组扫 approvalNodes 算，搬上服务端必须给这个筛子。
+    if f.nodeStatus:
+        nodes = [s.strip() for s in f.nodeStatus.split(",") if s.strip()]
+        if nodes:
+            query = query.filter(
+                exists().where(
+                    and_(
+                        ApprovalNode.inquiry_id == Inquiry.id,
+                        ApprovalNode.status.in_(nodes),
+                    )
+                )
+            )
+    # R113：比价页的"可对比"卡片列表只要至少有一份已提交报价的单。
+    # 原来它是 `src/pages/quotation/compare/index.tsx` 在整份数组上
+    # `getQuotationsByInquiry(i.id).some(SUBMITTED)` 扫出来的；搬上服务端必须是 EXISTS，
+    # 否则这个筛子在分页路径上静默失效（R109/R110 同一课）。
+    # 真/伪值都支持：伪值那半支给"没有已提交报价"的清单用，也让这条筛子可被反向验证。
+    # 乱值一律 400（子代理复核时点出）：本模型的规矩是"写错键名 422、不静默忽略"，
+    # 而"键名对、值乱"若当 no-op，调用方就会把"筛子没生效的全集"读成这一档的数——
+    # 比价页那种情况下会退回整份无界清单，正是本轮要拆掉的东西。空串/纯空白仍等于不传。
+    if f.hasSubmittedQuotation is not None:
+        flag = f.hasSubmittedQuotation.strip().lower()
+        if flag in _FLAG_TRUE:
+            query = query.filter(
+                exists().where(
+                    and_(
+                        Quotation.inquiry_id == Inquiry.id,
+                        Quotation.status == Q_SUBMITTED,
+                    )
+                )
+            )
+        elif flag in _FLAG_FALSE:
+            query = query.filter(
+                ~exists().where(
+                    and_(
+                        Quotation.inquiry_id == Inquiry.id,
+                        Quotation.status == Q_SUBMITTED,
+                    )
+                )
+            )
+        elif flag:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "hasSubmittedQuotation 只认真值串 1/true/yes 或伪值串 0/false/no，"
+                    f"收到 {f.hasSubmittedQuotation!r}"
+                ),
+            )
+    return query
 
 
 @router.get("")
@@ -195,6 +402,14 @@ def list_inquiries(
     dateFrom: Optional[str] = Query(default=None),
     dateTo: Optional[str] = Query(default=None),
     sort: Optional[str] = Query(default=None),
+    code: Optional[str] = Query(default=None),
+    subject: Optional[str] = Query(default=None),
+    creator: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    deadlineFrom: Optional[str] = Query(default=None),
+    deadlineTo: Optional[str] = Query(default=None),
+    nodeStatus: Optional[str] = Query(default=None),
+    hasSubmittedQuotation: Optional[str] = Query(default=None),
 ):
     """询价列表（P2-12 Task 17 服务端分页/筛选/搜索/排序）
 
@@ -202,6 +417,22 @@ def list_inquiries(
     - 传入 page/pageSize 时返回分页结构 {items, total, page, pageSize}。
     - keyword 匹配 code/subject/owner_name；status 为逗号分隔的状态列表；
       dateFrom/dateTo 过滤 created_at（YYYY-MM-DD）；sort 如 "updatedAt:desc"。
+    - R108 新增 code/subject/creator/category 四个**各自独立**的筛子，以及 sort=itemsCount。
+      为什么不是把 keyword 拆细就行：列表页的筛选表单是 AND 语义
+      （`src/pages/inquiry/list/index.tsx` 的 filteredInquiries），而 keyword 是 OR 语义且
+      前端原来只把 code 或 subject 之一塞进去——服务端分页成为默认路径后，
+      两个筛子同时填会静默忽略后一个，所以必须给 AND 语义的独立参数。
+      四个筛子对全量与分页两条分支同样生效，避免"两条分支行集不同"。
+    - R109 新增 deadlineFrom/deadlineTo（日粒度闭区间，与 created_at 那两个同口径），供待报价页把
+      "截止日区间"搬上服务端。同一轮把 `keyword` 的适用面写明：它匹配 code/subject/owner_name 三者，
+      比待报价页原来的"编号或主题"子串**更宽**（多命中负责人）——两支在"用户输入的是人名"
+      这一情形下会给出不同行集，记为限度，不是漏筛。
+    - R110 新增 nodeStatus（逗号分隔的审批节点状态，EXISTS approval_nodes.status），供审批页的
+      "历史"页签与"已通过/已驳回"两张统计卡把 approvalNodes 的扫描搬上服务端。
+    - R113 新增 hasSubmittedQuotation（真值串 1/true/yes ⇒ EXISTS 一条 SUBMITTED 报价；
+      伪值串 0/false/no ⇒ NOT EXISTS；空值等于不传；乱值 400，不静默当"没筛"），供比价页把"可对比询价单"
+      那份卡片列表从整份数组的 some() 扫描搬成服务端筛子。因为它挂在 `_apply_inquiry_filters` 上，
+      `POST /api/inquiries/counts` 的档位自动认识同一个键（两份 WHERE 不分叉，R111 的规矩）。
     """
     query = db.query(Inquiry)
     query = filter_visible_inquiries(query, user)
@@ -215,29 +446,38 @@ def list_inquiries(
         selectinload(Inquiry.invited_suppliers),
     )
 
-    # 关键词搜索（code / subject / owner_name）
-    if keyword:
-        kw = f"%{keyword.strip()}%"
-        query = query.filter(or_(
-            Inquiry.code.like(kw),
-            Inquiry.subject.like(kw),
-            Inquiry.owner_name.like(kw),
-        ))
-    # 状态筛选
-    if status:
-        statuses = [s.strip() for s in status.split(",") if s.strip()]
-        if statuses:
-            query = query.filter(Inquiry.status.in_(statuses))
-    # 创建时间范围
-    if dateFrom:
-        query = query.filter(Inquiry.created_at >= dateFrom)
-    if dateTo:
-        query = query.filter(Inquiry.created_at <= dateTo)
+    # 筛子谓词与 `POST /api/inquiries/counts` 同源（R111）：不在两条路上各写一份 WHERE
+    query = _apply_inquiry_filters(
+        query,
+        InquiryFilterSet(
+            keyword=keyword,
+            status=status,
+            dateFrom=dateFrom,
+            dateTo=dateTo,
+            code=code,
+            subject=subject,
+            creator=creator,
+            category=category,
+            deadlineFrom=deadlineFrom,
+            deadlineTo=deadlineTo,
+            nodeStatus=nodeStatus,
+            hasSubmittedQuotation=hasSubmittedQuotation,
+        ),
+    )
+
 
     # 排序（白名单 + 方向）
-    order_col = _SORT_FIELDS.get(sort.split(":")[0]) if sort else Inquiry.updated_at
+    # R108 顺手修一条潜伏的 500：旧写法 `order_col = _SORT_FIELDS.get(key) if sort else updated_at`
+    # 在"sort 给了但不认识的键"时取到 None，下一行 order_col.asc() 直接 AttributeError ⇒ 500。
+    sort_key = sort.split(":")[0] if sort else ""
+    # R108 修 bug 的 bug：`or` 链会对 `.scalar_subquery()` 返回的 ScalarSelect 调 bool()，
+    # SQLAlchemy 2.0.36 里 ScalarSelect.__bool__ 直接抛 TypeError（实测 elements.py:748），
+    # 于是 sort=itemsCount/invitedCount/submittedCount 三个键全部 500。退回必须显式判 None。
+    expr = _SORT_EXPRS.get(sort_key)
+    if expr is None:
+        expr = _SORT_FIELDS.get(sort_key) or Inquiry.updated_at
     direction = sort.split(":", 1)[1] if sort and ":" in sort else "desc"
-    col = order_col.asc() if direction == "asc" else order_col.desc()
+    col = expr.asc() if direction == "asc" else expr.desc()
     # Task 7：id 作为稳定次排序键，避免分页边界重复/漏行
     query = query.order_by(col, Inquiry.id)
 
@@ -255,6 +495,101 @@ def list_inquiries(
         total=total,
         page=_page,
         pageSize=_size,
+    )
+
+
+@router.post("/counts", response_model=InquiryCountsSchema)
+def inquiry_counts(
+    body: InquiryCountsRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """一次问完多组筛子各自的条数（R111）
+
+    存在理由：审批页要四个数（待审批 / 历史 / 已通过 / 已驳回）。R110 的实现是发四次
+    `pageSize=1` 的分页请求读 `total`，进页因此变成 17–19 个请求；计数不该按"几格"线性涨。
+    每个档位都走 `filter_visible_inquiries` + 与列表端点同一个 `_apply_inquiry_filters`，
+    所以 `counts[x]` 与 `GET /api/inquiries?x…` 的 `total` 结构上不可能各说一套
+    （这条由 backend/tests/test_inquiries_counts.py 逐档对账钉住）。
+    """
+    labels = [item.label for item in body.items]
+    if any(not label.strip() for label in labels):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="label 不能为空"
+        )
+    if len(labels) != len(set(labels)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="label 不得重复"
+        )
+    if len(labels) > _MAX_COUNT_ITEMS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"items 最多 {_MAX_COUNT_ITEMS} 档",
+        )
+    counts: dict[str, int] = {}
+    for item in body.items:
+        query = filter_visible_inquiries(db.query(Inquiry), user)
+        query = _apply_inquiry_filters(query, item.filters)
+        counts[item.label] = query.count()
+    return InquiryCountsSchema(counts=counts)
+
+
+@router.get("/logs", response_model=PaginatedLogsSchema)
+def list_logs(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=10, ge=1, le=200),
+    operator: Optional[str] = Query(default=None),
+    type: Optional[str] = Query(default=None, alias="type"),
+    keyword: Optional[str] = Query(default=None),
+    timeFrom: Optional[str] = Query(default=None),
+    timeTo: Optional[str] = Query(default=None),
+    sort: Optional[str] = Query(default=None),
+):
+    """操作日志按**日志行**分页（R112）
+
+    存在理由：日志页 `src/pages/log/index.tsx` 原来把整份询价数组拉下来
+    （每条带全部 logs）再 `flatMap` 排序过滤——一页 10 行要付全集的价，
+    它是开放项 8 里最重的一个消费者。
+
+    - 可见性与询价列表同源：`filter_visible_inquiries` 加在 join 到 Inquiry 的查询上，
+      所以"看不见的询价单，它的日志也读不到"，不需要另写一份策略。
+    - 筛子与页面原实现逐条对齐：operator/content 子串（大小写不敏感）、
+      type 精确等值、timeFrom/timeTo 日粒度闭区间（含首末两日）。
+    - 口径差一处（记为限度，不改页面语义也不假装对齐）：页面带区间时会用
+      `dayjs(time).isValid()` 把空/畸形时间戳整条丢掉，而日粒度 substr 比较
+      对空串天然为假 ⇒ 两边都不带区间时畸形行两档都保留，带区间时两档都排除。
+    - 排序白名单 `time`（默认 desc），次排序键固定为 `InquiryLog.id`：
+      同一秒多条日志在翻页边界上不得重复或漏行。
+    """
+    query = db.query(InquiryLog).join(Inquiry, InquiryLog.inquiry_id == Inquiry.id)
+    query = filter_visible_inquiries(query, user)
+
+    if operator:
+        query = query.filter(_contains(func.lower(InquiryLog.operator), operator.strip().lower()))
+    if keyword:
+        query = query.filter(_contains(func.lower(InquiryLog.content), keyword.strip().lower()))
+    if type:
+        query = query.filter(InquiryLog.type == type.strip())
+    if timeFrom:
+        query = query.filter(func.substr(InquiryLog.time, 1, 10) >= timeFrom)
+    if timeTo:
+        query = query.filter(func.substr(InquiryLog.time, 1, 10) <= timeTo)
+
+    sort_key = sort.split(":")[0] if sort else ""
+    expr = _LOG_SORT_FIELDS.get(sort_key) or InquiryLog.time
+    direction = sort.split(":", 1)[1] if sort and ":" in sort else "desc"
+    col = expr.asc() if direction == "asc" else expr.desc()
+    query = query.order_by(col, InquiryLog.id)
+
+    total = query.count()
+    rows = query.offset((page - 1) * pageSize).limit(pageSize).all()
+    return PaginatedLogsSchema(
+        items=[inquiry_log_to_schema(r) for r in rows],
+        total=total,
+        page=page,
+        pageSize=pageSize,
     )
 
 
@@ -332,8 +667,10 @@ def create_inquiry(
         )
 
     # 服务端生成唯一编号（Task 7）：并发碰撞时事务内整体重试
+    last_code = None
     for _ in range(5):
-        inq = build_inquiry(_generate_inquiry_code(db))
+        last_code = _generate_inquiry_code(db)
+        inq = build_inquiry(last_code)
         inq.items = _build_inquiry_items(inq_id, data.get("items", []))
         inq.logs = _build_logs(inq_id, data.get("logs", []), default_user=user)
         inq.approval_nodes = _build_approval_nodes(inq_id, data.get("approvalNodes", []))
@@ -348,11 +685,30 @@ def create_inquiry(
             return inquiry_to_schema(inq, db)
         except IntegrityError:
             db.rollback()
+            # 只有"刚生成的编号确实已被占用"才是编号碰撞，换号重试有意义。
+            # 其余完整性冲突（前端自带的子行主键重复、外键不存在等）重试 5 次
+            # 只会撞同一堵墙，把它们一律说成"编号生成冲突"是替用户伪造原因（R35）：
+            # 实测把一条已存在的 COMPLETED 单改 id 后回 POST，因其 items[].id 已存在，
+            # 原实现连撞 5 次后回 500「编号生成冲突重试耗尽」，方向完全错。
+            code_taken = db.query(Inquiry.id).filter(Inquiry.code == last_code).first()
+            if code_taken is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error_type": "inquiry_conflict",
+                        "message": "创建询价单失败：与已有记录冲突（非编号碰撞），请检查物料行 id 等唯一标识",
+                    },
+                )
         except Exception:
             db.rollback()
             raise
-    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="创建询价单失败：编号生成冲突重试耗尽")
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={
+            "error_type": "inquiry_code_exhausted",
+            "message": "创建询价单失败：编号生成冲突重试耗尽",
+        },
+    )
 
 
 @router.put("/{inquiry_id}", response_model=InquirySchema)
@@ -807,7 +1163,7 @@ def _export_dataset(db: Session, inq: Inquiry) -> dict:
     } for it in inq.items]
     quotes = []
     for q in quotations:
-        if q.status != "SUBMITTED":
+        if q.status != Q_SUBMITTED:
             continue
         quotes.append({
             "supplierId": q.supplier_id,

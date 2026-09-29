@@ -14,6 +14,7 @@ token 绑定唯一询价与供应商、撤销拒绝、终态询价拒绝、重�
 """
 from datetime import datetime, timedelta, timezone
 import threading
+import uuid
 
 from app.database import SessionLocal
 from app.invitations import (
@@ -384,6 +385,10 @@ def test_concurrent_submit_yields_single_submitted_quotation(client):
 
     # 最终状态一致：恰好一条已提交报价 + 邀请标记 submitted（无论个别请求瞬时 409/200）
     assert any(s == 200 for s in statuses), f"无任何提交请求成功: {statuses}"
+    # R21：输掉 check-then-insert 的那几路只能拿到 409（唯一约束已转成冲突响应）。
+    # 只断"至少一个 200"时，500 或未捕获异常都逃不掉这条断言 ——
+    # 未捕获异常甚至只进 warnings，套件照样绿，所以这里必须把取值域钉死。
+    assert set(statuses) <= {200, 409}, f"并发提交出现非 200/409 回执: {statuses}"
     check = SessionLocal()
     try:
         inv2 = check.query(SupplierInvitation).filter(
@@ -400,3 +405,80 @@ def test_concurrent_submit_yields_single_submitted_quotation(client):
     assert len(qs) == 1
     assert qs[0].status == "SUBMITTED"
     assert qs[0].receipt_code is not None
+
+def _r21_setup(client):
+    """造一个 (询价, 供应商) 已有一条 DRAFT 报价、但邀请仍是可提交态的场景。
+
+    返回 (raw_token, inquiry_id, item_id)。
+    """
+    from decimal import Decimal
+
+    from app.models import InquiryItem, Quotation
+
+    headers = _login(client, "u-2")
+    iid = _create_and_send_inquiry(client, headers, "sup-1")
+    db = SessionLocal()
+    try:
+        inv = db.query(SupplierInvitation).filter(
+            SupplierInvitation.inquiry_id == iid,
+            SupplierInvitation.supplier_id == "sup-1",
+        ).first()
+        raw = get_invitation_raw_token(inv.id)
+        item_id = db.query(InquiryItem).filter(InquiryItem.inquiry_id == iid).first().id
+        db.add(Quotation(
+            id=f"q-r21-seed-{uuid.uuid4().hex[:12]}",
+            inquiry_id=iid, supplier_id="sup-1", supplier_name="种子供应商",
+            status="DRAFT", total_amount=Decimal("0"),
+            created_at="2026-01-01 00:00:00", updated_at="2026-01-01 00:00:00",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    return raw, iid, item_id
+
+
+def _r21_unsee_existing(monkeypatch):
+    """把处理器的"查已有报价"打成永远看不见 —— 正是并发输家那一刻的可见性状态。
+
+    这样后续 INSERT 必然撞 uq_quotations_inquiry_id_supplier_id，
+    不必用线程去撞概率。
+    """
+    from app.routers import portal
+
+    monkeypatch.setattr(portal, "_find_quotation", lambda db, invitation: None)
+    return portal
+
+
+def test_r21_portal_submit_conflict_returns_409_not_raw_integrity_error(client, monkeypatch):
+    """R21：输掉 check-then-insert 的门户提交必须拿到 409，而不是让唯一约束异常穿出 ASGI。
+
+    现场：全量 pytest 的 warnings 里有 5 条
+    `PytestUnhandledThreadExceptionWarning: Exception in thread Thread-NNN (_submit)`，
+    最深的应用栈帧是 app/routers/portal.py 的 `db.flush()`。
+    TestClient 默认 raise_server_exceptions=True 会把异常抛回调用线程，
+    生产形态（uvicorn）等价于 500 + 服务端栈。
+    """
+    _r21_unsee_existing(monkeypatch)
+    raw, _iid, item_id = _r21_setup(client)
+
+    r = client.post(
+        "/api/portal/quotations/submit",
+        headers={"X-Invitation-Token": raw},
+        json={"items": [{"inquiryItemId": item_id, "unitPrice": 100, "taxRate": 0.13, "deliveryDays": 7}]},
+    )
+    assert r.status_code == 409, f"唯一约束异常没有被转成冲突响应：{r.status_code} {r.text[:200]}"
+    assert r.json()["detail"]["error_type"] == "duplicate_quotation"
+
+
+def test_r21_portal_save_draft_conflict_returns_409_not_raw_integrity_error(client, monkeypatch):
+    """R21 同源：`PUT /api/portal/quotations/draft` 是同一个 check-then-insert 形状。"""
+    _r21_unsee_existing(monkeypatch)
+    raw, _iid, item_id = _r21_setup(client)
+
+    r = client.put(
+        "/api/portal/quotations/draft",
+        headers={"X-Invitation-Token": raw},
+        json={"items": [{"inquiryItemId": item_id, "unitPrice": 88, "taxRate": 0.13, "deliveryDays": 5}]},
+    )
+    assert r.status_code == 409, f"唯一约束异常没有被转成冲突响应：{r.status_code} {r.text[:200]}"
+    assert r.json()["detail"]["error_type"] == "duplicate_quotation"

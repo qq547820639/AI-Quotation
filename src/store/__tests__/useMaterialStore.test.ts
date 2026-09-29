@@ -67,7 +67,7 @@ describe('useMaterialStore', () => {
       vi.mocked(materialApi.create).mockImplementationOnce(
         () => new Promise((r) => (resolveCreate = r)),
       );
-      useMaterialStore.getState().addMaterial(m);
+      void useMaterialStore.getState().addMaterial(m);
       const second = await useMaterialStore.getState().addMaterial(m);
       expect(second.success).toBe(false);
       expect(second.reason).toBe('pending');
