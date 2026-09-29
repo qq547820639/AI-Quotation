@@ -58,6 +58,53 @@ function applyServerInquiry(server: Inquiry) {
   });
 }
 
+/**
+ * 写入口的"本地没这条就按 id 补一条"（R113）。
+ *
+ * 判据沿用 R28 在 sendInquiry 里定下的那条（见本文件 :390 附近的注释）：
+ * 一条单子存在与否由服务端判定，本地缓存不再是发请求的前提。R113 之前各页必须等整份数组
+ * 到货才渲染，所以那八道 `getInquiryById(...) return notFound()` 事实上恒过；页面换成有界读之后
+ * "渲染得了、数组里没有"成了真状态（e2e 一手读数：进审批页后 localStorage 的 inquiries 是空的，
+ * 点「通过 → 确定」零请求零提示），写动作就在这里静默不发。
+ * 补一条是"按 id 拿那一条"，不是补拉整份数组——无界那条本来就是本轮要拆的东西。
+ * 两个调用纪律（都是本轮改的时候踩过的）：
+ * ① 调用点的 `pendingOps` 锁必须占在任何 await 之前——先 await 再上锁等于把重复提交的窗口重新打开
+ *   （常驻用例 useInquiryStore.test.ts 的去重格钉这条）；
+ * ② 命中本地时不要 await 本函数，写成 `get().getInquiryById(id) ?? (await ensureLocalInquiry(id))`
+ *   或 `!get().getInquiryById(id) && !(await ensureLocalInquiry(id))`：
+ *   无条件 await 会把乐观更新推到下一个微任务，那五格「调用后立刻读 store」的用例当场红，
+ *   用户侧也丢了「点了就变」的即时反馈。
+ */
+async function ensureLocalInquiry(id: string): Promise<Inquiry | undefined> {
+  const local = useInquiryStore.getState().getInquiryById(id);
+  if (local) return local;
+  try {
+    applyServerInquiry(await inquiryApi.get(id));
+  } catch {
+    // 拿不到就是拿不到：交回 undefined，由调用点按 not_found 报出去（fail-closed，不猜状态）
+    return undefined;
+  }
+  return useInquiryStore.getState().getInquiryById(id);
+}
+
+/**
+ * 整份清单落回本地时的合并（R113）：本地那条的版本比快照里的新 ⇒ 保留本地那条。
+ *
+ * 原来这里是 `set({ inquiries: data })` 整体替换。各页换成有界读之后，"本页已经能写"
+ * 与"启动期那发 `list()` 还在飞"第一次成了并存状态：清单发出 → 服务端应答之间完成的那次写
+ * 已经把版本进位，回来的一份**更早的快照**又把本地覆盖回旧版本号，下一次写就带着旧版本发出，
+ * 服务端按乐观锁判 409（金链路 e2e 的评语保存实测红在这个位置）。
+ * 删除的判定不变：快照里没有就等于没了——不为了这一条把本地独有的行留下，那会留幽灵行。
+ * `version` 缺省（老数据/未带该列的响应）按 0 处理，即服务端说了算，与改前行为一致。
+ */
+function mergeIncomingList(local: Inquiry[], incoming: Inquiry[]): Inquiry[] {
+  const byId = new Map(local.map((i) => [i.id, i]));
+  return incoming.map((r) => {
+    const l = byId.get(r.id);
+    return l && (l.version ?? 0) > (r.version ?? 0) ? l : r;
+  });
+}
+
 /** 生成日志条目（W4：操作人取自 useAuthStore） */
 function createLog(
   inquiryId: string,
@@ -173,9 +220,12 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
     set({ loading: true });
     try {
       const data = await inquiryApi.list();
-      set({ inquiries: data, loaded: true, loading: false, loadError: false });
-      saveJSON(STORAGE_KEY, data);
-      queryClient.setQueryData(QUERY_KEYS.inquiries, data);
+      // 本地状态要在**应答落地那一刻**才取：参数求值是从左到右的，
+      // 把 get() 写在 await 之前会拿到请求发出时的旧数组，合并就白做了
+      const merged = mergeIncomingList(get().inquiries, data);
+      set({ inquiries: merged, loaded: true, loading: false, loadError: false });
+      saveJSON(STORAGE_KEY, merged);
+      queryClient.setQueryData(QUERY_KEYS.inquiries, merged);
       useConnectivityStore.getState().markSynced();
     } catch {
       // 仅演示模式允许降级到 mock/localStorage；生产模式禁止无提示回退
@@ -222,10 +272,15 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   updateInquiry: async (id, patch) => {
     if (pendingOps[`update:${id}`]) return pending();
-    const current = get().getInquiryById(id);
-    if (!current) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`update:${id}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    const current = get().getInquiryById(id) ?? (await ensureLocalInquiry(id));
+    if (!current) {
+      pendingOps[`update:${id}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const inquiries = state.inquiries.map((i) =>
@@ -249,9 +304,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   deleteInquiry: async (id) => {
     if (pendingOps[`delete:${id}`]) return pending();
-    if (!get().getInquiryById(id)) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`delete:${id}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    if (!get().getInquiryById(id) && !(await ensureLocalInquiry(id))) {
+      pendingOps[`delete:${id}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const inquiries = state.inquiries.filter((i) => i.id !== id);
@@ -315,9 +375,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   cancelInquiry: async (id) => {
     if (pendingOps[`cancel:${id}`]) return pending();
-    if (!get().getInquiryById(id)) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`cancel:${id}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    if (!get().getInquiryById(id) && !(await ensureLocalInquiry(id))) {
+      pendingOps[`cancel:${id}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const inquiries = state.inquiries.map((i) => {
@@ -429,9 +494,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   selectSupplier: async (inquiryId, itemId, supplierId) => {
     if (pendingOps[`select:${inquiryId}`]) return pending();
-    if (!get().getInquiryById(inquiryId)) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`select:${inquiryId}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    if (!get().getInquiryById(inquiryId) && !(await ensureLocalInquiry(inquiryId))) {
+      pendingOps[`select:${inquiryId}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const inquiries = state.inquiries.map((i) => {
@@ -483,9 +553,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   confirmInquiry: async (inquiryId) => {
     if (pendingOps[`confirm:${inquiryId}`]) return pending();
-    if (!get().getInquiryById(inquiryId)) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`confirm:${inquiryId}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    if (!get().getInquiryById(inquiryId) && !(await ensureLocalInquiry(inquiryId))) {
+      pendingOps[`confirm:${inquiryId}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const inquiries = state.inquiries.map((i) => {
@@ -525,9 +600,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   submitForApproval: async (inquiryId) => {
     if (pendingOps[`submitApproval:${inquiryId}`]) return pending();
-    if (!get().getInquiryById(inquiryId)) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`submitApproval:${inquiryId}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    if (!get().getInquiryById(inquiryId) && !(await ensureLocalInquiry(inquiryId))) {
+      pendingOps[`submitApproval:${inquiryId}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const { approval } = useSettingsStore.getState();
@@ -585,9 +665,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   approveInquiry: async (inquiryId, comment) => {
     if (pendingOps[`approve:${inquiryId}`]) return pending();
-    if (!get().getInquiryById(inquiryId)) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`approve:${inquiryId}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    if (!get().getInquiryById(inquiryId) && !(await ensureLocalInquiry(inquiryId))) {
+      pendingOps[`approve:${inquiryId}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const nowStr = dayjs().format('YYYY-MM-DD HH:mm:ss');
@@ -638,9 +723,14 @@ export const useInquiryStore = create<InquiryState>((set, get) => ({
 
   rejectInquiry: async (inquiryId, comment) => {
     if (pendingOps[`reject:${inquiryId}`]) return pending();
-    if (!get().getInquiryById(inquiryId)) return notFound();
-    const snapshot = get().inquiries;
     pendingOps[`reject:${inquiryId}`] = true;
+    // 本地有这条就直接往下（乐观更新要在同一轮同步里生效，见 useInquiryStore.test.ts 那五格）；
+    // 只有缺这一条才 await 按 id 补那一条
+    if (!get().getInquiryById(inquiryId) && !(await ensureLocalInquiry(inquiryId))) {
+      pendingOps[`reject:${inquiryId}`] = false;
+      return notFound();
+    }
+    const snapshot = get().inquiries;
     try {
       set((state) => {
         const nowStr = dayjs().format('YYYY-MM-DD HH:mm:ss');

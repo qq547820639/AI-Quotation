@@ -461,6 +461,23 @@ class InquiryFilterSet(BaseModel):
     deadlineFrom: Optional[str] = None
     deadlineTo: Optional[str] = None
     nodeStatus: Optional[str] = None
+    # R113：只要"至少有一份已提交报价"的询价单（比价页的可对比卡片列表）。
+    # 真值串 1/true/yes 走 EXISTS，伪值串 0/false/no 走 NOT EXISTS，空值不加筛子，
+    # 乱值由谓词构造处统一判 400（不在这个模型里 raise：GET 分支是在 handler 内部自建本模型的，
+    # 这里抛 ValidationError 会冒成 500，而不是 422/400）。
+    # 下面的 validator 只做**类型归一**：名字是布尔形状的筛子，POST 体里写 JSON 布尔 true
+    # 与 GET 查询里写 "true" 必须落到同一个值，否则同一把筛子在两支上一个 422、一个 200。
+    hasSubmittedQuotation: Optional[str] = None
+
+    @field_validator("hasSubmittedQuotation", mode="before")
+    @classmethod
+    def _normalize_submitted_flag(cls, v: Any) -> Any:
+        # bool 必须排在 int 前面判：Python 里 isinstance(True, int) 也是真
+        if isinstance(v, bool):
+            return "1" if v else "0"
+        if isinstance(v, int):
+            return str(v)
+        return v
 
 
 class InquiryCountSpec(BaseModel):

@@ -494,12 +494,17 @@ export default function MainLayout() {
           />
 
           <Space size="large">
-            // trigger 必须显式给出：antd 的默认值是 hover，也就是"只能靠鼠标悬停打开"。 //
-            语言菜单那两项是 onClick 的 menu item，键盘路径其实打不开菜单 //（聚焦后按 Enter
-            只产生一次 click，hover 型 Dropdown 不因此展开）； // 专用 runner 上 firefox/webkit
-            报"中文那项找不到"就是这条依赖被暴露出来： // 测试用 click 打开、用 Enter
-            选择，第二次展开只剩 hover 与动效时序可凭。 // 保留 hover 给鼠标用户，补 click
-            让键盘与触摸也能开——与同文件 Popover 的 trigger="click" 一致。
+            {/*
+              trigger 必须显式给出：antd 的默认值是 hover，也就是"只能靠鼠标悬停打开"。
+              语言菜单那两项是 onClick 的 menu item，键盘路径其实打不开菜单（聚焦后按 Enter
+              只产生一次 click，hover 型 Dropdown 不因此展开）；专用 runner 上 firefox/webkit
+              报"中文那项找不到"就是这条依赖被暴露出来：测试用 click 打开、用 Enter
+              选择，第二次展开只剩 hover 与动效时序可凭。保留 hover 给鼠标用户，补 click
+              让键盘与触摸也能开——与同文件 Popover 的 trigger="click" 一致。
+
+              这段以前写成裸的 // 行，落在 JSX 子节点位置上就是**渲染出来的文字**（不是注释），
+              于是每页顶栏都挂着一行开发说明——R113 记为缺陷，判据见 scripts/check-jsx-comment-text.mjs。
+            */}
             <Dropdown
               menu={{ items: langMenuItems }}
               placement="bottomRight"

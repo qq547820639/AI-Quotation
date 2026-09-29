@@ -642,6 +642,11 @@ export interface InquiryFilterSet {
   deadlineTo?: string;
   /** R110：逗号分隔的审批节点状态，命中"该询价存在这样一个审批节点" */
   nodeStatus?: string;
+  /**
+   * R113：只要"至少有一份已提交报价"的询价单（比价页的可对比卡片列表）。
+   * 真值串 1/true/yes ⇒ EXISTS；伪值串 0/false/no ⇒ NOT EXISTS；其余值不加筛子。
+   */
+  hasSubmittedQuotation?: string;
 }
 
 export interface InquiryListParams extends InquiryFilterSet {

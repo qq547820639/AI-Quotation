@@ -41,12 +41,14 @@ test.describe('核心业务链路', () => {
     await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
 
     // 3. 采购查看报价对比
-    // R65 续三：先等"喂这块视图的那次读"落地，再断渲染。
+    // R65 续三：先等"喂这块视图的那次读"（R113 起为详情那一发，不再是两份全量）落地，再断渲染。
     // 这样断言测的是"数据到了却没渲染"（真缺陷），而不是"读+渲染没挤进 10 s"（环境竞速）；
     // 渲染断言本身保留——去掉它就等于不再检查渲染，那是放宽而不是修准。
     await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
         {
           timeout: 20000,
         },
@@ -112,10 +114,13 @@ test.describe('核心业务链路', () => {
 
     // 8. 完成定标
     // R65 续三：同第 3 步——「确认定标」要过 compare/index.tsx:302 那道 loaded 闸才渲染，
-    // 先等喂它的那次 GET /api/quotations 落地（useQuotationFreshness.ts:21 每次挂载恰好一发），再断按钮在场。
+    // 先等喂它的那次读落地——R113 起是 `GET /api/inquiries/{id}`（每次挂载恰好一发，
+    // staleTime:0 顶下原来 useQuotationFreshness 的位置），再断按钮在场。
     await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
         {
           timeout: 20000,
         },
@@ -165,10 +170,12 @@ test.describe('核心业务链路', () => {
     await submitQuoteViaPortal(page, inquiryId, 'sup-5', '6100');
 
     // 进入对比页，选择供应商并提交审批
-    // R65 续三：同全链路用例第 3 步——先等喂这块视图的 GET /api/quotations 落地，再断表格渲染。
+    // R65 续三：同全链路用例第 3 步——先等喂这块视图的那次读（R113 起是详情那一发）落地，再断表格渲染。
     await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
         {
           timeout: 20000,
         },
@@ -227,11 +234,13 @@ test.describe('核心业务链路', () => {
     );
 
     // 驳回后审批节点为 REJECTED，不应出现"确认定标"按钮（无法定标）
-    // R65 续三：同上，先等喂对比视图的 GET /api/quotations 落地。下面那条 `.ant-table` 在场断言
+    // R65 续三：同上，先等喂对比视图的那次读（R113 起为 GET /api/inquiries/{id}）落地。下面那条 `.ant-table` 在场断言
     // 要过 compare/index.tsx:302 的 loaded 闸，负向断言因此排在"数据已到"之后，不再吃空壳页的假绿。
     await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
         {
           timeout: 20000,
         },

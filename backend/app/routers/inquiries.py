@@ -48,7 +48,7 @@ from ..serializers import (
 from ..policy import require_inquiry_access, require_inquiry_edit, filter_visible_inquiries, set_create_ownership
 from ..state_machine import (
     assert_inquiry_transition, S_PENDING_SEND, S_INQUIRING, S_CANCELLED, S_COMPLETED,
-    S_PENDING_APPROVAL, S_PENDING_CONFIRM,
+    S_PENDING_APPROVAL, S_PENDING_CONFIRM, Q_SUBMITTED,
 )
 from ..templates import preview_template
 from ..events import publish
@@ -249,7 +249,13 @@ _INVITED_COUNT_EXPR = (
 )
 _SUBMITTED_COUNT_EXPR = (
     select(func.count(Quotation.id))
-    .where(and_(Quotation.inquiry_id == Inquiry.id, Quotation.status == "SUBMITTED"))
+    # R113：这里原来是硬编码字面量 "SUBMITTED"，与 `hasSubmittedQuotation` 用的
+    # `Q_SUBMITTED` 成了同一个值的两个来源（子代理复算时点出）。本文件内现在只剩常量这一处
+    # （导出路径 :1160 那处同轮改掉，常驻断言 test_inquiries_list_filters.py 的
+    # test_inquiries_router_binds_no_bare_submitted_literal 钉住"文件内零字面量"）；
+    # 但 `routers/quotations.py`、`routers/portal.py`、`routers/dashboard.py` 各自还重抄一份，
+    # 全仓单一来源没做到，已记为开放项（登记册 R113 六）。
+    .where(and_(Quotation.inquiry_id == Inquiry.id, Quotation.status == Q_SUBMITTED))
     .correlate(Inquiry)
     .scalar_subquery()
 )
@@ -262,6 +268,11 @@ _SORT_EXPRS = {
 # 批量计数的档位上限：审批页现在用 4 档，仪表盘统计卡将来约 6 档；
 # 设上限是为了让"一格一档"不会被误用成几百次全表扫描。
 _MAX_COUNT_ITEMS = 32
+
+# 布尔形状筛子的取值表（R113）。MSW 桩 src/mocks/handlers.ts 里有一份同值的镜像，
+# 两表不同形时演示支会把乱值当 no-op、真后端判 400。
+_FLAG_TRUE = ("1", "true", "yes")
+_FLAG_FALSE = ("0", "false", "no")
 
 # 日志分页的排序白名单（R112）：页面只有"操作时间"一列可排，
 # 不认识的键退回默认列而不是 500（同 R108 修过的那条潜伏 500）。
@@ -341,6 +352,42 @@ def _apply_inquiry_filters(query, f: InquiryFilterSet):
                     )
                 )
             )
+    # R113：比价页的"可对比"卡片列表只要至少有一份已提交报价的单。
+    # 原来它是 `src/pages/quotation/compare/index.tsx` 在整份数组上
+    # `getQuotationsByInquiry(i.id).some(SUBMITTED)` 扫出来的；搬上服务端必须是 EXISTS，
+    # 否则这个筛子在分页路径上静默失效（R109/R110 同一课）。
+    # 真/伪值都支持：伪值那半支给"没有已提交报价"的清单用，也让这条筛子可被反向验证。
+    # 乱值一律 400（子代理复核时点出）：本模型的规矩是"写错键名 422、不静默忽略"，
+    # 而"键名对、值乱"若当 no-op，调用方就会把"筛子没生效的全集"读成这一档的数——
+    # 比价页那种情况下会退回整份无界清单，正是本轮要拆掉的东西。空串/纯空白仍等于不传。
+    if f.hasSubmittedQuotation is not None:
+        flag = f.hasSubmittedQuotation.strip().lower()
+        if flag in _FLAG_TRUE:
+            query = query.filter(
+                exists().where(
+                    and_(
+                        Quotation.inquiry_id == Inquiry.id,
+                        Quotation.status == Q_SUBMITTED,
+                    )
+                )
+            )
+        elif flag in _FLAG_FALSE:
+            query = query.filter(
+                ~exists().where(
+                    and_(
+                        Quotation.inquiry_id == Inquiry.id,
+                        Quotation.status == Q_SUBMITTED,
+                    )
+                )
+            )
+        elif flag:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "hasSubmittedQuotation 只认真值串 1/true/yes 或伪值串 0/false/no，"
+                    f"收到 {f.hasSubmittedQuotation!r}"
+                ),
+            )
     return query
 
 
@@ -362,6 +409,7 @@ def list_inquiries(
     deadlineFrom: Optional[str] = Query(default=None),
     deadlineTo: Optional[str] = Query(default=None),
     nodeStatus: Optional[str] = Query(default=None),
+    hasSubmittedQuotation: Optional[str] = Query(default=None),
 ):
     """询价列表（P2-12 Task 17 服务端分页/筛选/搜索/排序）
 
@@ -381,6 +429,10 @@ def list_inquiries(
       这一情形下会给出不同行集，记为限度，不是漏筛。
     - R110 新增 nodeStatus（逗号分隔的审批节点状态，EXISTS approval_nodes.status），供审批页的
       "历史"页签与"已通过/已驳回"两张统计卡把 approvalNodes 的扫描搬上服务端。
+    - R113 新增 hasSubmittedQuotation（真值串 1/true/yes ⇒ EXISTS 一条 SUBMITTED 报价；
+      伪值串 0/false/no ⇒ NOT EXISTS；空值等于不传；乱值 400，不静默当"没筛"），供比价页把"可对比询价单"
+      那份卡片列表从整份数组的 some() 扫描搬成服务端筛子。因为它挂在 `_apply_inquiry_filters` 上，
+      `POST /api/inquiries/counts` 的档位自动认识同一个键（两份 WHERE 不分叉，R111 的规矩）。
     """
     query = db.query(Inquiry)
     query = filter_visible_inquiries(query, user)
@@ -409,6 +461,7 @@ def list_inquiries(
             deadlineFrom=deadlineFrom,
             deadlineTo=deadlineTo,
             nodeStatus=nodeStatus,
+            hasSubmittedQuotation=hasSubmittedQuotation,
         ),
     )
 
@@ -1110,7 +1163,7 @@ def _export_dataset(db: Session, inq: Inquiry) -> dict:
     } for it in inq.items]
     quotes = []
     for q in quotations:
-        if q.status != "SUBMITTED":
+        if q.status != Q_SUBMITTED:
             continue
         quotes.append({
             "supplierId": q.supplier_id,

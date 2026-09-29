@@ -241,7 +241,41 @@ function applyInquiryFilters(list: Inquiry[], f: InquiryFilterSet): Inquiry[] {
       .filter(Boolean);
     out = out.filter((i) => i.approvalNodes.some((n) => nodes.includes(n.status)));
   }
+  // R113：至少有一份已提交报价（真值串 EXISTS / 伪值串 NOT EXISTS / 空值不筛），
+  // 与真后端 _apply_inquiry_filters 里那段同形——比价页的"可对比"卡片列表靠它。
+  // 乱值不在这里判：它由 submittedFlagError() 在进入任何分支之前统一判 400（与真后端一致，
+  // 包括"不带分页参数的那条兼容分支也要判"这一点）。
+  if (f.hasSubmittedQuotation) {
+    const flag = f.hasSubmittedQuotation.trim().toLowerCase();
+    const has = (i: Inquiry) => i.quotations.some((q) => q.status === QuotationStatus.SUBMITTED);
+    if (SUBMITTED_FLAG_TRUE.includes(flag)) out = out.filter(has);
+    else if (SUBMITTED_FLAG_FALSE.includes(flag)) out = out.filter((i) => !has(i));
+  }
   return out;
+}
+
+/** 与后端 `inquiries.py` 的 `_FLAG_TRUE` / `_FLAG_FALSE` 同值（两表不同形即两支判据分叉） */
+const SUBMITTED_FLAG_TRUE = ['1', 'true', 'yes'];
+const SUBMITTED_FLAG_FALSE = ['0', 'false', 'no'];
+
+/**
+ * 布尔形状筛子的乱值 ⇒ 返回该原值，否则 null（R113）。
+ * 后端把乱值判 400 而不是当 no-op：本模型的规矩是"错的东西不许静默变成没筛"，
+ * 否则调用方会把全集读成这一档——比价页那种情况下会退回整份无界清单。
+ */
+function submittedFlagError(f: { hasSubmittedQuotation?: string }): string | null {
+  const raw = f.hasSubmittedQuotation;
+  if (raw === undefined) return null;
+  const flag = raw.trim().toLowerCase();
+  if (!flag || SUBMITTED_FLAG_TRUE.includes(flag) || SUBMITTED_FLAG_FALSE.includes(flag)) {
+    return null;
+  }
+  return raw;
+}
+
+/** 与真后端同一句文案的形状，便于两支的失败读数可比 */
+function submittedFlagDetail(raw: string): string {
+  return `hasSubmittedQuotation 只认真值串 1/true/yes 或伪值串 0/false/no，收到 ${JSON.stringify(raw)}`;
 }
 
 /** 与后端 `backend/app/routers/inquiries.py` 的 `_MAX_COUNT_ITEMS` 同值 */
@@ -259,6 +293,7 @@ const FILTER_KEYS: (keyof InquiryFilterSet)[] = [
   'deadlineFrom',
   'deadlineTo',
   'nodeStatus',
+  'hasSubmittedQuotation',
 ];
 
 function inquiryFilterSetFromParams(sp: URLSearchParams): InquiryFilterSet {
@@ -293,6 +328,13 @@ export const handlers = [
     const page = Number(url.searchParams.get('page') ?? '');
     const pageSize = Number(url.searchParams.get('pageSize') ?? '');
     const sort = url.searchParams.get('sort');
+
+    // R113：乱值判 400 必须排在"无分页参数返回全量"那条兼容分支之前——
+    // 真后端的判点在 `_apply_inquiry_filters`（两条分支都过它），漏判就两支不同形。
+    const flagErr = submittedFlagError(inquiryFilterSetFromParams(url.searchParams));
+    if (flagErr !== null) {
+      return HttpResponse.json({ detail: submittedFlagDetail(flagErr) }, { status: 400 });
+    }
 
     // P2-12 Task 17：无分页参数时向后兼容返回全量列表
     if (!page || !pageSize) {
@@ -346,6 +388,12 @@ export const handlers = [
           { detail: `filters 含未知筛子：${unknown.join(', ')}` },
           { status: 422 },
         );
+      }
+      // R113：乱值判 400（真后端在同一处谓词构造里 raise HTTPException，整包拒），
+      // 档位序里第一档先撞上就先返回哪一档——两支都不把"筛子没生效的全集数"交出去
+      const flagErr = submittedFlagError(it?.filters ?? {});
+      if (flagErr !== null) {
+        return HttpResponse.json({ detail: submittedFlagDetail(flagErr) }, { status: 400 });
       }
     }
     const counts: Record<string, number> = {};

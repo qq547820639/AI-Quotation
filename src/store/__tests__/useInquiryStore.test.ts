@@ -624,3 +624,73 @@ describe('询价单清单 loadError（R33）', () => {
     expect(s.loadError).toBe(true);
   });
 });
+
+/**
+ * R113：整份清单落回本地时的版本合并。
+ * 改前是 `set({ inquiries: data })` 直接替换。各页换成有界读之后，
+ * "本页已经能写"与"启动期那发 list() 还在飞"第一次并存：清单发出→应答之间完成的那次写
+ * 已经把 version 进位，回来的一份更早的快照把本地覆盖回旧版本号，下一次写带着旧版本发出，
+ * 服务端按乐观锁判 409（金链路 e2e 的评语保存格实测红在这里）。
+ */
+describe('询价单清单落回本地的版本合并（R113）', () => {
+  it('本地版本比快照新 ⇒ 保留本地，不被旧快照盖回去', async () => {
+    useInquiryStore.setState({
+      inquiries: [makeInquiry({ id: 'm-1', version: 3, subject: '写回执带回来的主题' })],
+    });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([
+      makeInquiry({ id: 'm-1', version: 2, subject: '快照里的旧主题' }),
+    ]);
+    await useInquiryStore.getState().loadFromApi();
+    const kept = useInquiryStore.getState().getInquiryById('m-1');
+    expect(kept?.version).toBe(3);
+    expect(kept?.subject).toBe('写回执带回来的主题');
+  });
+
+  it('本地版本更旧 ⇒ 服务端说了算（这条钉住"合并"没被写成"永远保本地"）', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'm-1', version: 1 })] });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([makeInquiry({ id: 'm-1', version: 5 })]);
+    await useInquiryStore.getState().loadFromApi();
+    expect(useInquiryStore.getState().getInquiryById('m-1')?.version).toBe(5);
+  });
+
+  it('两边都没有 version ⇒ 服务端赢（与改前的整体替换同形，不是新增语义）', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'm-1', subject: '本地' })] });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([
+      makeInquiry({ id: 'm-1', subject: '服务端' }),
+    ]);
+    await useInquiryStore.getState().loadFromApi();
+    expect(useInquiryStore.getState().getInquiryById('m-1')?.subject).toBe('服务端');
+  });
+
+  it('快照里没有的本地独有行 ⇒ 照样被丢掉（不为了并发给幽灵行开门）', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'ghost', version: 9 })] });
+    vi.mocked(inquiryApi.list).mockResolvedValueOnce([makeInquiry({ id: 'm-2' })]);
+    await useInquiryStore.getState().loadFromApi();
+    const ids = useInquiryStore.getState().inquiries.map((i) => i.id);
+    expect(ids).toEqual(['m-2']);
+  });
+
+  it('端到端：整份读在飞时完成一次写 ⇒ 下一次写带新版本号，不带快照里的旧版本', async () => {
+    useInquiryStore.setState({ inquiries: [makeInquiry({ id: 'm-9', version: 1 })] });
+    let release: (v: Inquiry[]) => void = () => {};
+    const gate = new Promise<Inquiry[]>((r) => {
+      release = r;
+    });
+    vi.mocked(inquiryApi.list).mockReturnValueOnce(gate);
+    vi.mocked(inquiryApi.update).mockResolvedValueOnce(makeInquiry({ id: 'm-9', version: 2 }));
+
+    const loading = useInquiryStore.getState().loadFromApi();
+    const wrote = await useInquiryStore.getState().updateInquiry('m-9', { subject: 'S2' });
+    expect(wrote.success).toBe(true);
+    // 快照是写之前发出的那份，版本号还停在 1
+    release([makeInquiry({ id: 'm-9', version: 1, subject: '旧快照' })]);
+    await loading;
+    expect(useInquiryStore.getState().getInquiryById('m-9')?.version).toBe(2);
+
+    // 下一次写带的必须是 2；带 1 出去服务端就是 409
+    vi.mocked(inquiryApi.update).mockResolvedValueOnce(makeInquiry({ id: 'm-9', version: 3 }));
+    await useInquiryStore.getState().updateInquiry('m-9', { subject: 'S3' });
+    const second = vi.mocked(inquiryApi.update).mock.calls.slice(-1)[0];
+    expect((second[1] as { version?: number }).version).toBe(2);
+  });
+});

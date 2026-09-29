@@ -304,13 +304,18 @@ test.describe('异常场景', () => {
     // 用 500 而不是 401 注入：401 会走"清会话 + 跳登录"那条既有路径（另有常驻用例钉着），
     // 根本到不了比价页。500 才是"加载失败但会话仍在"的形状。
     // 生产形态 MOCK_FALLBACK_ENABLED=false，store 拿不到数据只能留空。
-    await page.route('**/api/quotations', async (route) => {
-      await route.fulfill({
-        status: 500,
-        contentType: 'application/json',
-        body: JSON.stringify({ detail: 'boom' }),
-      });
-    });
+    // R113：注入点跟着依赖换——本页现在只读 `GET /api/inquiries/{id}`（报价随单一起到），
+    // 再拦 `**/api/quotations` 就是在一个"已不是依赖"的读上判绿，那条 R33 用例等于失效。
+    await page.route(
+      (u) => new URL(u.href).pathname === `/api/inquiries/${inquiryId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'boom' }),
+        });
+      },
+    );
     await page.goto(`/quotation/compare/${inquiryId}`);
 
     // 判别面必须用**只有这个修复才会产出**的文案。
@@ -335,7 +340,9 @@ test.describe('异常场景', () => {
     // 断言因此测"数据到了却没渲染"（真缺陷），而不是"读＋渲染没挤进 10 s"（环境竞速）。
     await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
         { timeout: 20000 },
       ),
       page.goto(`/quotation/compare/${inquiryId}`),
@@ -382,11 +389,13 @@ test.describe('异常场景', () => {
 
     // 状态没被改动：重新加载后仍可定标（服务端仍是「报价已完成」）
     // R65 续三：reload 同形状——监听先挂上再刷新。本用例的 route 只命中 `**/api/inquiries/*/confirm`
-    // （那是被注入 500 的写），那次 GET /api/quotations 不被拦；而本页在报价读落地前一直渲染 Spin
-    // （src/pages/quotation/compare/index.tsx:302，且 useQuotationFreshness.ts:21 每次挂载都重发），所以按同一判据等它。
+    // （那是被注入 500 的写），详情那次 GET 不被拦；而本页在详情读落地前一直渲染 Spin
+    // （R113 起该谓词是 detail 查询的 pending；服务端那一支不再走 useQuotationFreshness 的补拉），所以按同一判据等它。
     await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === 'GET' && /\/api\/quotations/.test(r.url()),
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\/[^/?]+$/.test(new URL(r.url()).pathname),
         { timeout: 20000 },
       ),
       page.reload(),

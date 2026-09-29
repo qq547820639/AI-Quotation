@@ -70,11 +70,14 @@ test.describe('询价全流程', () => {
     const { inquiryId, subject } = await createAndSendInquiry(page);
     await submitQuoteViaPortal(page, inquiryId, 'sup-2', '100');
 
-    // R65 续三：卡列表由 GET /api/inquiries 喂（inquiries.length === 0 时整页是 Empty，
-    // 见 src/pages/quotation/compare/CompareInquiryPicker.tsx:21），先等这条读落地再断卡片渲染。
+    // R65 续三：卡列表由服务端那一发喂（R113 起带 hasSubmittedQuotation=1；清单为空时整页仍是 Empty，
+    // 见 src/pages/quotation/compare/CompareInquiryPicker.tsx:21），先等它落地再断卡片渲染。
+    // 匹配串按"喂这块视图的那一发"收紧，不是任意一条 /api/inquiries（启动期那次无界拉取也命中它）。
     await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === 'GET' && /\/api\/inquiries/.test(r.url()),
+        (r) =>
+          r.request().method() === 'GET' &&
+          /\/api\/inquiries\?.*hasSubmittedQuotation=1/.test(r.url()),
         {
           timeout: 20000,
         },
